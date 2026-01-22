@@ -1266,6 +1266,89 @@ def get_account_profile(author_id):
         }), 500
 
 
+# ============================================================================
+# HOMEPAGE ROUTE - Add this to fix 404
+# ============================================================================
+
+@app.route('/')
+def homepage():
+    """Homepage with API documentation"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SIFTER KYS API Server</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }
+            h2 { color: #555; margin-top: 30px; }
+            .endpoint { background: #f9f9f9; padding: 15px; margin: 10px 0; border-left: 4px solid #4CAF50; }
+            .method { display: inline-block; padding: 3px 10px; background: #4CAF50; color: white; border-radius: 3px; margin-right: 10px; font-weight: bold; }
+            .path { font-family: monospace; color: #333; }
+            .desc { color: #666; margin-top: 5px; }
+            .status { float: right; background: #4CAF50; color: white; padding: 3px 8px; border-radius: 3px; }
+            a { color: #4CAF50; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 SIFTER KYS API Server v2.0</h1>
+            <div class="status">🟢 RUNNING</div>
+            
+            <p>Welcome to the Social Network Analysis API for cryptocurrency pump detection.</p>
+            
+            <h2>📡 Available Endpoints</h2>
+            
+            <div class="endpoint">
+                <span class="method">POST</span>
+                <span class="path">/api/analyze</span>
+                <div class="desc">Analyze a single token for pump activity and Twitter coordination</div>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method">POST</span>
+                <span class="path">/api/batch-analyze</span>
+                <div class="desc">Analyze multiple tokens from CSV or list</div>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <span class="path">/api/watchlist</span>
+                <div class="desc">Get user's watchlist of tracked accounts</div>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method">GET</span>
+                <span class="path">/health</span>
+                <div class="desc">Health check endpoint</div>
+            </div>
+            
+            <h2>🔧 Quick Testing</h2>
+            <ul>
+                <li><a href="/health" target="_blank">Test Health Endpoint</a></li>
+                <li>Use <strong>Postman</strong> or <strong>curl</strong> to test POST endpoints</li>
+                <li>API documentation available in server startup message</li>
+            </ul>
+            
+            <h2>📊 Server Info</h2>
+            <p><strong>Port:</strong> 5000</p>
+            <p><strong>Debug Mode:</strong> Active</p>
+            <p><strong>Features:</strong> Launch-anchored windows, SNA, Batch analysis, Whop integration</p>
+            
+            <hr>
+            <p style="color: #888; font-size: 0.9em;">
+                Check the console for the complete API documentation with all available endpoints.
+            </p>
+        </div>
+    </body>
+    </html>
+    '''
+
+# This should be the last route before the app.run() block
+
+
 if __name__ == '__main__':
     print("""
 ╔════════════════════════════════════════════════════════════════╗
