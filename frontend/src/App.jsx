@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, Users, TrendingUp, Network, Clock, BarChart3, Download, Save, Settings, Upload } from 'lucide-react';
 import * as d3 from 'd3';
 
+
 // Network Graph Component
 function NetworkGraph({ data, onNodeClick }) {
   const svgRef = useRef(null);
@@ -124,7 +125,7 @@ export default function SifterApp() {
     twitter: '',
     birdeye: '35d3d50f74d94c439f6913a7e82cf994'
   });
-  const [isKeysSet, setIsKeysSet] = useState(false);
+  const [isKeysSet, setIsKeysSet] = useState(true);
   const [tokenInput, setTokenInput] = useState('');
   const [timeRange, setTimeRange] = useState('first_7d');
   const [pumpTimeframe, setPumpTimeframe] = useState('5m');
@@ -760,7 +761,7 @@ export default function SifterApp() {
                       <h4 className="font-semibold">Network Analysis</h4>
                     </div>
                     <p className="text-sm text-gray-400">
-                      Detects coordinated groups vs organic alpha callers
+                      Detects coordinated groups vs organic alpha callers from those tweets
                     </p>
                   </div>
                 </div>
