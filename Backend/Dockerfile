@@ -16,6 +16,5 @@ RUN pip install -r requirements.txt
 # Copy application code
 COPY . .
 
-# Use gunicorn for production (properly handles $PORT)
+# Use shell form to expand $PORT environment variable
 CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
-
