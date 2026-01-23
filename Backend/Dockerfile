@@ -16,5 +16,6 @@ RUN pip install -r requirements.txt
 # Copy application code
 COPY . .
 
-# Run the application
-CMD ["python", "app.py"]
+# Use gunicorn for production (properly handles $PORT)
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
+
