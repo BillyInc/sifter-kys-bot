@@ -1,37 +1,41 @@
-import sys
-import json
+import os
 from datetime import datetime, timedelta
 
-# Import your rally detector
 from pump_detector import PrecisionRallyDetector
-
-
-# Import new modules
 from tweet_extractor import TwitterTweetExtractor
 from nlp_disambiguator import NLPDisambiguator
 
 
 class RallyTweetConnector:
-    def __init__(self, birdeye_api_key, twitter_bearer_token):
+    def __init__(self, birdeye_api_key=None, twitter_bearer_token=None):
         """
         Connect rally detection with tweet extraction
+        Now uses environment variables by default
         
         Args:
-            birdeye_api_key: Your Birdeye API key
-            twitter_bearer_token: Your Twitter Bearer Token
+            birdeye_api_key: Optional Birdeye API key (uses env var if None)
+            twitter_bearer_token: Optional Twitter Bearer Token (uses env var if None)
         """
-        self.rally_detector = PrecisionRallyDetector(birdeye_api_key=birdeye_api_key)
-        self.tweet_extractor = TwitterTweetExtractor(bearer_token=twitter_bearer_token)
+        # Use provided keys or fallback to environment variables
+        self.birdeye_api_key = birdeye_api_key or os.environ.get('BIRDEYE_API_KEY')
+        self.twitter_bearer_token = twitter_bearer_token or os.environ.get('TWITTER_BEARER_TOKEN')
+        
+        # Initialize components
+        self.rally_detector = PrecisionRallyDetector(birdeye_api_key=self.birdeye_api_key)
+        self.tweet_extractor = TwitterTweetExtractor(bearer_token=self.twitter_bearer_token)
     
-    def analyze_token_with_tweets(self, token_address, days_back=7):
+    def analyze_token_with_tweets(self, token_address, time_range='first_7d', 
+                                  candle_size='5m', t_minus=35, t_plus=10):
         """
         Main pipeline: Detect rallies → Extract tweets → Score → Display
         
         Args:
             token_address: Token contract address
-            days_back: Days of price data to analyze (max 7 for free Twitter API)
+            time_range: Analysis timeframe ('first_7d', 'last_7d', etc.)
+            candle_size: Candle size ('1m', '5m', '15m', '1h', '4h', '1d')
+            t_minus: Minutes before rally to search (configurable)
+            t_plus: Minutes after rally to search (configurable)
         """
-        
         print("\n" + "="*100)
         print("RALLY + TWEET ANALYSIS PIPELINE")
         print("="*100 + "\n")
@@ -44,7 +48,7 @@ class RallyTweetConnector:
             print("❌ Failed to fetch token data")
             return None
         
-        # Build token profile for NLP
+        # Build token profile
         token_profile = {
             'ticker': pair_data['baseToken']['symbol'],
             'name': pair_data['baseToken']['name'],
@@ -60,17 +64,32 @@ class RallyTweetConnector:
         print(f"  DEX: {token_profile['dex']}\n")
         
         # STEP 2: Detect rallies
-        print(f"[STEP 2/4] Detecting rallies in last {days_back} days...")
+        print(f"[STEP 2/4] Detecting rallies...")
+        print(f"  Time range: {time_range}")
+        print(f"  Candle size: {candle_size}")
         
         pair_address = pair_data['pairAddress']
         chain_name = self.rally_detector.get_chain_name(pair_data['chainId'])
         
-        ohlcv_data = self.rally_detector.get_ohlcv_data(pair_address, chain_name, days_back)
+        # Get launch time if needed
+        launch_timestamp = None
+        if time_range.startswith('first_'):
+            launch_timestamp = self.rally_detector.get_token_launch_time(token_address)
+        
+        # Get OHLCV data
+        ohlcv_data = self.rally_detector.get_ohlcv_data_with_launch(
+            pair_address=pair_address,
+            chain=chain_name,
+            launch_timestamp=launch_timestamp,
+            window_type=time_range,
+            candle_size=candle_size
+        )
         
         if not ohlcv_data:
             print("❌ Failed to fetch OHLCV data")
             return None
         
+        # Detect rallies
         rallies = self.rally_detector.detect_all_rallies(ohlcv_data)
         
         if not rallies:
@@ -81,9 +100,9 @@ class RallyTweetConnector:
         
         # STEP 3: Extract tweets for each rally
         print(f"[STEP 3/4] Extracting tweets for each rally...")
+        print(f"  Tweet search window: T-{t_minus} to T+{t_plus} minutes")
         
         nlp_scorer = NLPDisambiguator(token_profile)
-        
         rally_results = []
         
         for idx, rally in enumerate(rallies, 1):
@@ -97,13 +116,13 @@ class RallyTweetConnector:
             print(f"  Gain: +{rally['total_gain']:.1f}%")
             print(f"{'─'*100}")
             
-            # Extract tweets
+            # Extract tweets with configurable window
             tweets = self.tweet_extractor.search_tweets_for_rally(
                 token_ticker=token_profile['ticker'],
                 token_name=token_profile['name'],
                 rally_start_time=rally_start,
-                t_minus_minutes=35,
-                t_plus_minutes=10
+                t_minus_minutes=t_minus,
+                t_plus_minutes=t_plus
             )
             
             if not tweets:
@@ -116,7 +135,7 @@ class RallyTweetConnector:
                 })
                 continue
             
-            # STEP 4: Score tweets with NLP
+            # Score tweets
             print(f"\n[SCORING] Applying NLP disambiguation to {len(tweets)} tweets...")
             
             scored_tweets = []
@@ -130,15 +149,14 @@ class RallyTweetConnector:
                         'score': score_result
                     })
             
-            # Sort by score
             scored_tweets.sort(key=lambda x: x['score']['total_score'], reverse=True)
             
             print(f"   → {len(scored_tweets)} tweets passed filtering")
-            print(f"   → Confidence breakdown:")
             
             high_conf = [t for t in scored_tweets if t['score']['confidence'] == 'high']
             medium_conf = [t for t in scored_tweets if t['score']['confidence'] == 'medium']
             
+            print(f"   → Confidence breakdown:")
             print(f"      • High confidence: {len(high_conf)}")
             print(f"      • Medium confidence: {len(medium_conf)}\n")
             
@@ -172,7 +190,6 @@ class RallyTweetConnector:
     
     def _display_summary(self, rally_results, token_profile):
         """Display final summary"""
-        
         print(f"TOKEN: {token_profile['ticker']} ({token_profile['name']})")
         print(f"RALLIES ANALYZED: {len(rally_results)}\n")
         
@@ -202,66 +219,86 @@ class RallyTweetConnector:
 
 
 def main():
+    """Example usage with environment variables"""
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
-║                           RALLY + TWEET ANALYSIS TOOL                                        ║
+║                           RALLY + TWEET ANALYSIS TOOL v3.0                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 
 This tool:
 1. Detects price rallies using precision candle analysis
-2. Searches Twitter for mentions during T-35 to T+10 windows
+2. Searches Twitter for mentions during configurable time windows
 3. Scores tweets using NLP disambiguation
 4. Shows you WHO tweeted BEFORE pumps
 
-⚠️  FREE TWITTER API LIMITS:
-   • 100 tweets/month total
-   • Last 7 days only
-   • Recommend analyzing 1-2 rallies max per month
+Configuration:
+  - API keys loaded from environment variables
+  - Configurable analysis timeframes
+  - Customizable candle sizes
+  - Adjustable tweet search windows
+
+⚠️  Requirements:
+   • BIRDEYE_API_KEY environment variable
+   • TWITTER_BEARER_TOKEN environment variable
 """)
     
-    # Configuration
-    BIRDEYE_API_KEY = "35d3d50f74d94c439f6913a7e82cf994"
+    # Check environment variables
+    birdeye_key = os.environ.get('BIRDEYE_API_KEY')
+    twitter_token = os.environ.get('TWITTER_BEARER_TOKEN')
     
-    print("Enter your Twitter Bearer Token:")
-    TWITTER_BEARER_TOKEN = input("Bearer Token: ").strip()
+    if not birdeye_key:
+        print("❌ BIRDEYE_API_KEY environment variable not set")
+        birdeye_key = input("Enter Birdeye API Key: ").strip()
     
-    if not TWITTER_BEARER_TOKEN:
-        print("\n❌ No Twitter token provided")
+    if not twitter_token:
+        print("❌ TWITTER_BEARER_TOKEN environment variable not set")
+        twitter_token = input("Enter Twitter Bearer Token: ").strip()
+    
+    if not birdeye_key or not twitter_token:
+        print("\n❌ API keys are required")
         return
     
     # Initialize connector
     connector = RallyTweetConnector(
-        birdeye_api_key=BIRDEYE_API_KEY,
-        twitter_bearer_token=TWITTER_BEARER_TOKEN
+        birdeye_api_key=birdeye_key,
+        twitter_bearer_token=twitter_token
     )
+    
     print("\n[Testing Twitter API connection...]")
     if not connector.tweet_extractor.test_connection():
-        print("\n⚠️ Twitter API test failed. Please check:")
-        print("   1. Your Bearer Token is correct")
-        print("   2. Your Twitter API access level (Free tier won't work for search)")
-        print("   3. Twitter API status: https://api.twitterstat.us/")
-        
+        print("\n⚠️ Twitter API test failed")
         proceed = input("\nContinue anyway? (y/n): ").strip().lower()
         if proceed != 'y':
             return
+    
     # Get token address
-    print("\nEnter token contract address (must be <7 days old for Twitter search):")
+    print("\nEnter token contract address:")
     token_address = input("Token: ").strip()
     
     if not token_address:
         print("❌ No token address provided")
         return
     
-    # Get days back (max 7 for free Twitter API)
-    days_input = input("\nDays of data to analyze (default 7, max 7 for free Twitter API): ").strip()
-    try:
-        days_back = int(days_input) if days_input else 7
-        days_back = min(days_back, 7)  # Cap at 7 for free API
-    except ValueError:
-        days_back = 7
+    # Get analysis settings
+    print("\nAnalysis Settings:")
+    print("1. Time range (first_5m, first_24h, first_7d, last_7d, etc.)")
+    time_range = input("Time range [first_7d]: ").strip() or 'first_7d'
+    
+    print("2. Candle size (1m, 5m, 15m, 1h, 4h, 1d)")
+    candle_size = input("Candle size [5m]: ").strip() or '5m'
+    
+    print("3. Tweet search window")
+    t_minus = int(input("T-minus minutes [35]: ").strip() or '35')
+    t_plus = int(input("T-plus minutes [10]: ").strip() or '10')
     
     # Run analysis
-    results = connector.analyze_token_with_tweets(token_address, days_back)
+    results = connector.analyze_token_with_tweets(
+        token_address=token_address,
+        time_range=time_range,
+        candle_size=candle_size,
+        t_minus=t_minus,
+        t_plus=t_plus
+    )
     
     if results:
         print("\n✅ Analysis complete!")
