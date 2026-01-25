@@ -9,7 +9,7 @@ class PrecisionRallyDetector:
         self.birdeye_url = "https://public-api.birdeye.so/defi/v3/ohlcv/pair"
         self.birdeye_api_key = birdeye_api_key
         
-        # Rally detection thresholds
+        # Rally detection thresholds (proven working values from Document 8)
         self.MIN_START_GAIN = 1.5
         self.MIN_TOTAL_GAIN = 20.0
         self.MIN_GREEN_RATIO = 0.40
@@ -18,7 +18,7 @@ class PrecisionRallyDetector:
         self.DRAWDOWN_END_THRESHOLD = -15.0
         self.VOLUME_EXHAUSTION = 0.3
         
-        # Candle size mapping
+        # FIXED: Add candle size mapping for multi-timeframe support
         self.CANDLE_SIZE_MAPPING = {
             '1m': '1m',
             '5m': '5m',
@@ -77,7 +77,7 @@ class PrecisionRallyDetector:
             
             tokens = []
             
-            for pair in data['pairs'][:20]:  # Limit to top 20
+            for pair in data['pairs'][:20]:
                 tokens.append({
                     'ticker': pair['baseToken']['symbol'],
                     'name': pair['baseToken']['name'],
@@ -91,7 +91,6 @@ class PrecisionRallyDetector:
                     'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0))
                 })
             
-            # Sort by liquidity
             tokens.sort(key=lambda x: x['liquidity_usd'], reverse=True)
             
             print(f"[TOKEN SEARCH] Found {len(tokens)} tokens")
@@ -187,7 +186,7 @@ class PrecisionRallyDetector:
     def get_ohlcv_data_with_launch(self, pair_address, chain, launch_timestamp=None, 
                                     window_type='first_7d', candle_size='5m'):
         """
-        Fetch OHLCV data with support for:
+        COMPLETE VERSION: Fetch OHLCV data with support for:
         - Launch-anchored windows (first_5m, first_24h, etc.)
         - Relative windows (last_7d, last_30d, etc.)
         - Different candle sizes (1m, 5m, 15m, 1h, 4h, 1d)
@@ -200,7 +199,7 @@ class PrecisionRallyDetector:
             print("❌ Birdeye API key is required!")
             return None
         
-        # Map candle size
+        # FIXED: Map candle size to Birdeye format
         birdeye_candle_size = self.CANDLE_SIZE_MAPPING.get(candle_size, '5m')
         
         # Calculate time range
@@ -231,7 +230,7 @@ class PrecisionRallyDetector:
         
         params = {
             'address': pair_address,
-            'type': birdeye_candle_size,
+            'type': birdeye_candle_size,  # FIXED: Now dynamic
             'time_from': time_from,
             'time_to': time_to,
         }
@@ -257,6 +256,13 @@ class PrecisionRallyDetector:
                 print("❌ No candlestick data returned")
                 return None
             
+            # DEBUG: Log what fields Birdeye actually returns
+            if items:
+                print(f"[DEBUG] Available fields in candle data: {list(items[0].keys())}")
+                # Check for volume field variations
+                if 'v_usd' not in items[0]:
+                    print(f"[WARNING] 'v_usd' field not found. Sample candle: {items[0]}")
+            
             print(f"✓ Retrieved {len(items)} {candle_size} candles")
             print(f"✓ Time range: {datetime.fromtimestamp(items[0]['unix_time'])} to {datetime.fromtimestamp(items[-1]['unix_time'])}")
             
@@ -277,7 +283,7 @@ class PrecisionRallyDetector:
         if not lookback_candles or len(lookback_candles) < 3:
             return {'median': 500, 'use_fixed': True}
         
-        volumes = [c['v_usd'] for c in lookback_candles]
+        volumes = [c.get('v_usd', 0) for c in lookback_candles]
         
         # Remove extreme outliers
         if len(volumes) > 5:
@@ -291,8 +297,8 @@ class PrecisionRallyDetector:
             volumes = filtered if filtered else volumes
         
         return {
-            'median': statistics.median(volumes),
-            'mean': statistics.mean(volumes),
+            'median': statistics.median(volumes) if volumes else 100,
+            'mean': statistics.mean(volumes) if volumes else 100,
             'use_fixed': False
         }
     
@@ -315,9 +321,10 @@ class PrecisionRallyDetector:
         
         # Volume check - lenient
         baseline = self.get_volume_baseline(ohlcv_data, idx)
+        current_volume = current.get('v_usd', 0)
         
         if baseline['use_fixed']:
-            if current['v_usd'] < 100:
+            if current_volume < 100:
                 return False
         else:
             if baseline['median'] < 5000:
@@ -325,7 +332,7 @@ class PrecisionRallyDetector:
             else:
                 vol_threshold = baseline['median'] * 0.5
             
-            if current['v_usd'] < vol_threshold:
+            if current_volume < vol_threshold:
                 return False
         
         return True
@@ -368,8 +375,9 @@ class PrecisionRallyDetector:
                 return True
         
         # 3. Volume exhaustion
-        avg_rally_volume = sum(c['v_usd'] for c in rally_candles) / len(rally_candles)
-        current_volume = ohlcv_data[current_idx]['v_usd']
+        volumes = [c.get('v_usd', 0) for c in rally_candles]
+        avg_rally_volume = sum(volumes) / len(volumes) if volumes else 0
+        current_volume = ohlcv_data[current_idx].get('v_usd', 0)
         
         if avg_rally_volume > 0 and current_volume < avg_rally_volume * self.VOLUME_EXHAUSTION:
             if rally_length >= 5:
@@ -412,16 +420,28 @@ class PrecisionRallyDetector:
         green_count = sum(1 for c in window if c['c'] > c['o'])
         green_ratio = green_count / len(window) if len(window) > 0 else 0
         
-        start_price = ohlcv_data[start_idx - 1]['c'] if start_idx > 0 else window[0]['o']
+        # FIXED: Better price reference handling
+        if start_idx > 0:
+            start_price = ohlcv_data[start_idx - 1]['c']
+        else:
+            start_price = window[0]['o']
+        
         end_price = window[-1]['c']
         closes = [c['c'] for c in window]
         peak_price = max(closes)
         
-        if start_price <= 0:
+        # FIXED: Validation for unrealistic prices
+        if start_price <= 0 or end_price <= 0:
+            print(f"[WARNING] Invalid price data: start={start_price}, end={end_price}")
             return None
         
         total_gain = ((end_price - start_price) / start_price) * 100
         peak_gain = ((peak_price - start_price) / start_price) * 100
+        
+        # FIXED: Sanity check for unrealistic gains
+        if total_gain > 500:
+            print(f"[WARNING] Unrealistic gain detected: {total_gain}% (likely data error)")
+            return None
         
         # Minimum thresholds
         if total_gain < self.MIN_TOTAL_GAIN:
@@ -430,7 +450,7 @@ class PrecisionRallyDetector:
         if green_ratio < self.MIN_GREEN_RATIO:
             return None
         
-        combined_volume = sum(c['v_usd'] for c in window)
+        combined_volume = sum(c.get('v_usd', 0) for c in window)
         rally_type = self.classify_rally_type(window, total_gain, peak_gain, green_ratio)
         max_dd = self.calculate_max_drawdown(closes)
         

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote } from 'lucide-react';
+import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle } from 'lucide-react';
 
 export default function SifterKYS() {
   const [activeTab, setActiveTab] = useState('analyze');
@@ -32,6 +32,9 @@ export default function SifterKYS() {
   const [editingTags, setEditingTags] = useState(null);
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
+
+  // NEW: Expanded tokens state (all expanded by default)
+  const [expandedTokens, setExpandedTokens] = useState({});
 
   const API_URL = 'http://localhost:5000';
   const userId = 'demo_user'; // In production, get from wallet/auth
@@ -234,6 +237,12 @@ export default function SifterKYS() {
 
       if (response.ok) {
         setAnalysisResults(data);
+        // NEW: Auto-expand all tokens
+        const expanded = {};
+        data.results.forEach((_, idx) => {
+          expanded[idx] = true;
+        });
+        setExpandedTokens(expanded);
       } else {
         throw new Error(data.error || 'Analysis failed');
       }
@@ -244,6 +253,35 @@ export default function SifterKYS() {
     }
 
     setIsAnalyzing(false);
+  };
+
+  // NEW: Clear results
+  const clearResults = () => {
+    if (confirm('Clear all analysis results?')) {
+      setAnalysisResults(null);
+      setExpandedTokens({});
+    }
+  };
+
+  // NEW: Toggle token expansion
+  const toggleTokenExpansion = (idx) => {
+    setExpandedTokens(prev => ({
+      ...prev,
+      [idx]: !prev[idx]
+    }));
+  };
+
+  // NEW: Expand/collapse all
+  const expandAll = () => {
+    const expanded = {};
+    analysisResults.results.forEach((_, idx) => {
+      expanded[idx] = true;
+    });
+    setExpandedTokens(expanded);
+  };
+
+  const collapseAll = () => {
+    setExpandedTokens({});
   };
 
   // FIXED Issue 1: Watchlist functions
@@ -762,21 +800,54 @@ export default function SifterKYS() {
           </div>
         )}
 
-        {/* Results Tab */}
+        {/* Results Tab - UPDATED */}
         {activeTab === 'results' && (
           <div className="space-y-4">
             {analysisResults ? (
               <>
+                {/* NEW: Header with Clear Button */}
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold">Analysis Results</h2>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={expandAll}
+                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2"
+                    >
+                      <ChevronDown size={16} />
+                      Expand All
+                    </button>
+                    <button
+                      onClick={collapseAll}
+                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2"
+                    >
+                      <ChevronUp size={16} />
+                      Collapse All
+                    </button>
+                    <button
+                      onClick={clearResults}
+                      className="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-sm flex items-center gap-2"
+                    >
+                      <RotateCcw size={16} />
+                      Clear Results
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Summary */}
                 <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
-                  <h2 className="text-xl font-bold mb-3">Analysis Complete</h2>
-                  <div className="grid grid-cols-3 gap-3">
+                  <h3 className="text-lg font-semibold mb-3">Summary</h3>
+                  <div className="grid grid-cols-4 gap-3">
                     <div className="bg-black/30 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-purple-400">{analysisResults.summary.total_tokens}</div>
-                      <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                      <div className="text-xs text-gray-400">Total Tokens</div>
                     </div>
                     <div className="bg-black/30 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-green-400">{analysisResults.summary.successful_analyses}</div>
                       <div className="text-xs text-gray-400">Successful</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-blue-400">{analysisResults.summary.total_pumps}</div>
+                      <div className="text-xs text-gray-400">Total Pumps</div>
                     </div>
                     <div className="bg-black/30 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-yellow-400">{analysisResults.summary.cross_token_accounts || 0}</div>
@@ -784,152 +855,158 @@ export default function SifterKYS() {
                     </div>
                   </div>
                 </div>
-
-                {analysisResults.results.map((result, idx) => (
-                  <div key={idx} className="bg-white/5 border border-white/10 rounded-xl p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h3 className="text-lg font-semibold">{result.token.ticker}</h3>
-                        <p className="text-sm text-gray-400">{result.token.name}</p>
-                      </div>
-                      <span className={`px-3 py-1 rounded text-sm ${
-                        result.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {result.success ? '✓ Success' : '✗ Failed'}
-                      </span>
-                    </div>
-
-                    {result.success && (
-                      <>
-                        {result.rally_details && result.rally_details.length > 0 && (
-                          <div className="mb-4 space-y-3">
-                            <div className="flex items-center gap-2 mb-2">
-                              <TrendingUp className="text-blue-400" size={16} />
-                              <span className="font-semibold text-blue-400">
-                                {result.rally_details.length} Pump{result.rally_details.length > 1 ? 's' : ''} Detected
-                              </span>
-                            </div>
-
-                            {result.rally_details.map((rally, rallyIdx) => (
-                              <div key={rallyIdx} className="bg-black/30 border border-blue-500/20 rounded-lg p-3">
-                                <div className="flex justify-between items-start mb-2">
+                
+                {/* Token Results - NEW: Collapsible */}
+                {analysisResults.results.map((result, idx) => {
+                  const isExpanded = expandedTokens[idx];
+                  
+                  return (
+                    <div key={idx} className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                      {/* NEW: Clickable Header */}
+                      <button
+                        onClick={() => toggleTokenExpansion(idx)}
+                        className="w-full px-4 py-4 flex items-center justify-between hover:bg-white/5 transition"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-xl font-bold text-purple-400">#{idx + 1}</span>
+                          <div className="text-left">
+                            <h3 className="text-lg font-semibold">{result.token.ticker}</h3>
+                            <p className="text-sm text-gray-400">{result.token.name}</p>
+                          </div>
+                          <span className={`px-3 py-1 rounded text-sm ${
+                            result.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                          }`}>
+                            {result.success ? '✓ Success' : '✗ Failed'}
+                          </span>
+                          {result.success && (
+                            <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded text-sm">
+                              {result.rallies} Pump{result.rallies !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                        {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      </button>
+                      
+                      {/* NEW: Collapsible Content */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t border-white/10 pt-4">
+                          {result.success ? (
+                            <>
+                              {/* Rally Details */}
+                              {result.rally_details && result.rally_details.length > 0 && (
+                                <div className="mb-4 space-y-3">
+                                  {result.rally_details.map((rally, rallyIdx) => (
+                                    <div key={rallyIdx} className="bg-black/30 border border-blue-500/20 rounded-lg p-3">
+                                      <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                          <span className="font-semibold text-sm">Pump #{rallyIdx + 1}</span>
+                                          <span className={`ml-2 text-xs px-2 py-0.5 rounded ${
+                                            rally.rally_type === 'explosive' ? 'bg-red-500/20 text-red-400' :
+                                            rally.rally_type === 'choppy' ? 'bg-yellow-500/20 text-yellow-400' :
+                                            'bg-green-500/20 text-green-400'
+                                          }`}>
+                                            {rally.rally_type}
+                                          </span>
+                                        </div>
+                                        <div className="text-right">
+                                          <div className="text-green-400 font-bold text-sm">+{rally.total_gain_pct}%</div>
+                                          <div className="text-xs text-gray-400">Peak: +{rally.peak_gain_pct}%</div>
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-2 gap-2 text-xs">
+                                        <div className="text-gray-400">
+                                          <span className="text-gray-500">Start:</span> {new Date(rally.start_time * 1000).toLocaleString()}
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="text-gray-500">End:</span> {new Date(rally.end_time * 1000).toLocaleString()}
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="text-gray-500">Candles:</span> {rally.candle_count}
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="text-gray-500">Green Ratio:</span> {rally.green_ratio}%
+                                        </div>
+                                      </div>
+                                      
+                                      {rally.volume_data && (
+                                        <div className="mt-2 pt-2 border-t border-white/5">
+                                          <div className="grid grid-cols-3 gap-2 text-xs">
+                                            <div className="text-gray-400">
+                                              <span className="text-gray-500">Avg Vol:</span> {formatNumber(rally.volume_data.avg_volume)}
+                                            </div>
+                                            <div className="text-gray-400">
+                                              <span className="text-gray-500">Peak Vol:</span> {formatNumber(rally.volume_data.peak_volume)}
+                                            </div>
+                                            <div className="text-gray-400">
+                                              <span className="text-gray-500">Spike:</span> {rally.volume_data.volume_spike_ratio}x
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              
+                              {/* Top Accounts */}
+                              {result.top_accounts && result.top_accounts.length > 0 ? (
+                                <div>
+                                  <h4 className="font-semibold mb-2">Top Accounts ({result.top_accounts.length})</h4>
+                                  <div className="space-y-2">
+                                    {result.top_accounts.slice(0, 10).map((account) => (
+                                      <div key={account.author_id} className="bg-black/30 rounded-lg p-3">
+                                        <div className="flex justify-between items-center mb-2">
+                                          <div className="font-semibold">@{account.username || account.author_id}</div>
+                                          <div className="flex items-center gap-2">
+                                            <div className="text-purple-400 font-bold">{account.influence_score}</div>
+                                            <button
+                                              onClick={() => addToWatchlist(account)}
+                                              className="p-1 hover:bg-purple-500/20 rounded text-purple-400"
+                                              title="Add to watchlist"
+                                            >
+                                              <BookmarkPlus size={16} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 text-xs text-gray-400">
+                                          <div>Pumps: {account.pumps_called}</div>
+                                          <div>Avg: {account.avg_timing}m</div>
+                                          <div>Earliest: {account.earliest_call}m</div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : result.rallies > 0 ? (
+                                <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg flex items-start gap-2">
+                                  <AlertCircle className="text-yellow-400 flex-shrink-0" size={18} />
                                   <div>
-                                    <span className="font-semibold text-sm">Pump #{rallyIdx + 1}</span>
-                                    <span className={`ml-2 text-xs px-2 py-0.5 rounded ${
-                                      rally.rally_type === 'explosive' ? 'bg-red-500/20 text-red-400' :
-                                      rally.rally_type === 'choppy' ? 'bg-yellow-500/20 text-yellow-400' :
-                                      'bg-green-500/20 text-green-400'
-                                    }`}>
-                                      {rally.rally_type}
-                                    </span>
-                                  </div>
-                                  <div className="text-right">
-                                    {/* FIXED Issue 4: Now using total_gain_pct from backend */}
-                                    <div className="text-green-400 font-bold text-sm">+{rally.total_gain_pct}%</div>
-                                    <div className="text-xs text-gray-400">Peak: +{rally.peak_gain_pct}%</div>
+                                    <p className="text-sm text-yellow-400 font-semibold">No Twitter accounts found</p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      The pump occurred but no tweets were found in the analysis window. Try adjusting T-minus/T-plus settings.
+                                    </p>
                                   </div>
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  {/* FIXED Issue 3: Using Unix timestamp directly (no * 1000 on string) */}
-                                  <div className="text-gray-400">
-                                    <span className="text-gray-500">Start:</span> {new Date(rally.start_time * 1000).toLocaleString()}
-                                  </div>
-                                  <div className="text-gray-400">
-                                    <span className="text-gray-500">End:</span> {new Date(rally.end_time * 1000).toLocaleString()}
-                                  </div>
-                                  <div className="text-gray-400">
-                                    <span className="text-gray-500">Candles:</span> {rally.candle_count}
-                                  </div>
-                                  <div className="text-gray-400">
-                                    <span className="text-gray-500">Green Ratio:</span> {rally.green_ratio}%
-                                  </div>
-                                </div>
-
-                                {/* FIXED Issue 5: Using volume_data object */}
-                                {rally.volume_data && (
-                                  <div className="mt-2 pt-2 border-t border-white/5">
-                                    <div className="grid grid-cols-3 gap-2 text-xs">
-                                      <div className="text-gray-400">
-                                        <span className="text-gray-500">Avg Vol:</span> {formatNumber(rally.volume_data.avg_volume)}
-                                      </div>
-                                      <div className="text-gray-400">
-                                        <span className="text-gray-500">Peak Vol:</span> {formatNumber(rally.volume_data.peak_volume)}
-                                      </div>
-                                      <div className="text-gray-400">
-                                        <span className="text-gray-500">Spike:</span> {rally.volume_data.volume_spike_ratio}x
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {result.rallies > 0 && (!result.rally_details || result.rally_details.length === 0) && (
-                          <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                            <div className="flex items-center gap-2 mb-1">
-                              <TrendingUp className="text-blue-400" size={16} />
-                              <span className="font-semibold text-blue-400">
-                                {result.rallies} Pump{result.rallies > 1 ? 's' : ''} Detected
-                              </span>
+                              ) : null}
+                            </>
+                          ) : (
+                            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                              <p className="text-red-400 text-sm">{result.error}</p>
                             </div>
-                            <p className="text-xs text-gray-400">
-                              Found {result.rallies} significant price movement{result.rallies > 1 ? 's' : ''} during analysis period
-                            </p>
-                          </div>
-                        )}
-
-                        {result.top_accounts && result.top_accounts.length > 0 ? (
-                          <div>
-                            <h4 className="font-semibold mb-2 flex items-center justify-between">
-                              <span>Top Accounts ({result.top_accounts.length})</span>
-                            </h4>
-                            <div className="space-y-2">
-                              {result.top_accounts.slice(0, 10).map((account) => (
-                                <div key={account.author_id} className="bg-black/30 rounded-lg p-3">
-                                  <div className="flex justify-between items-center mb-2">
-                                    <div className="font-semibold">@{account.username || account.author_id}</div>
-                                    <div className="flex items-center gap-2">
-                                      <div className="text-purple-400 font-bold">{account.influence_score}</div>
-                                      <button
-                                        onClick={() => addToWatchlist(account)}
-                                        className="p-1 hover:bg-purple-500/20 rounded text-purple-400"
-                                        title="Add to watchlist"
-                                      >
-                                        <BookmarkPlus size={16} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-2 text-xs text-gray-400">
-                                    <div>Pumps: {account.pumps_called}</div>
-                                    <div>Avg: {account.avg_timing}m</div>
-                                    <div>Earliest: {account.earliest_call}m</div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : result.rallies > 0 ? (
-                          <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-                            <p className="text-sm text-yellow-400">
-                              ⚠️ No Twitter accounts found for this token's pumps
-                            </p>
-                            <p className="text-xs text-gray-400 mt-1">
-                              The pump occurred but no tweets were found in the analysis window.
-                            </p>
-                          </div>
-                        ) : null}
-                      </>
-                    )}
-
-                    {!result.success && (
-                      <p className="text-red-400 text-sm">{result.error}</p>
-                    )}
-                  </div>
-                ))}
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </>
+            ) : isAnalyzing ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 border-4 border-white/30 border-t-purple-500 rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-gray-400">Analyzing tokens...</p>
+                <p className="text-sm text-gray-500 mt-2">This may take 1-3 minutes depending on the number of tokens and pumps found</p>
+              </div>
             ) : (
               <div className="text-center py-12 text-gray-400">
                 <BarChart3 size={48} className="mx-auto mb-3 opacity-50" />

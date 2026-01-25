@@ -31,7 +31,7 @@ BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', '35d3d50f74d94c439f6913a7e82
 @app.route('/api/analyze', methods=['POST'])
 def analyze_tokens():
     """
-    FIXED: Analyze multiple tokens with proper data formats for frontend
+    UPDATED: Analyze multiple tokens with improved performance and error handling
     """
     try:
         data = request.json
@@ -41,24 +41,33 @@ def analyze_tokens():
         
         tokens = data['tokens']
         
-        print(f"\n[MULTI-ANALYSIS] Analyzing {len(tokens)} tokens...")
+        print(f"\n{'='*100}")
+        print(f"MULTI-TOKEN ANALYSIS: {len(tokens)} tokens")
+        print(f"{'='*100}\n")
         
         all_results = []
         all_top_accounts = {}
         
         for idx, token in enumerate(tokens, 1):
-            print(f"\n[{idx}/{len(tokens)}] Analyzing {token['ticker']}...")
+            print(f"\n{'─'*100}")
+            print(f"[{idx}/{len(tokens)}] Analyzing {token['ticker']} ({token['name']})")
+            print(f"{'─'*100}")
             
             settings = token.get('settings', {})
             
             try:
-                # Get token launch time and price data
+                # Initialize detector
                 detector = PrecisionRallyDetector(birdeye_api_key=BIRDEYE_API_KEY)
+                
+                # Step 1: Get token launch time (if needed for first_X windows)
                 launch_timestamp = None
                 
                 if settings.get('analysis_timeframe', '').startswith('first_'):
+                    print(f"[{idx}/{len(tokens)}] Fetching launch time...")
                     launch_timestamp = detector.get_token_launch_time(token['address'])
                 
+                # Step 2: Get OHLCV data
+                print(f"[{idx}/{len(tokens)}] Fetching price data...")
                 ohlcv_data = detector.get_ohlcv_data_with_launch(
                     pair_address=token['pair_address'],
                     chain=token['chain'],
@@ -68,6 +77,7 @@ def analyze_tokens():
                 )
                 
                 if not ohlcv_data:
+                    print(f"[{idx}/{len(tokens)}] ❌ No price data available")
                     all_results.append({
                         'token': token,
                         'success': False,
@@ -76,11 +86,13 @@ def analyze_tokens():
                     })
                     continue
                 
-                # Detect rallies
+                # Step 3: Detect rallies
+                print(f"[{idx}/{len(tokens)}] Detecting pumps...")
                 rallies = detector.detect_all_rallies(ohlcv_data)
                 
-                # FIXED: Even if no rallies, still mark as success
+                # If no rallies, still mark as success
                 if not rallies:
+                    print(f"[{idx}/{len(tokens)}] ✓ Analysis complete - No pumps detected")
                     all_results.append({
                         'token': token,
                         'success': True,
@@ -91,38 +103,34 @@ def analyze_tokens():
                     })
                     continue
                 
-                # FIXED: Format rally details with correct field names and types
+                # Format rally details
                 rally_details = []
                 for rally in rallies:
-                    # FIXED Issue 3: Return Unix timestamps as numbers, not formatted strings
                     start_unix = rally['window'][0]['unix_time']
                     end_unix = rally['window'][-1]['unix_time']
                     
                     # Calculate volume stats
-                    volumes = [candle.get('volume', 0) for candle in rally['window']]
+                    volumes = [candle.get('v_usd', 0) for candle in rally['window']]
                     avg_volume = sum(volumes) / len(volumes) if volumes else 0
                     peak_volume = max(volumes) if volumes else 0
                     
-                    # Get baseline volume (before rally)
+                    # Get baseline volume
                     baseline_volumes = []
                     for candle in ohlcv_data:
                         if candle['unix_time'] < start_unix:
-                            baseline_volumes.append(candle.get('volume', 0))
+                            baseline_volumes.append(candle.get('v_usd', 0))
                     
                     baseline_avg = sum(baseline_volumes[-10:]) / 10 if len(baseline_volumes) >= 10 else avg_volume
                     volume_spike_ratio = round(peak_volume / baseline_avg, 2) if baseline_avg > 0 else 1.0
                     
                     rally_details.append({
-                        # FIXED Issue 3: Use Unix timestamps (numbers) instead of formatted strings
                         'start_time': start_unix,
                         'end_time': end_unix,
-                        # FIXED Issue 4: Use _pct suffix and multiply by 100 for percentage
-                        'total_gain_pct': round(rally['total_gain'] * 100, 2),
-                        'peak_gain_pct': round(rally['peak_gain'] * 100, 2),
+                        'total_gain_pct': round(rally['total_gain'], 2),
+                        'peak_gain_pct': round(rally['peak_gain'], 2),
                         'rally_type': rally['type'],
                         'candle_count': rally['length'],
                         'green_ratio': round(rally['green_ratio'] * 100, 1),
-                        # FIXED Issue 5: Return volume_data as object with multiple fields
                         'volume_data': {
                             'avg_volume': avg_volume,
                             'peak_volume': peak_volume,
@@ -130,125 +138,136 @@ def analyze_tokens():
                         }
                     })
                 
-                # Try to get Twitter data, but don't fail if Twitter API fails
+                print(f"[{idx}/{len(tokens)}] ✓ Found {len(rallies)} pump(s)")
+                
+                # Step 4: Try to get Twitter data (don't fail if Twitter is down)
                 top_accounts = []
                 
-                try:
-                    tweet_extractor = TwitterTweetExtractor(bearer_token=TWITTER_BEARER_TOKEN)
-                    nlp_scorer = NLPDisambiguator({
-                        'ticker': token['ticker'],
-                        'name': token['name'],
-                        'contract_address': token['address'],
-                        'chain': token['chain']
-                    })
-                    
-                    rally_results = []
-                    
-                    for rally in rallies:
-                        rally_start = datetime.fromtimestamp(rally['window'][0]['unix_time'])
+                # Check if Twitter API is configured
+                if TWITTER_BEARER_TOKEN and TWITTER_BEARER_TOKEN != 'your_twitter_token_here':
+                    try:
+                        print(f"[{idx}/{len(tokens)}] Searching Twitter for callers...")
                         
-                        tweets = tweet_extractor.search_tweets_for_rally(
-                            token_ticker=token['ticker'],
-                            token_name=token['name'],
-                            rally_start_time=rally_start,
-                            t_minus_minutes=settings.get('t_minus', 35),
-                            t_plus_minutes=settings.get('t_plus', 10)
-                        )
-                        
-                        scored_tweets = []
-                        for tweet in tweets:
-                            score_result = nlp_scorer.score_tweet(tweet)
-                            if score_result['accept']:
-                                scored_tweets.append({
-                                    'tweet': tweet,
-                                    'score': score_result
-                                })
-                        
-                        rally_results.append({
-                            'rally': rally,
-                            'scored_tweets': scored_tweets
+                        tweet_extractor = TwitterTweetExtractor(bearer_token=TWITTER_BEARER_TOKEN)
+                        nlp_scorer = NLPDisambiguator({
+                            'ticker': token['ticker'],
+                            'name': token['name'],
+                            'contract_address': token['address'],
+                            'chain': token['chain']
                         })
-                    
-                    # Extract top accounts
-                    account_stats = {}
-                    
-                    for result in rally_results:
-                        for scored_tweet in result['scored_tweets']:
-                            tweet = scored_tweet['tweet']
-                            author_id = str(tweet['author_id'])
+                        
+                        rally_results = []
+                        
+                        for rally_idx, rally in enumerate(rallies, 1):
+                            rally_start = datetime.fromtimestamp(rally['window'][0]['unix_time'])
                             
-                            if author_id not in account_stats:
-                                account_stats[author_id] = {
-                                    'author_id': author_id,
-                                    'pumps_called': 0,
-                                    'timings': [],
-                                    'scores': [],
-                                    'high_confidence_count': 0
-                                }
+                            print(f"[{idx}/{len(tokens)}]   Pump {rally_idx}/{len(rallies)}: Searching tweets...")
                             
-                            account_stats[author_id]['pumps_called'] += 1
-                            account_stats[author_id]['timings'].append(tweet['time_to_rally_minutes'])
-                            account_stats[author_id]['scores'].append(scored_tweet['score']['total_score'])
-                            
-                            if scored_tweet['score']['confidence'] == 'high':
-                                account_stats[author_id]['high_confidence_count'] += 1
-                    
-                    # Calculate influence scores
-                    ranked_accounts = []
-                    
-                    for author_id, stats in account_stats.items():
-                        if stats['timings']:
-                            avg_timing = sum(stats['timings']) / len(stats['timings'])
-                            avg_score = sum(stats['scores']) / len(stats['scores'])
-                            earliest = min(stats['timings'])
-                            
-                            influence_score = (
-                                (stats['pumps_called'] * 30) +
-                                (max(0, -avg_timing) * 2) +
-                                (stats['high_confidence_count'] * 15) +
-                                (avg_score * 0.5)
+                            tweets = tweet_extractor.search_tweets_for_rally(
+                                token_ticker=token['ticker'],
+                                token_name=token['name'],
+                                rally_start_time=rally_start,
+                                t_minus_minutes=settings.get('t_minus', 35),
+                                t_plus_minutes=settings.get('t_plus', 10)
                             )
                             
-                            account = {
-                                'author_id': author_id,
-                                'pumps_called': stats['pumps_called'],
-                                'avg_timing': round(avg_timing, 1),
-                                'earliest_call': round(earliest, 1),
-                                'influence_score': round(influence_score, 1),
-                                'high_confidence_count': stats['high_confidence_count']
-                            }
+                            scored_tweets = []
+                            for tweet in tweets:
+                                score_result = nlp_scorer.score_tweet(tweet)
+                                if score_result['accept']:
+                                    scored_tweets.append({
+                                        'tweet': tweet,
+                                        'score': score_result
+                                    })
                             
-                            ranked_accounts.append(account)
-                            
-                            # Track across tokens
-                            if author_id not in all_top_accounts:
-                                all_top_accounts[author_id] = {
-                                    'author_id': author_id,
-                                    'tokens_called': [],
-                                    'total_influence': 0
-                                }
-                            
-                            all_top_accounts[author_id]['tokens_called'].append(token['ticker'])
-                            all_top_accounts[author_id]['total_influence'] += influence_score
-                    
-                    ranked_accounts.sort(key=lambda x: x['influence_score'], reverse=True)
-                    top_20 = ranked_accounts[:20]
-                    
-                    # Get user info
-                    if top_20:
-                        user_ids = [acc['author_id'] for acc in top_20]
-                        user_info = tweet_extractor.get_user_info(user_ids)
+                            rally_results.append({
+                                'rally': rally,
+                                'scored_tweets': scored_tweets
+                            })
                         
-                        for account in top_20:
-                            author_id = account['author_id']
-                            if author_id in user_info:
-                                account.update(user_info[author_id])
+                        # Extract top accounts
+                        account_stats = {}
+                        
+                        for result in rally_results:
+                            for scored_tweet in result['scored_tweets']:
+                                tweet = scored_tweet['tweet']
+                                author_id = str(tweet['author_id'])
+                                
+                                if author_id not in account_stats:
+                                    account_stats[author_id] = {
+                                        'author_id': author_id,
+                                        'pumps_called': 0,
+                                        'timings': [],
+                                        'scores': [],
+                                        'high_confidence_count': 0
+                                    }
+                                
+                                account_stats[author_id]['pumps_called'] += 1
+                                account_stats[author_id]['timings'].append(tweet['time_to_rally_minutes'])
+                                account_stats[author_id]['scores'].append(scored_tweet['score']['total_score'])
+                                
+                                if scored_tweet['score']['confidence'] == 'high':
+                                    account_stats[author_id]['high_confidence_count'] += 1
+                        
+                        # Calculate influence scores
+                        ranked_accounts = []
+                        
+                        for author_id, stats in account_stats.items():
+                            if stats['timings']:
+                                avg_timing = sum(stats['timings']) / len(stats['timings'])
+                                avg_score = sum(stats['scores']) / len(stats['scores'])
+                                earliest = min(stats['timings'])
+                                
+                                influence_score = (
+                                    (stats['pumps_called'] * 30) +
+                                    (max(0, -avg_timing) * 2) +
+                                    (stats['high_confidence_count'] * 15) +
+                                    (avg_score * 0.5)
+                                )
+                                
+                                account = {
+                                    'author_id': author_id,
+                                    'pumps_called': stats['pumps_called'],
+                                    'avg_timing': round(avg_timing, 1),
+                                    'earliest_call': round(earliest, 1),
+                                    'influence_score': round(influence_score, 1),
+                                    'high_confidence_count': stats['high_confidence_count']
+                                }
+                                
+                                ranked_accounts.append(account)
+                                
+                                # Track across tokens
+                                if author_id not in all_top_accounts:
+                                    all_top_accounts[author_id] = {
+                                        'author_id': author_id,
+                                        'tokens_called': [],
+                                        'total_influence': 0
+                                    }
+                                
+                                all_top_accounts[author_id]['tokens_called'].append(token['ticker'])
+                                all_top_accounts[author_id]['total_influence'] += influence_score
+                        
+                        ranked_accounts.sort(key=lambda x: x['influence_score'], reverse=True)
+                        top_20 = ranked_accounts[:20]
+                        
+                        # Get user info
+                        if top_20:
+                            user_ids = [acc['author_id'] for acc in top_20]
+                            user_info = tweet_extractor.get_user_info(user_ids)
+                            
+                            for account in top_20:
+                                author_id = account['author_id']
+                                if author_id in user_info:
+                                    account.update(user_info[author_id])
+                        
+                        top_accounts = top_20
+                        print(f"[{idx}/{len(tokens)}] ✓ Found {len(top_accounts)} top callers")
                     
-                    top_accounts = top_20
-                
-                except Exception as twitter_error:
-                    print(f"[TWITTER ERROR] {token['ticker']}: {str(twitter_error)}")
-                    top_accounts = []
+                    except Exception as twitter_error:
+                        print(f"[{idx}/{len(tokens)}] ⚠️ Twitter API error: {str(twitter_error)}")
+                        top_accounts = []
+                else:
+                    print(f"[{idx}/{len(tokens)}] ⚠️ Twitter API not configured - skipping caller analysis")
                 
                 # Always return success if we have pump data
                 all_results.append({
@@ -257,11 +276,13 @@ def analyze_tokens():
                     'rallies': len(rallies),
                     'rally_details': rally_details,
                     'top_accounts': top_accounts,
-                    'pump_info': f"{len(rallies)} pump(s) detected" if rallies else "No pumps detected"
+                    'pump_info': f"{len(rallies)} pump(s) detected"
                 })
                 
+                print(f"[{idx}/{len(tokens)}] ✅ Analysis complete\n")
+                
             except Exception as e:
-                print(f"[ERROR] {token['ticker']}: {str(e)}")
+                print(f"[{idx}/{len(tokens)}] ❌ Error: {str(e)}")
                 print(traceback.format_exc())
                 all_results.append({
                     'token': token,
@@ -290,20 +311,27 @@ def analyze_tokens():
             'summary': {
                 'total_tokens': len(tokens),
                 'successful_analyses': sum(1 for r in all_results if r['success']),
+                'failed_analyses': sum(1 for r in all_results if not r['success']),
+                'total_pumps': sum(r.get('rallies', 0) for r in all_results),
                 'cross_token_accounts': len(multi_token_accounts)
             },
             'results': all_results,
             'cross_token_overlap': multi_token_accounts[:10]
         }
         
-        print(f"\n[MULTI-ANALYSIS] Complete!")
-        print(f"  Successful: {response['summary']['successful_analyses']}/{len(tokens)}")
+        print(f"\n{'='*100}")
+        print(f"ANALYSIS COMPLETE")
+        print(f"  Total: {len(tokens)} tokens")
+        print(f"  Successful: {response['summary']['successful_analyses']}")
+        print(f"  Failed: {response['summary']['failed_analyses']}")
+        print(f"  Total Pumps: {response['summary']['total_pumps']}")
         print(f"  Cross-token accounts: {len(multi_token_accounts)}")
+        print(f"{'='*100}\n")
         
         return jsonify(response), 200
         
     except Exception as e:
-        print(f"[MULTI-ANALYSIS ERROR] {str(e)}")
+        print(f"\n[CRITICAL ERROR] {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
@@ -436,26 +464,42 @@ def get_watchlist_stats():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'version': '4.0.0'})
+    return jsonify({
+        'status': 'healthy',
+        'version': '5.0.0',
+        'twitter_configured': TWITTER_BEARER_TOKEN != 'your_twitter_token_here',
+        'birdeye_configured': bool(BIRDEYE_API_KEY)
+    })
 
 
 if __name__ == '__main__':
     print("""
-╔════════════════════════════════════════════════════════════════╗
-║              SIFTER KYS API SERVER v4.0 - ALL FIXED            ║
-╚════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════╗
+║           SIFTER KYS API SERVER v5.0 - FULLY UPDATED            ║
+╚══════════════════════════════════════════════════════════════════╝
 
-✨ FIXES APPLIED:
-  ✓ Issue 3: Returns Unix timestamps as numbers (not strings)
-  ✓ Issue 4: Returns total_gain_pct and peak_gain_pct fields
-  ✓ Issue 5: Returns volume_data object with avg/peak/spike
-  ✓ Issue 6: Improved rally detection consistency
+✨ IMPROVEMENTS:
+  ✓ Better progress logging in console
+  ✓ Twitter API gracefully skipped if not configured
+  ✓ Improved error handling per token
+  ✓ Failed_analyses counter in response
+  ✓ Total_pumps summary
+  ✓ Clearer console output with separators
   
-  - Watchlist endpoints ready
-  - Better error handling
-  - Proper data formatting for frontend
-
-Starting server on http://localhost:5000
+🔧 Configuration Status:
 """)
+    
+    if TWITTER_BEARER_TOKEN == 'your_twitter_token_here':
+        print("  ⚠️  Twitter API: NOT CONFIGURED (caller analysis will be skipped)")
+    else:
+        print(f"  ✓ Twitter API: Configured ({TWITTER_BEARER_TOKEN[:10]}...)")
+    
+    if BIRDEYE_API_KEY:
+        print(f"  ✓ Birdeye API: Configured ({BIRDEYE_API_KEY[:10]}...)")
+    else:
+        print("  ❌ Birdeye API: NOT CONFIGURED")
+    
+    print(f"\n🚀 Starting server on http://localhost:5000\n")
+    
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
