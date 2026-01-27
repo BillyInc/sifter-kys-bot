@@ -4,34 +4,40 @@ from datetime import datetime, timedelta
 from pump_detector import PrecisionRallyDetector
 from tweet_extractor import TwitterTweetExtractor
 from nlp_disambiguator import NLPDisambiguator
+from twitter_api_pool import TwitterAPIKeyPool
 
 
 class RallyTweetConnector:
-    def __init__(self, birdeye_api_key=None, twitter_bearer_token=None):
+    def __init__(self, birdeye_api_key=None, api_key_pool=None):
         """
         Connect rally detection with tweet extraction
-        Now uses environment variables by default
         
         Args:
             birdeye_api_key: Optional Birdeye API key (uses env var if None)
-            twitter_bearer_token: Optional Twitter Bearer Token (uses env var if None)
+            api_key_pool: TwitterAPIKeyPool instance for multi-key rotation
         """
         # Use provided keys or fallback to environment variables
         self.birdeye_api_key = birdeye_api_key or os.environ.get('BIRDEYE_API_KEY')
-        self.twitter_bearer_token = twitter_bearer_token or os.environ.get('TWITTER_BEARER_TOKEN')
+        self.api_key_pool = api_key_pool
         
         # Initialize components
         self.rally_detector = PrecisionRallyDetector(birdeye_api_key=self.birdeye_api_key)
-        self.tweet_extractor = TwitterTweetExtractor(bearer_token=self.twitter_bearer_token)
+        
+        # Initialize tweet extractor with api_key_pool
+        if api_key_pool:
+            self.tweet_extractor = TwitterTweetExtractor(api_key_pool=api_key_pool)
+        else:
+            print("[WARNING] No API key pool provided - Twitter functionality disabled")
+            self.tweet_extractor = None
     
-    def analyze_token_with_tweets(self, token_address, time_range='first_7d', 
+    def analyze_token_with_tweets(self, token_address, days_back=7, 
                                   candle_size='5m', t_minus=35, t_plus=10):
         """
         Main pipeline: Detect rallies → Extract tweets → Score → Display
         
         Args:
             token_address: Token contract address
-            time_range: Analysis timeframe ('first_7d', 'last_7d', etc.)
+            days_back: Number of days to analyze (1-90)
             candle_size: Candle size ('1m', '5m', '15m', '1h', '4h', '1d')
             t_minus: Minutes before rally to search (configurable)
             t_plus: Minutes after rally to search (configurable)
@@ -65,23 +71,17 @@ class RallyTweetConnector:
         
         # STEP 2: Detect rallies
         print(f"[STEP 2/4] Detecting rallies...")
-        print(f"  Time range: {time_range}")
+        print(f"  Days back: {days_back}")
         print(f"  Candle size: {candle_size}")
         
         pair_address = pair_data['pairAddress']
         chain_name = self.rally_detector.get_chain_name(pair_data['chainId'])
         
-        # Get launch time if needed
-        launch_timestamp = None
-        if time_range.startswith('first_'):
-            launch_timestamp = self.rally_detector.get_token_launch_time(token_address)
-        
-        # Get OHLCV data
-        ohlcv_data = self.rally_detector.get_ohlcv_data_with_launch(
+        # SIMPLIFIED: Just use days_back and candle_size
+        ohlcv_data = self.rally_detector.get_ohlcv_data(
             pair_address=pair_address,
             chain=chain_name,
-            launch_timestamp=launch_timestamp,
-            window_type=time_range,
+            days_back=days_back,
             candle_size=candle_size
         )
         
@@ -99,6 +99,10 @@ class RallyTweetConnector:
         print(f"\n✓ Detected {len(rallies)} rally/rallies\n")
         
         # STEP 3: Extract tweets for each rally
+        if not self.tweet_extractor:
+            print("⚠️ Twitter extractor not initialized - skipping tweet analysis")
+            return None
+        
         print(f"[STEP 3/4] Extracting tweets for each rally...")
         print(f"  Tweet search window: T-{t_minus} to T+{t_plus} minutes")
         
@@ -214,15 +218,14 @@ class RallyTweetConnector:
             print()
         
         print(f"Total tweets extracted: {sum(len(r['tweets']) for r in rally_results)}")
-        print(f"High-confidence tweets: {sum(len([t for t in r['scored_tweets'] if t['score']['confidence'] == 'high']) for r in rally_results)}")
-        print(f"\nTwitter API quota used: {self.tweet_extractor.tweets_used_this_month}/100\n")
+        print(f"High-confidence tweets: {sum(len([t for t in r['scored_tweets'] if t['score']['confidence'] == 'high']) for r in rally_results)}\n")
 
 
 def main():
-    """Example usage with environment variables"""
+    """Example usage with API key pool"""
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
-║                           RALLY + TWEET ANALYSIS TOOL v3.0                                   ║
+║                           RALLY + TWEET ANALYSIS TOOL v6.0                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 
 This tool:
@@ -232,44 +235,40 @@ This tool:
 4. Shows you WHO tweeted BEFORE pumps
 
 Configuration:
-  - API keys loaded from environment variables
-  - Configurable analysis timeframes
+  - Multi-key API rotation with automatic failover
+  - Simple days_back parameter (1-90)
   - Customizable candle sizes
   - Adjustable tweet search windows
 
 ⚠️  Requirements:
    • BIRDEYE_API_KEY environment variable
-   • TWITTER_BEARER_TOKEN environment variable
+   • Multiple TwitterAPI.io keys configured
 """)
     
     # Check environment variables
     birdeye_key = os.environ.get('BIRDEYE_API_KEY')
-    twitter_token = os.environ.get('TWITTER_BEARER_TOKEN')
     
     if not birdeye_key:
         print("❌ BIRDEYE_API_KEY environment variable not set")
         birdeye_key = input("Enter Birdeye API Key: ").strip()
     
-    if not twitter_token:
-        print("❌ TWITTER_BEARER_TOKEN environment variable not set")
-        twitter_token = input("Enter Twitter Bearer Token: ").strip()
-    
-    if not birdeye_key or not twitter_token:
-        print("\n❌ API keys are required")
+    if not birdeye_key:
+        print("\n❌ Birdeye API key is required")
         return
+    
+    # Initialize API key pool (example with 2 keys)
+    api_keys = [
+        {'user_id': '405920194964049920', 'api_key': 'new1_f62eefe95d5349938ea4f77ca8f198ad', 'name': 'dnjunu'},
+        {'user_id': '405944251155873792', 'api_key': 'new1_8c0aabf38b194412903658bfc9c0bdca', 'name': 'Ptrsamuelchinedu'},
+    ]
+    
+    api_pool = TwitterAPIKeyPool(api_keys)
     
     # Initialize connector
     connector = RallyTweetConnector(
         birdeye_api_key=birdeye_key,
-        twitter_bearer_token=twitter_token
+        api_key_pool=api_pool
     )
-    
-    print("\n[Testing Twitter API connection...]")
-    if not connector.tweet_extractor.test_connection():
-        print("\n⚠️ Twitter API test failed")
-        proceed = input("\nContinue anyway? (y/n): ").strip().lower()
-        if proceed != 'y':
-            return
     
     # Get token address
     print("\nEnter token contract address:")
@@ -281,20 +280,24 @@ Configuration:
     
     # Get analysis settings
     print("\nAnalysis Settings:")
-    print("1. Time range (first_5m, first_24h, first_7d, last_7d, etc.)")
-    time_range = input("Time range [first_7d]: ").strip() or 'first_7d'
+    days_input = input("Days back (1-90) [default 7]: ").strip()
+    try:
+        days_back = int(days_input) if days_input else 7
+        days_back = max(1, min(days_back, 90))
+    except ValueError:
+        days_back = 7
     
-    print("2. Candle size (1m, 5m, 15m, 1h, 4h, 1d)")
+    print("Candle size options: 1m, 5m, 15m, 1h, 4h, 1d")
     candle_size = input("Candle size [5m]: ").strip() or '5m'
     
-    print("3. Tweet search window")
+    print("\nTweet search window:")
     t_minus = int(input("T-minus minutes [35]: ").strip() or '35')
     t_plus = int(input("T-plus minutes [10]: ").strip() or '10')
     
     # Run analysis
     results = connector.analyze_token_with_tweets(
         token_address=token_address,
-        time_range=time_range,
+        days_back=days_back,
         candle_size=candle_size,
         t_minus=t_minus,
         t_plus=t_plus

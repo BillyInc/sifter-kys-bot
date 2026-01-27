@@ -16,9 +16,9 @@ export default function SifterKYS() {
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
   
-  // Global settings
-  const [analysisTimeframe, setAnalysisTimeframe] = useState('first_7d');
-  const [pumpTimeframe, setPumpTimeframe] = useState('5m');
+  // SIMPLIFIED Global settings - replaced analysisTimeframe with daysBack
+  const [daysBack, setDaysBack] = useState(7);  // NEW: Simple number
+  const [candleSize, setCandleSize] = useState('5m');  // Renamed from pumpTimeframe
   const [tMinusWindow, setTMinusWindow] = useState(35);
   const [tPlusWindow, setTPlusWindow] = useState(10);
   
@@ -158,8 +158,8 @@ export default function SifterKYS() {
         setTokenSettings({
           ...tokenSettings,
           [key]: {
-            analysis_timeframe: analysisTimeframe,
-            candle_size: pumpTimeframe,
+            days_back: daysBack,
+            candle_size: candleSize,
             t_minus: tMinusWindow,
             t_plus: tPlusWindow
           }
@@ -181,7 +181,7 @@ export default function SifterKYS() {
     setTokenSettings(newSettings);
   };
 
-  // FIXED Issue 2: Update individual token settings
+  // SIMPLIFIED: Update individual token settings
   const updateTokenSetting = (address, chain, field, value) => {
     const key = `${chain}-${address}`;
     setTokenSettings({
@@ -205,14 +205,16 @@ export default function SifterKYS() {
     try {
       const tokensToAnalyze = selectedTokens.map(token => {
         const key = `${token.chain}-${token.address}`;
+        
+        // SIMPLIFIED: Changed settings structure
         const settings = useGlobalSettings ? {
-          analysis_timeframe: analysisTimeframe,
-          candle_size: pumpTimeframe,
+          days_back: daysBack,  // NEW: Simple parameter
+          candle_size: candleSize,
           t_minus: tMinusWindow,
           t_plus: tPlusWindow
         } : (tokenSettings[key] || {
-          analysis_timeframe: analysisTimeframe,
-          candle_size: pumpTimeframe,
+          days_back: daysBack,
+          candle_size: candleSize,
           t_minus: tMinusWindow,
           t_plus: tPlusWindow
         });
@@ -592,8 +594,8 @@ export default function SifterKYS() {
                   {selectedTokens.map((token) => {
                     const key = `${token.chain}-${token.address}`;
                     const settings = tokenSettings[key] || {
-                      analysis_timeframe: analysisTimeframe,
-                      candle_size: pumpTimeframe,
+                      days_back: daysBack,
+                      candle_size: candleSize,
                       t_minus: tMinusWindow,
                       t_plus: tPlusWindow
                     };
@@ -621,22 +623,15 @@ export default function SifterKYS() {
                           <div className="mt-3 pt-3 border-t border-white/10">
                             <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <label className="block text-xs font-medium mb-1">Timeframe</label>
-                                <select
-                                  value={settings.analysis_timeframe}
-                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'analysis_timeframe', e.target.value)}
+                                <label className="block text-xs font-medium mb-1">Days Back</label>
+                                <input
+                                  type="number"
+                                  value={settings.days_back}
+                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'days_back', Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
+                                  min="1"
+                                  max="90"
                                   className="w-full bg-black/50 border border-white/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500"
-                                >
-                                  <option value="first_5m">First 5m</option>
-                                  <option value="first_24h">First 24h</option>
-                                  <option value="first_7d">First 7d</option>
-                                  <option value="first_30d">First 30d</option>
-                                  <option value="last_1h">Last 1h</option>
-                                  <option value="last_24h">Last 24h</option>
-                                  <option value="last_7d">Last 7d</option>
-                                  <option value="last_30d">Last 30d</option>
-                                  <option value="all">All Time</option>
-                                </select>
+                                />
                               </div>
 
                               <div>
@@ -703,29 +698,23 @@ export default function SifterKYS() {
                   {useGlobalSettings && (
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-medium mb-1">Analysis Timeframe</label>
-                        <select
-                          value={analysisTimeframe}
-                          onChange={(e) => setAnalysisTimeframe(e.target.value)}
+                        <label className="block text-xs font-medium mb-1">Days Back</label>
+                        <input
+                          type="number"
+                          value={daysBack}
+                          onChange={(e) => setDaysBack(Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
+                          min="1"
+                          max="90"
                           className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                        >
-                          <option value="first_5m">First 5 Minutes After Launch</option>
-                          <option value="first_24h">First 24 Hours After Launch</option>
-                          <option value="first_7d">First 7 Days After Launch</option>
-                          <option value="first_30d">First 30 Days After Launch</option>
-                          <option value="last_1h">Last 1 Hour</option>
-                          <option value="last_24h">Last 24 Hours</option>
-                          <option value="last_7d">Last 7 Days</option>
-                          <option value="last_30d">Last 30 Days</option>
-                          <option value="all">All Time</option>
-                        </select>
+                        />
+                        <p className="text-xs text-gray-500 mt-1">1-90 days</p>
                       </div>
 
                       <div>
                         <label className="block text-xs font-medium mb-1">Candle Size</label>
                         <select
-                          value={pumpTimeframe}
-                          onChange={(e) => setPumpTimeframe(e.target.value)}
+                          value={candleSize}
+                          onChange={(e) => setCandleSize(e.target.value)}
                           className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
                         >
                           <option value="1m">1 Minute (M1)</option>
