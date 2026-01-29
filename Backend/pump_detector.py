@@ -6,6 +6,7 @@ import statistics
 class PrecisionRallyDetector:
     def __init__(self, birdeye_api_key=None):
         self.dex_screener_url = "https://api.dexscreener.com/latest/dex"
+        # FIXED: Use the pair endpoint (working version)
         self.birdeye_url = "https://public-api.birdeye.so/defi/v3/ohlcv/pair"
         self.birdeye_api_key = birdeye_api_key
         
@@ -113,10 +114,10 @@ class PrecisionRallyDetector:
     
     def get_ohlcv_data(self, pair_address, chain, days_back=30, candle_size='5m'):
         """
-        SIMPLE VERSION: Fetch OHLCV data with just days_back and candle_size
+        FIXED VERSION: Fetch OHLCV data using PAIR ADDRESS
         
         Args:
-            pair_address: Trading pair address
+            pair_address: Trading pair address (from DexScreener)
             chain: Blockchain name (solana, ethereum, base, etc.)
             days_back: Number of days to look back (1-90)
             candle_size: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
@@ -125,6 +126,8 @@ class PrecisionRallyDetector:
             List of OHLCV candles or None if error
         """
         print(f"\n[2/3] Fetching candlestick data from Birdeye...")
+        print(f"Pair: {pair_address[:8]}...{pair_address[-6:]}")
+        print(f"Chain: {chain}")
         print(f"Days back: {days_back}")
         print(f"Candle size: {candle_size}")
         
@@ -135,12 +138,13 @@ class PrecisionRallyDetector:
         # Map candle size to Birdeye format
         birdeye_candle_size = self.CANDLE_SIZE_MAPPING.get(candle_size, '5m')
         
-        # Simple time calculation (Document 2's approach)
+        # Simple time calculation
         time_to = int(time.time())
         time_from = time_to - (days_back * 24 * 60 * 60)
         
+        # FIXED: Use pair address with correct endpoint
         params = {
-            'address': pair_address,
+            'address': pair_address,  # PAIR ADDRESS (not token)
             'type': birdeye_candle_size,
             'time_from': time_from,
             'time_to': time_to,
@@ -154,6 +158,20 @@ class PrecisionRallyDetector:
         
         try:
             response = requests.get(self.birdeye_url, params=params, headers=headers)
+            
+            # Better error handling
+            if response.status_code == 400:
+                print(f"❌ 400 Bad Request - Check if pair address is correct")
+                print(f"   Address used: {pair_address}")
+                print(f"   Chain: {chain}")
+                return None
+            elif response.status_code == 401:
+                print(f"❌ 401 Unauthorized - Check API key")
+                return None
+            elif response.status_code == 429:
+                print(f"❌ 429 Rate Limited - Wait and retry")
+                return None
+            
             response.raise_for_status()
             data = response.json()
             
@@ -170,7 +188,20 @@ class PrecisionRallyDetector:
             print(f"✓ Retrieved {len(items)} {candle_size} candles")
             print(f"✓ Time range: {datetime.fromtimestamp(items[0]['unix_time'])} to {datetime.fromtimestamp(items[-1]['unix_time'])}")
             
-            return items
+            # Normalize field names (v3 API already has correct format)
+            normalized_items = []
+            for item in items:
+                normalized_items.append({
+                    'unix_time': item.get('unix_time', 0),
+                    'o': item.get('o', 0),
+                    'h': item.get('h', 0),
+                    'l': item.get('l', 0),
+                    'c': item.get('c', 0),
+                    'v': item.get('v', 0),
+                    'v_usd': item.get('v', 0) * item.get('c', 0)  # Approximate USD volume
+                })
+            
+            return normalized_items
             
         except requests.exceptions.RequestException as e:
             print(f"❌ Error fetching OHLCV data: {e}")
@@ -533,9 +564,12 @@ class PrecisionRallyDetector:
         if not pair_data:
             return None
         
+        # FIXED: Use pair address, not token mint
         pair_address = pair_data['pairAddress']
         chain_id = pair_data['chainId']
         chain_name = self.get_chain_name(chain_id)
+        
+        print(f"\nUsing pair address: {pair_address}")
         
         ohlcv_data = self.get_ohlcv_data(pair_address, chain_name, days_back, candle_size)
         if not ohlcv_data:
@@ -545,63 +579,3 @@ class PrecisionRallyDetector:
         self.display_rallies(rallies)
         
         return rallies
-
-
-def main():
-    print("""
-╔══════════════════════════════════════════════════════════════════════════════════════════════╗
-║                        PRECISION RALLY DETECTOR - SIMPLIFIED VERSION                         ║
-╚══════════════════════════════════════════════════════════════════════════════════════════════╝
-
-🎯 Simple & Reliable:
-   ✓ Just specify days back (1-90)
-   ✓ Choose candle size (1m, 5m, 15m, 1h, 4h, 1d)
-   ✓ No complex window types or launch time lookups
-   ✓ Proven accurate rally detection from Document 2
-""")
-    
-    BIRDEYE_API_KEY = "dbc2c07045644ae4bc868b6c3cbea6bf"
-    
-    if not BIRDEYE_API_KEY:
-        print("Enter your Birdeye API key:")
-        api_key = input("API Key: ").strip()
-        if not api_key:
-            print("\n⚠️ No API key provided")
-            return
-    else:
-        api_key = BIRDEYE_API_KEY
-        print(f"✓ Using API key: {api_key[:8]}...{api_key[-4:]}")
-    
-    detector = PrecisionRallyDetector(birdeye_api_key=api_key)
-    
-    print("\nEnter token contract address:")
-    token_address = input("Token: ").strip()
-    
-    if not token_address:
-        print("❌ No token address provided")
-        return
-    
-    print("\nAnalysis Settings:")
-    days_input = input("Days back (1-90) [default 30]: ").strip()
-    try:
-        days_back = int(days_input) if days_input else 30
-        days_back = max(1, min(days_back, 90))  # Clamp between 1-90
-    except ValueError:
-        days_back = 30
-    
-    candle_input = input("Candle size (1m/5m/15m/1h/4h/1d) [default 5m]: ").strip()
-    candle_size = candle_input if candle_input in ['1m', '5m', '15m', '1h', '4h', '1d'] else '5m'
-    
-    print(f"\n🔍 Analyzing {days_back} days with {candle_size} candles...\n")
-    
-    rallies = detector.analyze_token(token_address, days_back, candle_size)
-    
-    if rallies:
-        print("\n✅ Analysis complete!")
-        print("Review T-35 to START TIME windows for early signals/mentions.")
-    else:
-        print("\n⚠️ No rallies detected in the specified period.")
-
-
-if __name__ == "__main__":
-    main()

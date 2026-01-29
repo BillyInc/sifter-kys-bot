@@ -105,7 +105,8 @@ class TwitterTweetExtractor:
         """
         try:
             if isinstance(created_at_raw, str):
-                if 'T' in created_at_raw:
+                # FIXED: Check position 10 to avoid matching "Tuesday"
+                if 'T' in created_at_raw and len(created_at_raw) > 10 and created_at_raw[10] == 'T':
                     # ISO format: "2026-01-23T09:35:00Z"
                     tweet_time = datetime.fromisoformat(created_at_raw.replace('Z', '+00:00'))
                     return tweet_time.replace(tzinfo=None)

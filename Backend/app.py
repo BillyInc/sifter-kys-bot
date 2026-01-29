@@ -1,4 +1,4 @@
-# app.py (formerly server.py) - FULL UPDATED VERSION with Watchlist Endpoints
+# app.py - FULL UPDATED VERSION with Wallet Analysis
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -13,8 +13,11 @@ from rally_tweet_connector import RallyTweetConnector
 from pump_detector import PrecisionRallyDetector
 from nlp_disambiguator import NLPDisambiguator
 
-# NEW: Watchlist Database
+# Watchlist Database
 from watchlist_db import WatchlistDatabase
+
+# NEW: Wallet Analyzer
+from wallet_analyzer import WalletPumpAnalyzer
 
 app = Flask(__name__)
 CORS(app)
@@ -51,7 +54,7 @@ TWITTER_API_KEYS = [
     {'user_id': '405958813309292544', 'api_key': 'new1_c46724fbcb184848b025c54ca4d77fe2', 'name': 'Wan'}
 ]
 
-BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', 'd926671239c74360a1c48f34eacbd2da')
+BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', 'dbc2c07045644ae4bc868b6c3cbea6bf')
 
 # =============================================================================
 # INITIALIZE API KEY POOL (GLOBAL)
@@ -67,19 +70,26 @@ watchlist_db = WatchlistDatabase(db_path='watchlists.db')
 
 print(f"""
 ╔══════════════════════════════════════════════════════════════════╗
-║           SIFTER KYS API SERVER v6.1 - WATCHLIST ENABLED         ║
+║     SIFTER KYS API SERVER v7.0 - WITH WALLET ANALYSIS            ║
+║                 FIXED ADDRESS ISSUE                              ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 ✨ FEATURES:
   ✓ 23 Twitter API keys with automatic rotation
   ✓ Failover when keys hit rate limits
-  ✓ Full Watchlist API endpoints
-  ✓ Birdeye price data integration
+  ✓ Full Watchlist API endpoints (Twitter + Wallets)
+  ✓ Birdeye price data integration (FIXED: Using correct pair addresses)
+  ✓ Wallet analysis with ATH scoring
   ✓ Real-time key pool status tracking
+
+🛠️ FIXES APPLIED:
+  ✓ Twitter Analysis: Now uses 'pair_address' for OHLCV data
+  ✓ Wallet Analysis: Now uses 'pair_address' for OHLCV data
+  ✓ Both endpoints keep 'address' for wallet/overview calls
 """)
 
 # =============================================================================
-# EXISTING ANALYZE ENDPOINT
+# EXISTING TWITTER ANALYZE ENDPOINT - FIXED
 # =============================================================================
 
 @app.route('/api/analyze', methods=['POST'])
@@ -93,7 +103,7 @@ def analyze_tokens():
         tokens = data['tokens']
         
         print(f"\n{'='*100}")
-        print(f"MULTI-TOKEN ANALYSIS: {len(tokens)} tokens")
+        print(f"TWITTER ANALYSIS: {len(tokens)} tokens")
         print(f"Active API Keys: {twitter_api_pool.get_status()['active_keys']}")
         print(f"{'='*100}\n")
         
@@ -108,7 +118,6 @@ def analyze_tokens():
             settings = token.get('settings', {})
 
             try:
-                # Initialize detector (Birdeye)
                 detector = PrecisionRallyDetector(birdeye_api_key=BIRDEYE_API_KEY)
                 
                 print(f"[{idx}/{len(tokens)}] Fetching price data...")
@@ -116,9 +125,17 @@ def analyze_tokens():
                 days_back = settings.get('days_back', 7)
                 candle_size = settings.get('candle_size', '5m')
                 
+                # 🔴🔴🔴 FIX: Use pair_address, NOT address for OHLCV 🔴🔴🔴
+                # Birdeye's OHLCV endpoint needs TRADING PAIR address
+                pair_address = token.get('pair_address', token['address'])
+                chain = token['chain']
+                
+                print(f"[{idx}/{len(tokens)}] Using pair address: {pair_address[:8]}...")
+                print(f"[{idx}/{len(tokens)}] Token address (mint): {token['address'][:8]}...")
+                
                 ohlcv_data = detector.get_ohlcv_data(
-                    pair_address=token['pair_address'],
-                    chain=token['chain'],
+                    pair_address=pair_address,  # ✅ FIXED: Use pair_address
+                    chain=chain,
                     days_back=days_back,
                     candle_size=candle_size
                 )
@@ -235,6 +252,7 @@ def analyze_tokens():
                             if author_id not in account_stats:
                                 account_stats[author_id] = {
                                     'author_id': author_id,
+                                    'username': tweet.get('author_username', ''),
                                     'pumps_called': 0,
                                     'timings': [],
                                     'scores': [],
@@ -256,12 +274,42 @@ def analyze_tokens():
                             avg_score = sum(stats['scores']) / len(stats['scores'])
                             earliest = min(stats['timings'])
                             
+                            quality_score = min(avg_score * 0.6, 60)
+                            confidence_bonus = min(stats['high_confidence_count'] * 10, 20)
+                            signal_quality_total = quality_score + confidence_bonus
+                            
+                            if avg_timing < 0:
+                                if -30 <= avg_timing <= -10:
+                                    timing_score = abs(avg_timing) * 0.7
+                                elif avg_timing < -30:
+                                    timing_score = 20
+                                else:
+                                    timing_score = abs(avg_timing) * 0.7
+                            else:
+                                timing_score = max(0, 10 - (avg_timing * 0.5))
+                            
+                            timing_score = min(timing_score, 21)
+                            
+                            volume_score = 0
+                            
+                            username = stats.get('username', '')
+                            credibility_penalty = 0
+                            
+                            bot_indicators = ['bot', '1xpz', 'alert', 'scan', 'crypto_']
+                            if any(indicator in username.lower() for indicator in bot_indicators):
+                                credibility_penalty -= 15
+                            
+                            if stats['pumps_called'] > 1:
+                                credibility_penalty -= 10
+                            
                             influence_score = (
-                                (stats['pumps_called'] * 30) +
-                                (max(0, -avg_timing) * 2) +
-                                (stats['high_confidence_count'] * 15) +
-                                (avg_score * 0.5)
+                                signal_quality_total +
+                                timing_score +
+                                volume_score +
+                                credibility_penalty
                             )
+                            
+                            influence_score = max(influence_score, 0)
                             
                             account = {
                                 'author_id': author_id,
@@ -351,12 +399,10 @@ def analyze_tokens():
         }
         
         print(f"\n{'='*100}")
-        print(f"ANALYSIS COMPLETE")
+        print(f"TWITTER ANALYSIS COMPLETE")
         print(f"  Total: {len(tokens)} tokens")
         print(f"  Successful: {response['summary']['successful_analyses']}")
-        print(f"  Failed: {response['summary']['failed_analyses']}")
         print(f"  Total Pumps: {response['summary']['total_pumps']}")
-        print(f"  Cross-token accounts: {len(multi_token_accounts)}")
         print(f"{'='*100}\n")
         
         twitter_api_pool.print_status()
@@ -367,44 +413,317 @@ def analyze_tokens():
         print(f"\n[CRITICAL ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 # =============================================================================
-# KEY POOL STATUS ENDPOINT
+# NEW: WALLET ANALYSIS ENDPOINT - FIXED
 # =============================================================================
 
-@app.route('/api/key_pool/status', methods=['GET'])
-def get_key_pool_status():
-    status = twitter_api_pool.get_status()
-    top_used = twitter_api_pool.get_top_used_keys(5)
+@app.route('/api/wallets/analyze', methods=['POST'])
+def analyze_wallets():
+    """
+    Wallet analysis endpoint with ALL-TIME HIGH scoring.
     
-    return jsonify({
-        'success': True,
-        'pool_status': status,
-        'top_used_keys': top_used
-    }), 200
+    Request body:
+    {
+        "tokens": [
+            {
+                "ticker": "PEPE",
+                "name": "Pepe",
+                "address": "token_mint",
+                "pair_address": "pair_address",  # Added this
+                "chain": "solana",
+                "settings": {
+                    "days_back": 7,
+                    "candle_size": "5m",
+                    "wallet_window_before": 35,
+                    "wallet_window_after": 0
+                }
+            }
+        ],
+        "global_settings": {
+            "min_pump_count": 5,
+            "wallet_window_before": 35,
+            "wallet_window_after": 10
+        }
+    }
+    """
+    try:
+        data = request.json
+        
+        if not data.get('tokens'):
+            return jsonify({'error': 'tokens array required'}), 400
+        
+        tokens = data['tokens']
+        global_settings = data.get('global_settings', {})
+        
+        default_window_before = global_settings.get('wallet_window_before', 35)
+        default_window_after = global_settings.get('wallet_window_after', 0)
+        min_pump_count = global_settings.get('min_pump_count', 3)
+        
+        print(f"\n{'='*100}")
+        print(f"WALLET ANALYSIS: {len(tokens)} tokens")
+        print(f"Scoring: ALL-TIME HIGH")
+        print(f"Window: T-{default_window_before}min to T+{default_window_after}min")
+        print(f"Min Pump Count: {min_pump_count}")
+        print(f"{'='*100}\n")
+        
+        # Step 1: Detect rallies AND store OHLCV data
+        detector = PrecisionRallyDetector(birdeye_api_key=BIRDEYE_API_KEY)
+        token_rally_data = []
+        
+        for idx, token in enumerate(tokens, 1):
+            print(f"\n[{idx}/{len(tokens)}] RALLY DETECTION: {token['ticker']}")
+            
+            settings = token.get('settings', {})
+            days_back = settings.get('days_back', 7)
+            candle_size = settings.get('candle_size', '5m')
+            
+            # 🔴🔴🔴 FIX: Use pair_address, NOT address for OHLCV 🔴🔴🔴
+            # Check if we have pair_address (frontend should send it)
+            if 'pair_address' not in token:
+                print(f"  ⚠️ No pair_address found, using address as fallback")
+                print(f"  ⚠️ Frontend should send 'pair_address' from DexScreener")
+                pair_address = token['address']
+            else:
+                pair_address = token['pair_address']
+            
+            print(f"  Token mint: {token['address'][:8]}...")
+            print(f"  Pair address: {pair_address[:8]}...")
+            
+            ohlcv_data = detector.get_ohlcv_data(
+                pair_address=pair_address,  # ✅ FIXED: Use pair_address
+                chain=token.get('chain', 'solana'),
+                days_back=days_back,
+                candle_size=candle_size
+            )
+            
+            if not ohlcv_data:
+                print(f"  ❌ No price data")
+                continue
+            
+            rallies = detector.detect_all_rallies(ohlcv_data)
+            
+            if rallies:
+                window_before = settings.get('wallet_window_before', default_window_before)
+                window_after = settings.get('wallet_window_after', default_window_after)
+                
+                # Store BOTH addresses for different purposes:
+                # - 'address' (mint) for wallet analyzer
+                # - 'pair_address' for OHLCV (already used above)
+                token_rally_data.append({
+                    'token': {
+                        'ticker': token['ticker'],
+                        'name': token['name'],
+                        'address': token['address'],  # Token mint for wallet analysis
+                        'pair_address': pair_address,  # Pair address for OHLCV
+                        'chain': token.get('chain', 'solana')
+                    },
+                    'rallies': rallies,
+                    'ohlcv_data': ohlcv_data,  # Pass OHLCV data for ATH calculation
+                    'window_before': window_before,
+                    'window_after': window_after
+                })
+                
+                print(f"  ✓ Found {len(rallies)} rallies")
+        
+        if not token_rally_data:
+            return jsonify({
+                'success': False,
+                'error': 'No rallies detected across any tokens'
+            }), 200
+        
+        # Step 2: Wallet analysis with ATH
+        wallet_analyzer = WalletPumpAnalyzer(
+            birdeye_api_key=BIRDEYE_API_KEY
+        )
+        
+        # Handle multiple window configurations
+        unique_windows = set(
+            (t['window_before'], t['window_after']) 
+            for t in token_rally_data
+        )
+        
+        if len(unique_windows) == 1:
+            window_before = token_rally_data[0]['window_before']
+            window_after = token_rally_data[0]['window_after']
+            
+            top_wallets = wallet_analyzer.analyze_multi_token_wallets(
+                token_rally_data,
+                window_minutes_before=window_before,
+                window_minutes_after=window_after,
+                min_pump_count=min_pump_count
+            )
+        else:
+            from collections import Counter
+            most_common_window = Counter(unique_windows).most_common(1)[0][0]
+            window_before, window_after = most_common_window
+            
+            print(f"\n⚠️ Multiple window configurations detected")
+            print(f"   Using most common: T-{window_before}min to T+{window_after}min")
+            
+            top_wallets = wallet_analyzer.analyze_multi_token_wallets(
+                token_rally_data,
+                window_minutes_before=window_before,
+                window_minutes_after=window_after,
+                min_pump_count=min_pump_count
+            )
+        
+        wallet_analyzer.display_top_wallets(top_wallets, top_n=50)
+        
+        return jsonify({
+            'success': True,
+            'summary': {
+                'tokens_analyzed': len(token_rally_data),
+                'total_rallies': sum(len(t['rallies']) for t in token_rally_data),
+                'qualified_wallets': len(top_wallets),
+                's_tier': len([w for w in top_wallets if w['tier'] == 'S']),
+                'a_tier': len([w for w in top_wallets if w['tier'] == 'A']),
+                'b_tier': len([w for w in top_wallets if w['tier'] == 'B'])
+            },
+            'top_wallets': top_wallets,
+            'settings': {
+                'window_before': window_before,
+                'window_after': window_after,
+                'min_pump_count': min_pump_count,
+                'scoring_method': 'ALL-TIME HIGH',
+                'data_source': 'Birdeye /defi/v3/token/txs'
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"\n[WALLET ANALYSIS ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 # =============================================================================
-# HEALTH CHECK
+# WALLET WATCHLIST ENDPOINTS
 # =============================================================================
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    pool_status = twitter_api_pool.get_status()
-    
-    return jsonify({
-        'status': 'healthy',
-        'version': '6.1.0',
-        'twitter_api_keys': {
-            'total': pool_status['total_keys'],
-            'active': pool_status['active_keys'],
-            'rate_limited': pool_status['rate_limited_keys'],
-            'failed': pool_status['failed_keys']
-        },
-        'birdeye_configured': bool(BIRDEYE_API_KEY),
-        'watchlist_db': 'initialized'
-    })
+@app.route('/api/wallets/watchlist/add', methods=['POST'])
+def add_wallet_to_watchlist():
+    """Add wallet to watchlist"""
+    try:
+        data = request.json
+        if not data.get('user_id') or not data.get('wallet'):
+            return jsonify({'error': 'user_id and wallet required'}), 400
+        
+        success = watchlist_db.add_wallet_to_watchlist(
+            data['user_id'],
+            data['wallet']
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f"Wallet {data['wallet']['wallet_address'][:8]}... added"
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Wallet already in watchlist'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/watchlist/get', methods=['GET'])
+def get_wallet_watchlist():
+    """Get user's watched wallets"""
+    try:
+        user_id = request.args.get('user_id')
+        tier = request.args.get('tier')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        wallets = watchlist_db.get_wallet_watchlist(user_id, tier)
+        
+        return jsonify({
+            'success': True,
+            'wallets': wallets,
+            'count': len(wallets)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/watchlist/remove', methods=['POST'])
+def remove_wallet_from_watchlist():
+    """Remove wallet from watchlist"""
+    try:
+        data = request.json
+        if not data.get('user_id') or not data.get('wallet_address'):
+            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        
+        success = watchlist_db.remove_wallet_from_watchlist(
+            data['user_id'],
+            data['wallet_address']
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Wallet removed from watchlist'
+            }), 200
+        else:
+            return jsonify({'success': False, 'error': 'Failed to remove wallet'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/watchlist/update', methods=['POST'])
+def update_wallet_watchlist():
+    """Update wallet notes/tags"""
+    try:
+        data = request.json
+        if not data.get('user_id') or not data.get('wallet_address'):
+            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        
+        success = watchlist_db.update_wallet_notes(
+            data['user_id'],
+            data['wallet_address'],
+            data.get('notes'),
+            data.get('tags')
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Wallet updated'
+            }), 200
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/watchlist/stats', methods=['GET'])
+def get_wallet_watchlist_stats():
+    """Get wallet watchlist statistics"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        stats = watchlist_db.get_wallet_stats(user_id)
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # =============================================================================
-# WATCHLIST API ENDPOINTS
+# TWITTER WATCHLIST ENDPOINTS (EXISTING)
 # =============================================================================
 
 @app.route('/api/watchlist/add', methods=['POST'])
@@ -495,7 +814,7 @@ def watchlist_update():
         user_id = data['user_id']
         author_id = data['author_id']
         notes = data.get('notes')
-        tags = data.get('tags')  # list of strings
+        tags = data.get('tags')
 
         success = watchlist_db.update_account_notes(user_id, author_id, notes, tags)
 
@@ -531,7 +850,6 @@ def watchlist_stats():
         return jsonify({'error': str(e)}), 500
 
 
-# Optional bonus endpoints
 @app.route('/api/watchlist/groups/create', methods=['POST'])
 def groups_create():
     try:
@@ -575,6 +893,46 @@ def groups_list():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# KEY POOL STATUS & HEALTH CHECK
+# =============================================================================
+
+@app.route('/api/key_pool/status', methods=['GET'])
+def get_key_pool_status():
+    status = twitter_api_pool.get_status()
+    top_used = twitter_api_pool.get_top_used_keys(5)
+    
+    return jsonify({
+        'success': True,
+        'pool_status': status,
+        'top_used_keys': top_used
+    }), 200
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    pool_status = twitter_api_pool.get_status()
+    
+    return jsonify({
+        'status': 'healthy',
+        'version': '7.0.0',
+        'features': {
+            'twitter_analysis': True,
+            'wallet_analysis': True,
+            'twitter_watchlist': True,
+            'wallet_watchlist': True
+        },
+        'twitter_api_keys': {
+            'total': pool_status['total_keys'],
+            'active': pool_status['active_keys'],
+            'rate_limited': pool_status['rate_limited_keys'],
+            'failed': pool_status['failed_keys']
+        },
+        'birdeye_configured': bool(BIRDEYE_API_KEY),
+        'watchlist_db': 'initialized'
+    })
 
 
 if __name__ == '__main__':

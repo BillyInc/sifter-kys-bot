@@ -154,7 +154,93 @@ class NLPDisambiguator:
                 'reason': f'Below engagement threshold (likes={likes}, RTs={retweets})'
             }
         
-        # 4. TOKEN DISAMBIGUATION - Check which tickers are mentioned
+        # ===================================================================
+        # SCAM DETECTION (REJECT IMMEDIATELY)
+        # ===================================================================
+        
+        # Helper function for phishing URL detection
+        def is_suspicious_url(check_text: str) -> bool:
+            """Detect fake/phishing URLs"""
+            legit_platforms = ['pump.fun', 'pumpfun', 'dexscreener', 'birdeye', 
+                               'solscan', 'raydium', 'jupiter', 'photon', 'bullx']
+            suspicious_tlds = ['.stream', '-app.', '-view.', '-claim.', '-verify.']
+            
+            for platform in legit_platforms:
+                for tld in suspicious_tlds:
+                    if f"{platform}{tld}" in check_text:
+                        return True
+            return False
+        
+        if is_suspicious_url(text):
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['SUSPICIOUS_URL'],
+                'breakdown': {},
+                'reason': 'Suspicious URL pattern detected'
+            }
+        
+        # Giveaway/Airdrop scam detection
+        giveaway_red_flags = ['connect wallet', 'approve and collect', 'wallet confirmation']
+        if any(flag in text for flag in giveaway_red_flags):
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['GIVEAWAY_SCAM'],
+                'breakdown': {},
+                'reason': 'Giveaway/airdrop scam pattern'
+            }
+        
+        # Check for "free [CURRENCY]" pattern
+        if re.search(r'free \d* ?(sol|eth|bnb|usdc)', text, re.IGNORECASE):
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['GIVEAWAY_SCAM'],
+                'breakdown': {},
+                'reason': 'Giveaway scam pattern (free crypto)'
+            }
+        
+        # Scam warning detection
+        if 'scam alert' in text or 'rugpull' in text or 'rug pull' in text:
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['SCAM_WARNING'],
+                'breakdown': {},
+                'reason': 'This is a scam warning, not a call'
+            }
+        
+        # Engagement farming detection
+        if re.search(r'(just made|made) \$[\d,]+', text) and any(word in text for word in ['tweet', 'join', 'retweet']):
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['ENGAGEMENT_FARMING'],
+                'breakdown': {},
+                'reason': 'Engagement farming pattern'
+            }
+        
+        # Fake live stream scams
+        if ('dev is live' in text or 'dev just went live' in text) and ('dropping supply' in text or is_suspicious_url(text)):
+            return {
+                'accept': False,
+                'total_score': 0,
+                'confidence': 'rejected',
+                'flags': ['FAKE_LIVESTREAM'],
+                'breakdown': {},
+                'reason': 'Fake dev livestream scam'
+            }
+        
+        # ===================================================================
+        # TOKEN DISAMBIGUATION - Check which tickers are mentioned
+        # ===================================================================
+        
         all_tickers = self.ticker_pattern.findall(original_text)
         
         # Check for ticker spam
@@ -200,6 +286,25 @@ class NLPDisambiguator:
                     flags.append('OTHER_TICKER_PRIORITIZED')
                     breakdown['wrong_token_penalty'] = -50
                     break
+                
+                # Check for promotion language near the other ticker
+                other_pos = text.find(other_ticker.lower())
+                if other_pos != -1:
+                    context_start = max(0, other_pos - 50)
+                    context_end = min(len(text), other_pos + 50)
+                    context = text[context_start:context_end]
+                    
+                    # If promotion language is near OTHER ticker, likely cross-shill
+                    promotion_words = ['tweet', 'join', 'community']
+                    if any(word in context for word in promotion_words):
+                        return {
+                            'accept': False,
+                            'total_score': 0,
+                            'confidence': 'rejected',
+                            'flags': ['CROSS_TOKEN_SHILL'],
+                            'breakdown': {},
+                            'reason': f'Promoting ${other_ticker_name} instead of ${self.ticker}'
+                        }
         
         # ===================================================================
         # ULTRA HIGH CONFIDENCE SIGNALS (30+ points each)
@@ -357,6 +462,51 @@ class NLPDisambiguator:
             score += 8
             flags.append('CATALYST_IDENTIFIED')
             breakdown['catalyst'] = 8
+        
+        # ===================================================================
+        # AUTHENTIC CALL LANGUAGE (12-25 points)
+        # ===================================================================
+        
+        # Strong authentic call signals
+        strong_call_phrases = [
+            'wake up', 'new runner', 'just spawned', 'this will trade at',
+            'bid the bottom', 'send it', 'this is it', 'lock in', 'locked in',
+            'lfg', 'here we go', 'vibe shift', 'tides turning', 'trenches back'
+        ]
+        
+        strong_call_count = sum(1 for phrase in strong_call_phrases if phrase in text)
+        
+        if strong_call_count >= 2:
+            score += 20
+            flags.append('AUTHENTIC_CALL_STRONG')
+            breakdown['authentic_call_strong'] = 20
+        elif strong_call_count == 1:
+            score += 12
+            flags.append('AUTHENTIC_CALL_MEDIUM')
+            breakdown['authentic_call_medium'] = 12
+        
+        # Research/Due Diligence language
+        research_phrases = [
+            'dev has', 'developer has', 'total of', 'deploys',
+            'earned', 'fees', 'insane github', 'track record'
+        ]
+        
+        research_count = sum(1 for phrase in research_phrases if phrase in text)
+        
+        if research_count >= 2:
+            score += 25
+            flags.append('RESEARCH_DD')
+            breakdown['research_dd'] = 25
+        
+        # Conviction/Holding language
+        conviction_phrases = [
+            'not selling', 'holding', 'comfy', 'loaded', 'bagged', 'not fading'
+        ]
+        
+        if any(phrase in text for phrase in conviction_phrases):
+            score += 15
+            flags.append('CONVICTION_LANGUAGE')
+            breakdown['conviction'] = 15
         
         # ===================================================================
         # TIMING BONUS (Earlier = Better)
