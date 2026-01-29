@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle } from 'lucide-react';
+import WalletActivityMonitor from './WalletActivityMonitor.jsx';
+import WalletAlertSettings from './WalletAlertSettings.jsx';
 
 export default function SifterKYS() {
   const [activeTab, setActiveTab] = useState('analyze');
@@ -12,37 +14,44 @@ export default function SifterKYS() {
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef(null);
   
-  // FIXED Issue 2: Per-token customization state
+  // Per-token customization state
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
   
-  // SIMPLIFIED Global settings - replaced analysisTimeframe with daysBack
-  const [daysBack, setDaysBack] = useState(7);  // NEW: Simple number
-  const [candleSize, setCandleSize] = useState('5m');  // Renamed from pumpTimeframe
+  // Global settings
+  const [daysBack, setDaysBack] = useState(7);
+  const [candleSize, setCandleSize] = useState('5m');
   const [tMinusWindow, setTMinusWindow] = useState(35);
   const [tPlusWindow, setTPlusWindow] = useState(10);
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
   
-  // FIXED Issue 1: Watchlist state
-  const [watchlist, setWatchlist] = useState([]);
-  const [watchlistStats, setWatchlistStats] = useState(null);
+  // Twitter Watchlist state
+  const [twitterWatchlist, setTwitterWatchlist] = useState([]);
+  const [twitterWatchlistStats, setTwitterWatchlistStats] = useState(null);
   const [editingNotes, setEditingNotes] = useState(null);
   const [editingTags, setEditingTags] = useState(null);
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
 
-  // NEW: Expanded tokens state (all expanded by default)
+  // Wallet Watchlist state
+  const [walletWatchlist, setWalletWatchlist] = useState([]);
+  const [walletWatchlistStats, setWalletWatchlistStats] = useState(null);
+
+  // Expanded tokens state
   const [expandedTokens, setExpandedTokens] = useState({});
 
-  // NEW: Wallet analysis state
+  // Wallet analysis state
   const [walletAnalysisResults, setWalletAnalysisResults] = useState(null);
   const [isAnalyzingWallets, setIsAnalyzingWallets] = useState(false);
   const [expandedWallets, setExpandedWallets] = useState({});
 
+  // ⭐ NEW: Alert settings state
+  const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
+
   const API_URL = 'http://localhost:5000';
-  const userId = 'demo_user'; // In production, get from wallet/auth
+  const userId = 'demo_user';
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -54,11 +63,14 @@ export default function SifterKYS() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // FIXED Issue 1: Load watchlist when tab changes
+  // Load appropriate watchlist based on active tab
   useEffect(() => {
-    if (activeTab === 'watchlist') {
-      loadWatchlist();
-      loadWatchlistStats();
+    if (activeTab === 'twitter-watchlist') {
+      loadTwitterWatchlist();
+      loadTwitterWatchlistStats();
+    } else if (activeTab === 'wallet-watchlist') {
+      loadWalletWatchlist();
+      loadWalletWatchlistStats();
     }
   }, [activeTab]);
 
@@ -150,14 +162,12 @@ export default function SifterKYS() {
       setSelectedTokens(selectedTokens.filter(
         t => !(t.address.toLowerCase() === token.address.toLowerCase() && t.chain === token.chain)
       ));
-      // FIXED Issue 2: Remove token-specific settings
       const key = `${token.chain}-${token.address}`;
       const newSettings = { ...tokenSettings };
       delete newSettings[key];
       setTokenSettings(newSettings);
     } else {
       setSelectedTokens([...selectedTokens, token]);
-      // FIXED Issue 2: Initialize settings for new token
       if (!useGlobalSettings) {
         const key = `${token.chain}-${token.address}`;
         setTokenSettings({
@@ -186,7 +196,6 @@ export default function SifterKYS() {
     setTokenSettings(newSettings);
   };
 
-  // SIMPLIFIED: Update individual token settings
   const updateTokenSetting = (address, chain, field, value) => {
     const key = `${chain}-${address}`;
     setTokenSettings({
@@ -211,9 +220,8 @@ export default function SifterKYS() {
       const tokensToAnalyze = selectedTokens.map(token => {
         const key = `${token.chain}-${token.address}`;
         
-        // SIMPLIFIED: Changed settings structure
         const settings = useGlobalSettings ? {
-          days_back: daysBack,  // NEW: Simple parameter
+          days_back: daysBack,
           candle_size: candleSize,
           t_minus: tMinusWindow,
           t_plus: tPlusWindow
@@ -244,7 +252,6 @@ export default function SifterKYS() {
 
       if (response.ok) {
         setAnalysisResults(data);
-        // NEW: Auto-expand all tokens
         const expanded = {};
         data.results.forEach((_, idx) => {
           expanded[idx] = true;
@@ -262,7 +269,6 @@ export default function SifterKYS() {
     setIsAnalyzing(false);
   };
 
-  // NEW: Wallet Analysis Handler
   const handleWalletAnalysis = async () => {
     if (selectedTokens.length === 0) {
       alert('Please select at least one token');
@@ -279,7 +285,7 @@ export default function SifterKYS() {
         const settings = useGlobalSettings ? {
           days_back: daysBack,
           candle_size: candleSize,
-          wallet_window_before: 35,  // Wallet-specific window
+          wallet_window_before: 35,
           wallet_window_after: 0
         } : (tokenSettings[key] || {
           days_back: daysBack,
@@ -315,7 +321,6 @@ export default function SifterKYS() {
 
       if (response.ok && data.success) {
         setWalletAnalysisResults(data);
-        // Auto-expand all wallets
         const expanded = {};
         if (data.top_wallets) {
           data.top_wallets.forEach((_, idx) => {
@@ -335,6 +340,7 @@ export default function SifterKYS() {
     setIsAnalyzingWallets(false);
   };
 
+  // ⭐ UPDATED: Add alert settings to wallet watchlist payload
   const addWalletToWatchlist = async (wallet) => {
     try {
       const response = await fetch(`${API_URL}/api/wallets/watchlist/add`, {
@@ -349,14 +355,21 @@ export default function SifterKYS() {
             avg_distance_to_peak: wallet.avg_distance_to_peak_pct,
             avg_roi_to_peak: wallet.avg_roi_to_peak_pct,
             consistency_score: wallet.consistency_score,
-            tokens_hit: wallet.token_list
+            tokens_hit: wallet.token_list.join(', ')
+          },
+          // ⭐ NEW: Default alert settings for new wallets
+          alert_settings: {
+            alert_enabled: true,
+            alert_on_buy: true,
+            alert_on_sell: false,
+            min_trade_usd: 100
           }
         })
       });
       
       const data = await response.json();
       if (data.success) {
-        alert('Added to wallet watchlist!');
+        alert('✅ Added to wallet watchlist with alerts enabled!');
       }
     } catch (error) {
       console.error('Error adding wallet to watchlist:', error);
@@ -377,7 +390,6 @@ export default function SifterKYS() {
     }
   };
 
-  // NEW: Clear results
   const clearResults = () => {
     if (confirm('Clear all analysis results?')) {
       setAnalysisResults(null);
@@ -385,7 +397,6 @@ export default function SifterKYS() {
     }
   };
 
-  // NEW: Toggle token expansion
   const toggleTokenExpansion = (idx) => {
     setExpandedTokens(prev => ({
       ...prev,
@@ -393,7 +404,6 @@ export default function SifterKYS() {
     }));
   };
 
-  // NEW: Expand/collapse all
   const expandAll = () => {
     const expanded = {};
     analysisResults.results.forEach((_, idx) => {
@@ -406,32 +416,32 @@ export default function SifterKYS() {
     setExpandedTokens({});
   };
 
-  // FIXED Issue 1: Watchlist functions
-  const loadWatchlist = async () => {
+  // Twitter Watchlist functions
+  const loadTwitterWatchlist = async () => {
     try {
       const response = await fetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
-        setWatchlist(data.accounts);
+        setTwitterWatchlist(data.accounts);
       }
     } catch (error) {
-      console.error('Error loading watchlist:', error);
+      console.error('Error loading twitter watchlist:', error);
     }
   };
 
-  const loadWatchlistStats = async () => {
+  const loadTwitterWatchlistStats = async () => {
     try {
       const response = await fetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
-        setWatchlistStats(data.stats);
+        setTwitterWatchlistStats(data.stats);
       }
     } catch (error) {
-      console.error('Error loading stats:', error);
+      console.error('Error loading twitter stats:', error);
     }
   };
 
-  const addToWatchlist = async (account) => {
+  const addToTwitterWatchlist = async (account) => {
     try {
       const response = await fetch(`${API_URL}/api/watchlist/add`, {
         method: 'POST',
@@ -440,17 +450,17 @@ export default function SifterKYS() {
       });
       const data = await response.json();
       if (data.success) {
-        alert('Added to watchlist!');
-        if (activeTab === 'watchlist') {
-          loadWatchlist();
+        alert('Added to Twitter watchlist!');
+        if (activeTab === 'twitter-watchlist') {
+          loadTwitterWatchlist();
         }
       }
     } catch (error) {
-      console.error('Error adding to watchlist:', error);
+      console.error('Error adding to twitter watchlist:', error);
     }
   };
 
-  const removeFromWatchlist = async (authorId) => {
+  const removeFromTwitterWatchlist = async (authorId) => {
     if (!confirm('Remove this account from watchlist?')) return;
 
     try {
@@ -461,15 +471,15 @@ export default function SifterKYS() {
       });
       const data = await response.json();
       if (data.success) {
-        loadWatchlist();
-        loadWatchlistStats();
+        loadTwitterWatchlist();
+        loadTwitterWatchlistStats();
       }
     } catch (error) {
-      console.error('Error removing from watchlist:', error);
+      console.error('Error removing from twitter watchlist:', error);
     }
   };
 
-  const updateWatchlistNotes = async (authorId, notes) => {
+  const updateTwitterWatchlistNotes = async (authorId, notes) => {
     try {
       const response = await fetch(`${API_URL}/api/watchlist/update`, {
         method: 'POST',
@@ -478,16 +488,16 @@ export default function SifterKYS() {
       });
       const data = await response.json();
       if (data.success) {
-        loadWatchlist();
+        loadTwitterWatchlist();
         setEditingNotes(null);
         setNewNote('');
       }
     } catch (error) {
-      console.error('Error updating notes:', error);
+      console.error('Error updating twitter notes:', error);
     }
   };
 
-  const updateWatchlistTags = async (authorId, tags) => {
+  const updateTwitterWatchlistTags = async (authorId, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
       const response = await fetch(`${API_URL}/api/watchlist/update`, {
@@ -497,12 +507,93 @@ export default function SifterKYS() {
       });
       const data = await response.json();
       if (data.success) {
-        loadWatchlist();
+        loadTwitterWatchlist();
         setEditingTags(null);
         setNewTags('');
       }
     } catch (error) {
-      console.error('Error updating tags:', error);
+      console.error('Error updating twitter tags:', error);
+    }
+  };
+
+  // Wallet Watchlist functions
+  const loadWalletWatchlist = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/get?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlist(data.wallets);
+      }
+    } catch (error) {
+      console.error('Error loading wallet watchlist:', error);
+    }
+  };
+
+  const loadWalletWatchlistStats = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlistStats(data.stats);
+      }
+    } catch (error) {
+      console.error('Error loading wallet stats:', error);
+    }
+  };
+
+  const removeFromWalletWatchlist = async (walletAddress) => {
+    if (!confirm('Remove this wallet from watchlist?')) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, wallet_address: walletAddress })
+      });
+      const data = await response.json();
+      if (data.success) {
+        loadWalletWatchlist();
+        loadWalletWatchlistStats();
+      }
+    } catch (error) {
+      console.error('Error removing wallet from watchlist:', error);
+    }
+  };
+
+  const updateWalletWatchlistNotes = async (walletAddress, notes) => {
+    try {
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, notes })
+      });
+      const data = await response.json();
+      if (data.success) {
+        loadWalletWatchlist();
+        setEditingNotes(null);
+        setNewNote('');
+      }
+    } catch (error) {
+      console.error('Error updating wallet notes:', error);
+    }
+  };
+
+  const updateWalletWatchlistTags = async (walletAddress, tags) => {
+    try {
+      const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, tags: tagsArray })
+      });
+      const data = await response.json();
+      if (data.success) {
+        loadWalletWatchlist();
+        setEditingTags(null);
+        setNewTags('');
+      }
+    } catch (error) {
+      console.error('Error updating wallet tags:', error);
     }
   };
 
@@ -529,6 +620,9 @@ export default function SifterKYS() {
           </div>
           
           <div className="flex gap-3 items-center">
+            {/* ⭐ NEW: Wallet Activity Monitor - Bell icon with notifications */}
+            <WalletActivityMonitor />
+
             {walletAddress ? (
               <div className="relative">
                 <button
@@ -573,13 +667,14 @@ export default function SifterKYS() {
       </nav>
 
       <div className="pt-16 max-w-7xl mx-auto px-6 py-6">
-        {/* Updated tabs with Wallet Analysis */}
+        {/* UPDATED: Separate top-level tabs for Twitter and Wallet watchlists */}
         <div className="flex gap-3 mb-6 border-b border-white/10">
           {[
             { id: 'analyze', label: 'Analyze', icon: Search },
             { id: 'results', label: 'Twitter Results', icon: BarChart3 },
             { id: 'wallet-analysis', label: 'Wallet Analysis', icon: Wallet },
-            { id: 'watchlist', label: 'Watchlist', icon: BookmarkPlus },
+            { id: 'twitter-watchlist', label: 'Twitter Watchlist', icon: Users },
+            { id: 'wallet-watchlist', label: 'Wallet Watchlist', icon: BookmarkPlus },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -739,7 +834,6 @@ export default function SifterKYS() {
                           </button>
                         </div>
 
-                        {/* FIXED Issue 2: Per-token settings UI */}
                         {!useGlobalSettings && (
                           <div className="mt-3 pt-3 border-t border-white/10">
                             <div className="grid grid-cols-2 gap-2">
@@ -798,7 +892,6 @@ export default function SifterKYS() {
                   })}
                 </div>
 
-                {/* FIXED Issue 7: Settings only in Analyze tab */}
                 <div className="mt-4 pt-4 border-t border-white/10">
                   <div className="flex items-center gap-2 mb-3">
                     <button
@@ -888,7 +981,6 @@ export default function SifterKYS() {
                   )}
                 </button>
 
-                {/* NEW: Wallet Analysis Button */}
                 <button
                   onClick={handleWalletAnalysis}
                   disabled={isAnalyzingWallets}
@@ -929,12 +1021,11 @@ export default function SifterKYS() {
           </div>
         )}
 
-        {/* Results Tab - UPDATED */}
+        {/* Results Tab */}
         {activeTab === 'results' && (
           <div className="space-y-4">
             {analysisResults ? (
               <>
-                {/* NEW: Header with Clear Button */}
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl font-bold">Analysis Results</h2>
                   <div className="flex gap-2">
@@ -962,7 +1053,6 @@ export default function SifterKYS() {
                   </div>
                 </div>
                 
-                {/* Summary */}
                 <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
                   <h3 className="text-lg font-semibold mb-3">Summary</h3>
                   <div className="grid grid-cols-4 gap-3">
@@ -985,13 +1075,11 @@ export default function SifterKYS() {
                   </div>
                 </div>
                 
-                {/* Token Results - NEW: Collapsible */}
                 {analysisResults.results.map((result, idx) => {
                   const isExpanded = expandedTokens[idx];
                   
                   return (
                     <div key={idx} className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                      {/* NEW: Clickable Header */}
                       <button
                         onClick={() => toggleTokenExpansion(idx)}
                         className="w-full px-4 py-4 flex items-center justify-between hover:bg-white/5 transition"
@@ -1016,12 +1104,10 @@ export default function SifterKYS() {
                         {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                       </button>
                       
-                      {/* NEW: Collapsible Content */}
                       {isExpanded && (
                         <div className="px-4 pb-4 border-t border-white/10 pt-4">
                           {result.success ? (
                             <>
-                              {/* Rally Details */}
                               {result.rally_details && result.rally_details.length > 0 && (
                                 <div className="mb-4 space-y-3">
                                   {result.rally_details.map((rally, rallyIdx) => (
@@ -1078,7 +1164,6 @@ export default function SifterKYS() {
                                 </div>
                               )}
                               
-                              {/* Top Accounts */}
                               {result.top_accounts && result.top_accounts.length > 0 ? (
                                 <div>
                                   <h4 className="font-semibold mb-2">Top Accounts ({result.top_accounts.length})</h4>
@@ -1090,7 +1175,7 @@ export default function SifterKYS() {
                                           <div className="flex items-center gap-2">
                                             <div className="text-purple-400 font-bold">{account.influence_score}</div>
                                             <button
-                                              onClick={() => addToWatchlist(account)}
+                                              onClick={() => addToTwitterWatchlist(account)}
                                               className="p-1 hover:bg-purple-500/20 rounded text-purple-400"
                                               title="Add to watchlist"
                                             >
@@ -1145,12 +1230,11 @@ export default function SifterKYS() {
           </div>
         )}
 
-        {/* NEW: Wallet Analysis Tab */}
+        {/* Wallet Analysis Tab */}
         {activeTab === 'wallet-analysis' && (
           <div className="space-y-4">
             {walletAnalysisResults ? (
               <>
-                {/* Header */}
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl font-bold">Wallet Analysis Results</h2>
                   <button
@@ -1162,7 +1246,6 @@ export default function SifterKYS() {
                   </button>
                 </div>
 
-                {/* Summary */}
                 <div className="bg-gradient-to-br from-green-900/20 to-green-800/10 border border-green-500/20 rounded-xl p-4">
                   <h3 className="text-lg font-semibold mb-3">Wallet Analysis Summary</h3>
                   <div className="grid grid-cols-4 gap-3">
@@ -1193,7 +1276,6 @@ export default function SifterKYS() {
                   </div>
                 </div>
 
-                {/* Top Wallets */}
                 <div className="space-y-3">
                   {walletAnalysisResults.top_wallets && walletAnalysisResults.top_wallets.slice(0, 20).map((wallet, idx) => {
                     const isExpanded = expandedWallets[idx];
@@ -1298,33 +1380,33 @@ export default function SifterKYS() {
           </div>
         )}
 
-        {/* FIXED Issue 1: Watchlist Tab */}
-        {activeTab === 'watchlist' && (
+        {/* NEW: Twitter Watchlist Tab (Separate) */}
+        {activeTab === 'twitter-watchlist' && (
           <div className="space-y-4">
-            {watchlistStats && (
+            {twitterWatchlistStats && (
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-purple-400">{watchlistStats.total_accounts}</div>
+                  <div className="text-2xl font-bold text-purple-400">{twitterWatchlistStats.total_accounts}</div>
                   <div className="text-xs text-gray-400">Total Accounts</div>
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-green-400">{watchlistStats.avg_influence}</div>
+                  <div className="text-2xl font-bold text-green-400">{twitterWatchlistStats.avg_influence}</div>
                   <div className="text-xs text-gray-400">Avg Influence</div>
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-blue-400">{watchlistStats.total_pumps_tracked}</div>
+                  <div className="text-2xl font-bold text-blue-400">{twitterWatchlistStats.total_pumps_tracked}</div>
                   <div className="text-xs text-gray-400">Total Pumps</div>
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                  <div className="text-sm font-bold text-yellow-400">@{watchlistStats.best_performer?.username || 'N/A'}</div>
+                  <div className="text-sm font-bold text-yellow-400">@{twitterWatchlistStats.best_performer?.username || 'N/A'}</div>
                   <div className="text-xs text-gray-400">Best Performer</div>
                 </div>
               </div>
             )}
 
-            {watchlist.length === 0 ? (
+            {twitterWatchlist.length === 0 ? (
               <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">
-                <BookmarkPlus className="mx-auto mb-4 text-gray-400" size={48} />
+                <Users className="mx-auto mb-4 text-gray-400" size={48} />
                 <h3 className="text-lg font-semibold mb-2">No Accounts in Watchlist</h3>
                 <p className="text-sm text-gray-400">
                   Analyze tokens and click the bookmark icon next to accounts to add them here
@@ -1333,11 +1415,11 @@ export default function SifterKYS() {
             ) : (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                 <h3 className="text-lg font-semibold mb-4">
-                  Watchlist ({watchlist.length} accounts)
+                  Twitter Watchlist ({twitterWatchlist.length} accounts)
                 </h3>
 
                 <div className="space-y-3">
-                  {watchlist.map((account) => (
+                  {twitterWatchlist.map((account) => (
                     <div key={account.author_id} className="bg-black/30 border border-white/10 rounded-lg p-4">
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex-1">
@@ -1364,7 +1446,7 @@ export default function SifterKYS() {
                             <div className="text-xs text-gray-400">Influence</div>
                           </div>
                           <button
-                            onClick={() => removeFromWatchlist(account.author_id)}
+                            onClick={() => removeFromTwitterWatchlist(account.author_id)}
                             className="p-2 hover:bg-red-500/20 rounded text-red-400"
                           >
                             <Trash2 size={16} />
@@ -1398,7 +1480,7 @@ export default function SifterKYS() {
                               className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-1 text-sm"
                             />
                             <button
-                              onClick={() => updateWatchlistTags(account.author_id, newTags)}
+                              onClick={() => updateTwitterWatchlistTags(account.author_id, newTags)}
                               className="px-3 py-1 bg-purple-600 rounded text-sm"
                             >
                               Save
@@ -1450,7 +1532,7 @@ export default function SifterKYS() {
                             />
                             <div className="flex gap-2">
                               <button
-                                onClick={() => updateWatchlistNotes(account.author_id, newNote)}
+                                onClick={() => updateTwitterWatchlistNotes(account.author_id, newNote)}
                                 className="px-3 py-1 bg-purple-600 rounded text-sm"
                               >
                                 Save
@@ -1495,7 +1577,230 @@ export default function SifterKYS() {
             )}
           </div>
         )}
+
+        {/* NEW: Wallet Watchlist Tab (Separate) */}
+        {activeTab === 'wallet-watchlist' && (
+          <div className="space-y-4">
+            {walletWatchlistStats && (
+              <div className="grid grid-cols-4 gap-4">
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-purple-400">{walletWatchlistStats.total_wallets || 0}</div>
+                  <div className="text-xs text-gray-400">Total Wallets</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-yellow-400">{walletWatchlistStats.s_tier_count || 0}</div>
+                  <div className="text-xs text-gray-400">S-Tier Wallets</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-green-400">{walletWatchlistStats.avg_distance?.toFixed(1) || 0}%</div>
+                  <div className="text-xs text-gray-400">Avg Distance</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-blue-400">{walletWatchlistStats.total_pumps || 0}</div>
+                  <div className="text-xs text-gray-400">Total Pumps</div>
+                </div>
+              </div>
+            )}
+
+            {walletWatchlist.length === 0 ? (
+              <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">
+                <Wallet className="mx-auto mb-4 text-gray-400" size={48} />
+                <h3 className="text-lg font-semibold mb-2">No Wallets in Watchlist</h3>
+                <p className="text-sm text-gray-400">
+                  Run wallet analysis and bookmark high-performing wallets to track them here
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <h3 className="text-lg font-semibold mb-4">
+                  Wallet Watchlist ({walletWatchlist.length} wallets)
+                </h3>
+
+                <div className="space-y-3">
+                  {walletWatchlist.map((wallet) => (
+                    <div key={wallet.wallet_address} className="bg-black/30 border border-white/10 rounded-lg p-4">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className={`px-2 py-1 rounded text-sm font-bold ${
+                              wallet.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400' :
+                              wallet.tier === 'A' ? 'bg-green-500/20 text-green-400' :
+                              wallet.tier === 'B' ? 'bg-blue-500/20 text-blue-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              Tier {wallet.tier}
+                            </span>
+                          </div>
+                          <div className="text-xs font-mono text-gray-400 mb-2">
+                            {wallet.wallet_address}
+                          </div>
+                          {wallet.tokens_hit && (
+                            <div className="text-xs text-gray-500">
+                              Tokens: {wallet.tokens_hit}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* ⭐ NEW: Alert Settings and Delete buttons */}
+                        <div className="flex gap-2 items-center">
+                          <button
+                            onClick={() => setAlertSettingsWallet(wallet.wallet_address)}
+                            className="p-2 hover:bg-purple-500/20 rounded text-purple-400"
+                            title="Configure alerts"
+                          >
+                            <Settings size={16} />
+                          </button>
+                          
+                          <button
+                            onClick={() => removeFromWalletWatchlist(wallet.wallet_address)}
+                            className="p-2 hover:bg-red-500/20 rounded text-red-400"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-3 mb-3 text-sm">
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-green-400">{wallet.pump_count}</div>
+                          <div className="text-xs text-gray-400">Pumps</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-yellow-400">{wallet.avg_distance_to_peak}%</div>
+                          <div className="text-xs text-gray-400">Avg Distance</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-blue-400">{wallet.avg_roi_to_peak}%</div>
+                          <div className="text-xs text-gray-400">Avg ROI</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-purple-400">{wallet.consistency_score}</div>
+                          <div className="text-xs text-gray-400">Consistency</div>
+                        </div>
+                      </div>
+
+                      <div className="mb-2">
+                        {editingTags === wallet.wallet_address ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newTags}
+                              onChange={(e) => setNewTags(e.target.value)}
+                              placeholder="Enter tags (comma separated)"
+                              className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-1 text-sm"
+                            />
+                            <button
+                              onClick={() => updateWalletWatchlistTags(wallet.wallet_address, newTags)}
+                              className="px-3 py-1 bg-purple-600 rounded text-sm"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingTags(null);
+                                setNewTags('');
+                              }}
+                              className="px-3 py-1 bg-white/10 rounded text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Tag size={14} className="text-gray-400" />
+                            {wallet.tags && wallet.tags.length > 0 ? (
+                              wallet.tags.map((tag, idx) => (
+                                <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">
+                                  {tag}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-gray-500">No tags</span>
+                            )}
+                            <button
+                              onClick={() => {
+                                setEditingTags(wallet.wallet_address);
+                                setNewTags(wallet.tags ? wallet.tags.join(', ') : '');
+                              }}
+                              className="text-xs text-purple-400 hover:text-purple-300"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        {editingNotes === wallet.wallet_address ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={newNote}
+                              onChange={(e) => setNewNote(e.target.value)}
+                              placeholder="Add notes about this wallet..."
+                              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                              rows={3}
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => updateWalletWatchlistNotes(wallet.wallet_address, newNote)}
+                                className="px-3 py-1 bg-purple-600 rounded text-sm"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingNotes(null);
+                                  setNewNote('');
+                                }}
+                                className="px-3 py-1 bg-white/10 rounded text-sm"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <StickyNote size={14} className="text-gray-400 mt-0.5" />
+                            <div className="flex-1">
+                              {wallet.notes ? (
+                                <p className="text-sm text-gray-300">{wallet.notes}</p>
+                              ) : (
+                                <span className="text-xs text-gray-500">No notes</span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => {
+                                setEditingNotes(wallet.wallet_address);
+                                setNewNote(wallet.notes || '');
+                              }}
+                              className="text-xs text-purple-400 hover:text-purple-300"
+                            >
+                              {wallet.notes ? 'Edit' : 'Add'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ⭐ NEW: Alert Settings Modal - renders when a wallet is selected for alert config */}
+      {alertSettingsWallet && (
+        <WalletAlertSettings
+          walletAddress={alertSettingsWallet}
+          onClose={() => setAlertSettingsWallet(null)}
+          onSave={(settings) => {
+            console.log('Alert settings saved:', settings);
+            loadWalletWatchlist(); // Refresh the watchlist
+            setAlertSettingsWallet(null);
+          }}
+        />
+      )}
     </div>
   );
 }

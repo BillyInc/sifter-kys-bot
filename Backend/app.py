@@ -1,4 +1,5 @@
-# app.py - FULL UPDATED VERSION with Wallet Analysis
+# app.py - FULL UPDATED VERSION with Wallet Analysis + Real-Time Monitoring
+# FIXED: Proper initialization order to prevent database errors
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -16,8 +17,18 @@ from nlp_disambiguator import NLPDisambiguator
 # Watchlist Database
 from watchlist_db import WatchlistDatabase
 
-# NEW: Wallet Analyzer
+# Wallet Analyzer
 from wallet_analyzer import WalletPumpAnalyzer
+
+# NEW: Wallet Activity Monitor
+from wallet_monitor import (
+    WalletActivityMonitor,
+    get_recent_wallet_activity,
+    get_user_notifications,
+    mark_notification_read,
+    mark_all_notifications_read,
+    update_alert_settings
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -68,10 +79,35 @@ twitter_api_pool = TwitterAPIKeyPool(TWITTER_API_KEYS, cooldown_minutes=15)
 
 watchlist_db = WatchlistDatabase(db_path='watchlists.db')
 
-print(f"""
+# =============================================================================
+# INITIALIZE WALLET ACTIVITY MONITOR (DEFERRED)
+# =============================================================================
+
+# Initialize monitor object but don't start yet
+wallet_monitor = None
+
+def initialize_wallet_monitor():
+    """Initialize and start the wallet monitor after ensuring database is ready"""
+    global wallet_monitor
+    
+    if wallet_monitor is None:
+        print("\n" + "="*80)
+        print("INITIALIZING WALLET MONITOR")
+        print("="*80)
+        
+        wallet_monitor = WalletActivityMonitor(
+            birdeye_api_key=BIRDEYE_API_KEY,
+            db_path='watchlists.db',
+            poll_interval=120  # 2 minutes
+        )
+        
+        # Start monitoring in background
+        wallet_monitor.start()
+        
+        print(f"""
 ╔══════════════════════════════════════════════════════════════════╗
-║     SIFTER KYS API SERVER v7.0 - WITH WALLET ANALYSIS            ║
-║                 FIXED ADDRESS ISSUE                              ║
+║     SIFTER KYS API SERVER v7.1 - WITH REAL-TIME MONITORING       ║
+║                 FIXED INITIALIZATION ORDER                        ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 ✨ FEATURES:
@@ -80,12 +116,20 @@ print(f"""
   ✓ Full Watchlist API endpoints (Twitter + Wallets)
   ✓ Birdeye price data integration (FIXED: Using correct pair addresses)
   ✓ Wallet analysis with ATH scoring
+  ✓ Real-time wallet activity monitoring
+  ✓ Automatic notification system
   ✓ Real-time key pool status tracking
 
 🛠️ FIXES APPLIED:
   ✓ Twitter Analysis: Now uses 'pair_address' for OHLCV data
   ✓ Wallet Analysis: Now uses 'pair_address' for OHLCV data
   ✓ Both endpoints keep 'address' for wallet/overview calls
+  ✓ Database initialized before monitor starts
+
+🔔 WALLET MONITORING:
+  ✓ Monitor initialized and running
+  ✓ Polling every {wallet_monitor.poll_interval/60:.1f} minutes
+  ✓ Alert system active
 """)
 
 # =============================================================================
@@ -126,7 +170,6 @@ def analyze_tokens():
                 candle_size = settings.get('candle_size', '5m')
                 
                 # 🔴🔴🔴 FIX: Use pair_address, NOT address for OHLCV 🔴🔴🔴
-                # Birdeye's OHLCV endpoint needs TRADING PAIR address
                 pair_address = token.get('pair_address', token['address'])
                 chain = token['chain']
                 
@@ -134,7 +177,7 @@ def analyze_tokens():
                 print(f"[{idx}/{len(tokens)}] Token address (mint): {token['address'][:8]}...")
                 
                 ohlcv_data = detector.get_ohlcv_data(
-                    pair_address=pair_address,  # ✅ FIXED: Use pair_address
+                    pair_address=pair_address,
                     chain=chain,
                     days_back=days_back,
                     candle_size=candle_size
@@ -415,37 +458,13 @@ def analyze_tokens():
 
 
 # =============================================================================
-# NEW: WALLET ANALYSIS ENDPOINT - FIXED
+# WALLET ANALYSIS ENDPOINT - FIXED
 # =============================================================================
 
 @app.route('/api/wallets/analyze', methods=['POST'])
 def analyze_wallets():
     """
     Wallet analysis endpoint with ALL-TIME HIGH scoring.
-    
-    Request body:
-    {
-        "tokens": [
-            {
-                "ticker": "PEPE",
-                "name": "Pepe",
-                "address": "token_mint",
-                "pair_address": "pair_address",  # Added this
-                "chain": "solana",
-                "settings": {
-                    "days_back": 7,
-                    "candle_size": "5m",
-                    "wallet_window_before": 35,
-                    "wallet_window_after": 0
-                }
-            }
-        ],
-        "global_settings": {
-            "min_pump_count": 5,
-            "wallet_window_before": 35,
-            "wallet_window_after": 10
-        }
-    }
     """
     try:
         data = request.json
@@ -467,7 +486,6 @@ def analyze_wallets():
         print(f"Min Pump Count: {min_pump_count}")
         print(f"{'='*100}\n")
         
-        # Step 1: Detect rallies AND store OHLCV data
         detector = PrecisionRallyDetector(birdeye_api_key=BIRDEYE_API_KEY)
         token_rally_data = []
         
@@ -478,11 +496,8 @@ def analyze_wallets():
             days_back = settings.get('days_back', 7)
             candle_size = settings.get('candle_size', '5m')
             
-            # 🔴🔴🔴 FIX: Use pair_address, NOT address for OHLCV 🔴🔴🔴
-            # Check if we have pair_address (frontend should send it)
             if 'pair_address' not in token:
                 print(f"  ⚠️ No pair_address found, using address as fallback")
-                print(f"  ⚠️ Frontend should send 'pair_address' from DexScreener")
                 pair_address = token['address']
             else:
                 pair_address = token['pair_address']
@@ -491,7 +506,7 @@ def analyze_wallets():
             print(f"  Pair address: {pair_address[:8]}...")
             
             ohlcv_data = detector.get_ohlcv_data(
-                pair_address=pair_address,  # ✅ FIXED: Use pair_address
+                pair_address=pair_address,
                 chain=token.get('chain', 'solana'),
                 days_back=days_back,
                 candle_size=candle_size
@@ -507,19 +522,16 @@ def analyze_wallets():
                 window_before = settings.get('wallet_window_before', default_window_before)
                 window_after = settings.get('wallet_window_after', default_window_after)
                 
-                # Store BOTH addresses for different purposes:
-                # - 'address' (mint) for wallet analyzer
-                # - 'pair_address' for OHLCV (already used above)
                 token_rally_data.append({
                     'token': {
                         'ticker': token['ticker'],
                         'name': token['name'],
-                        'address': token['address'],  # Token mint for wallet analysis
-                        'pair_address': pair_address,  # Pair address for OHLCV
+                        'address': token['address'],
+                        'pair_address': pair_address,
                         'chain': token.get('chain', 'solana')
                     },
                     'rallies': rallies,
-                    'ohlcv_data': ohlcv_data,  # Pass OHLCV data for ATH calculation
+                    'ohlcv_data': ohlcv_data,
                     'window_before': window_before,
                     'window_after': window_after
                 })
@@ -532,12 +544,10 @@ def analyze_wallets():
                 'error': 'No rallies detected across any tokens'
             }), 200
         
-        # Step 2: Wallet analysis with ATH
         wallet_analyzer = WalletPumpAnalyzer(
             birdeye_api_key=BIRDEYE_API_KEY
         )
         
-        # Handle multiple window configurations
         unique_windows = set(
             (t['window_before'], t['window_after']) 
             for t in token_rally_data
@@ -603,27 +613,42 @@ def analyze_wallets():
 
 @app.route('/api/wallets/watchlist/add', methods=['POST'])
 def add_wallet_to_watchlist():
-    """Add wallet to watchlist"""
+    """
+    Add wallet to watchlist with alert settings
+    """
     try:
         data = request.json
         if not data.get('user_id') or not data.get('wallet'):
             return jsonify({'error': 'user_id and wallet required'}), 400
+        
+        # Ensure monitor is initialized
+        if wallet_monitor is None:
+            initialize_wallet_monitor()
         
         success = watchlist_db.add_wallet_to_watchlist(
             data['user_id'],
             data['wallet']
         )
         
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f"Wallet {data['wallet']['wallet_address'][:8]}... added"
-            }), 200
-        else:
+        if not success:
             return jsonify({
                 'success': False,
                 'error': 'Wallet already in watchlist'
             }), 400
+        
+        # Update alert settings if provided
+        if data.get('alert_settings'):
+            update_alert_settings(
+                'watchlists.db',
+                data['user_id'],
+                data['wallet']['wallet_address'],
+                data['alert_settings']
+            )
+        
+        return jsonify({
+            'success': True,
+            'message': f"Wallet {data['wallet']['wallet_address'][:8]}... added with alerts"
+        }), 200
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -716,6 +741,198 @@ def get_wallet_watchlist_stats():
         return jsonify({
             'success': True,
             'stats': stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# WALLET ACTIVITY & NOTIFICATION ENDPOINTS (NEW)
+# =============================================================================
+
+@app.route('/api/wallets/activity/recent', methods=['GET'])
+def get_wallet_activity():
+    """
+    Get recent wallet activity
+    """
+    try:
+        wallet_address = request.args.get('wallet_address')
+        limit = int(request.args.get('limit', 50))
+        
+        activities = get_recent_wallet_activity(
+            db_path='watchlists.db',
+            wallet_address=wallet_address,
+            limit=limit
+        )
+        
+        return jsonify({
+            'success': True,
+            'activities': activities,
+            'count': len(activities)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/notifications', methods=['GET'])
+def get_notifications():
+    """
+    Get notifications for a user
+    """
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        unread_only = request.args.get('unread_only', '').lower() == 'true'
+        limit = int(request.args.get('limit', 50))
+        
+        notifications = get_user_notifications(
+            db_path='watchlists.db',
+            user_id=user_id,
+            unread_only=unread_only,
+            limit=limit
+        )
+        
+        unread_count = len([n for n in notifications if n['read_at'] is None])
+        
+        return jsonify({
+            'success': True,
+            'notifications': notifications,
+            'count': len(notifications),
+            'unread_count': unread_count
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/notifications/mark-read', methods=['POST'])
+def mark_notifications_read():
+    """
+    Mark notification(s) as read
+    """
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        if data.get('mark_all'):
+            count = mark_all_notifications_read('watchlists.db', user_id)
+            return jsonify({
+                'success': True,
+                'message': f'{count} notification(s) marked as read'
+            }), 200
+        
+        elif data.get('notification_id'):
+            success = mark_notification_read(
+                'watchlists.db',
+                data['notification_id'],
+                user_id
+            )
+            
+            if success:
+                return jsonify({
+                    'success': True,
+                    'message': 'Notification marked as read'
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Notification not found'
+                }), 404
+        
+        else:
+            return jsonify({
+                'error': 'Either notification_id or mark_all required'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/alerts/update', methods=['POST'])
+def update_wallet_alerts():
+    """
+    Update alert settings for a wallet
+    """
+    try:
+        data = request.json
+        
+        if not data.get('user_id') or not data.get('wallet_address'):
+            return jsonify({
+                'error': 'user_id and wallet_address required'
+            }), 400
+        
+        if not data.get('settings'):
+            return jsonify({'error': 'settings object required'}), 400
+        
+        success = update_alert_settings(
+            'watchlists.db',
+            data['user_id'],
+            data['wallet_address'],
+            data['settings']
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Alert settings updated'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Wallet not found in watchlist'
+            }), 404
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/monitor/status', methods=['GET'])
+def get_monitor_status():
+    """Get wallet monitor status and statistics"""
+    try:
+        # Ensure monitor is initialized
+        if wallet_monitor is None:
+            initialize_wallet_monitor()
+            
+        stats = wallet_monitor.get_monitoring_stats()
+        
+        return jsonify({
+            'success': True,
+            'status': stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/wallets/monitor/force-check', methods=['POST'])
+def force_check_wallet():
+    """
+    Force an immediate check of a specific wallet (for testing)
+    """
+    try:
+        data = request.json
+        wallet_address = data.get('wallet_address')
+        
+        if not wallet_address:
+            return jsonify({'error': 'wallet_address required'}), 400
+        
+        # Ensure monitor is initialized
+        if wallet_monitor is None:
+            initialize_wallet_monitor()
+        
+        wallet_monitor.force_check_wallet(wallet_address)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Force check completed for {wallet_address[:8]}...'
         }), 200
         
     except Exception as e:
@@ -915,14 +1132,21 @@ def get_key_pool_status():
 def health_check():
     pool_status = twitter_api_pool.get_status()
     
+    # Ensure monitor is initialized for health check
+    if wallet_monitor is None:
+        initialize_wallet_monitor()
+    
+    monitor_stats = wallet_monitor.get_monitoring_stats()
+    
     return jsonify({
         'status': 'healthy',
-        'version': '7.0.0',
+        'version': '7.1.0',
         'features': {
             'twitter_analysis': True,
             'wallet_analysis': True,
             'twitter_watchlist': True,
-            'wallet_watchlist': True
+            'wallet_watchlist': True,
+            'real_time_monitoring': True
         },
         'twitter_api_keys': {
             'total': pool_status['total_keys'],
@@ -930,13 +1154,21 @@ def health_check():
             'rate_limited': pool_status['rate_limited_keys'],
             'failed': pool_status['failed_keys']
         },
+        'wallet_monitor': {
+            'running': monitor_stats['running'],
+            'active_wallets': monitor_stats['active_wallets'],
+            'pending_notifications': monitor_stats['pending_notifications']
+        },
         'birdeye_configured': bool(BIRDEYE_API_KEY),
         'watchlist_db': 'initialized'
     })
 
 
 if __name__ == '__main__':
-    print("\n🚀 Starting server on http://localhost:5000\n")
+    print("\n🚀 Starting server on http://localhost:5000")
+    
+    # Initialize wallet monitor when server starts
+    initialize_wallet_monitor()
     
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)

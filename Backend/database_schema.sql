@@ -1,6 +1,32 @@
--- Database Schema for SIFTER KYS v7.0
--- Stores Twitter analysis, Wallet analysis, and cross-token tracking
+"""
+init_database.py - Database Initialization Script
+Creates all required tables for the wallet monitoring system
+Run this before starting the wallet monitor
+"""
 
+import sqlite3
+import os
+
+def init_database(db_path='watchlists.db'):
+    """Initialize database with all required tables"""
+    
+    print(f"\n{'='*80}")
+    print(f"DATABASE INITIALIZATION")
+    print(f"{'='*80}")
+    print(f"Database: {db_path}")
+    
+    # Check if database already exists
+    db_exists = os.path.exists(db_path)
+    if db_exists:
+        print(f"⚠️  Database already exists - will add missing tables")
+    else:
+        print(f"✨ Creating new database")
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Read and execute the schema
+    schema_sql = """
 -- ============================================================================
 -- USERS TABLE
 -- ============================================================================
@@ -14,7 +40,6 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- ============================================================================
 -- TWITTER ANALYSIS RESULTS
--- Stores Top 20 results from each token analysis for cross-token overlap
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS analysis_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +64,6 @@ ON analysis_results(analysis_timestamp DESC);
 
 -- ============================================================================
 -- TOP TWITTER ACCOUNTS PER ANALYSIS
--- Stores the Top 20 Twitter accounts from each analysis
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS top_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,14 +90,13 @@ ON top_accounts(analysis_id);
 
 -- ============================================================================
 -- CROSS-TOKEN TWITTER TRACKING
--- Materialized view of Twitter accounts appearing in multiple tokens
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS cross_token_tracking (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     author_id TEXT UNIQUE NOT NULL,
     username TEXT,
     total_tokens_called INTEGER DEFAULT 0,
-    tokens_list TEXT, -- JSON array of token tickers
+    tokens_list TEXT,
     total_pumps_called INTEGER DEFAULT 0,
     avg_influence_score REAL,
     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -123,7 +146,6 @@ CREATE TABLE IF NOT EXISTS watchlist_groups (
 
 -- ============================================================================
 -- RALLY DETAILS
--- Store detailed rally information for reference
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS rally_details (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,8 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_rally_analysis
 ON rally_details(analysis_id);
 
 -- ============================================================================
--- WALLET ANALYSIS RESULTS (NEW)
--- Stores wallet analysis results similar to Twitter analysis
+-- WALLET ANALYSIS RESULTS
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS wallet_analysis_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,14 +193,13 @@ CREATE INDEX IF NOT EXISTS idx_wallet_analysis_timestamp
 ON wallet_analysis_results(analysis_timestamp DESC);
 
 -- ============================================================================
--- TOP WALLETS PER ANALYSIS (NEW)
--- Stores the top wallets from each wallet analysis
+-- TOP WALLETS PER ANALYSIS
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS top_wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet_analysis_id INTEGER NOT NULL,
     wallet_address TEXT NOT NULL,
-    tier TEXT, -- 'S', 'A', 'B', 'C'
+    tier TEXT,
     pump_count INTEGER DEFAULT 0,
     tokens_hit INTEGER DEFAULT 0,
     avg_distance_to_peak REAL,
@@ -203,15 +223,14 @@ CREATE INDEX IF NOT EXISTS idx_top_wallets_tier
 ON top_wallets(tier);
 
 -- ============================================================================
--- CROSS-TOKEN WALLET TRACKING (NEW)
--- Track wallets appearing across multiple tokens
+-- CROSS-TOKEN WALLET TRACKING
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS cross_token_wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet_address TEXT UNIQUE NOT NULL,
     tier TEXT,
     total_tokens_called INTEGER DEFAULT 0,
-    tokens_list TEXT, -- JSON array of token tickers
+    tokens_list TEXT,
     total_pumps_called INTEGER DEFAULT 0,
     avg_distance_to_peak REAL,
     avg_roi_to_peak REAL,
@@ -230,8 +249,7 @@ CREATE INDEX IF NOT EXISTS idx_cross_wallet_count
 ON cross_token_wallets(total_tokens_called DESC);
 
 -- ============================================================================
--- WALLET WATCHLIST (NEW)
--- Users can watchlist high-performing wallets
+-- WALLET WATCHLIST (WITH ALERT SETTINGS)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS wallet_watchlist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,11 +260,15 @@ CREATE TABLE IF NOT EXISTS wallet_watchlist (
     avg_distance_to_peak REAL,
     avg_roi_to_peak REAL,
     consistency_score REAL,
-    tokens_hit TEXT, -- Comma-separated list
+    tokens_hit TEXT,
     notes TEXT,
-    tags TEXT, -- JSON array
+    tags TEXT,
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    alert_enabled BOOLEAN DEFAULT TRUE,
+    alert_on_buy BOOLEAN DEFAULT TRUE,
+    alert_on_sell BOOLEAN DEFAULT FALSE,
+    min_trade_usd REAL DEFAULT 100,
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     UNIQUE(user_id, wallet_address)
 );
@@ -257,9 +279,77 @@ ON wallet_watchlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_tier 
 ON wallet_watchlist(tier);
 
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_alerts_enabled
+ON wallet_watchlist(alert_enabled) WHERE alert_enabled = TRUE;
+
 -- ============================================================================
--- WALLET RALLY PERFORMANCE (NEW)
--- Detailed per-rally performance for each wallet
+-- WALLET ACTIVITY LOG
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS wallet_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_address TEXT NOT NULL,
+    token_address TEXT NOT NULL,
+    token_ticker TEXT,
+    token_name TEXT,
+    side TEXT NOT NULL,
+    token_amount REAL,
+    usd_value REAL,
+    price REAL,
+    tx_hash TEXT UNIQUE NOT NULL,
+    block_time INTEGER NOT NULL,
+    detected_at INTEGER DEFAULT (strftime('%s', 'now')),
+    from_address TEXT,
+    to_address TEXT,
+    dex TEXT,
+    is_processed BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_wallet 
+ON wallet_activity(wallet_address);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_time 
+ON wallet_activity(block_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_token 
+ON wallet_activity(token_address);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_tx_hash 
+ON wallet_activity(tx_hash);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_unprocessed
+ON wallet_activity(is_processed) WHERE is_processed = FALSE;
+
+-- ============================================================================
+-- WALLET NOTIFICATIONS
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS wallet_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    wallet_address TEXT NOT NULL,
+    activity_id INTEGER NOT NULL,
+    sent_at INTEGER DEFAULT (strftime('%s', 'now')),
+    read_at INTEGER DEFAULT NULL,
+    dismissed_at INTEGER DEFAULT NULL,
+    token_ticker TEXT,
+    token_name TEXT,
+    side TEXT,
+    usd_value REAL,
+    tx_hash TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (activity_id) REFERENCES wallet_activity(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user 
+ON wallet_notifications(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user_unread 
+ON wallet_notifications(user_id, read_at) WHERE read_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_sent_at 
+ON wallet_notifications(sent_at DESC);
+
+-- ============================================================================
+-- WALLET RALLY PERFORMANCE
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS wallet_rally_performance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -285,141 +375,98 @@ CREATE INDEX IF NOT EXISTS idx_wallet_rally_perf_wallet
 ON wallet_rally_performance(wallet_address);
 
 -- ============================================================================
--- HELPER VIEWS
+-- MONITORING STATUS (CRITICAL FOR WALLET MONITOR)
 -- ============================================================================
+CREATE TABLE IF NOT EXISTS wallet_monitor_status (
+    wallet_address TEXT PRIMARY KEY,
+    last_checked_at INTEGER DEFAULT (strftime('%s', 'now')),
+    last_activity_at INTEGER,
+    check_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    is_active BOOLEAN DEFAULT TRUE
+);
 
--- View: Recent Twitter analyses
-CREATE VIEW IF NOT EXISTS v_recent_analyses AS
-SELECT 
-    ar.id,
-    ar.user_id,
-    ar.token_ticker,
-    ar.token_name,
-    ar.chain,
-    ar.analysis_timestamp,
-    ar.rallies_found,
-    COUNT(DISTINCT ta.author_id) as unique_accounts,
-    SUM(CASE WHEN ta.rank_position <= 10 THEN 1 ELSE 0 END) as top_10_accounts
-FROM analysis_results ar
-LEFT JOIN top_accounts ta ON ar.id = ta.analysis_id
-GROUP BY ar.id
-ORDER BY ar.analysis_timestamp DESC;
-
--- View: Cross-token Twitter overlap for a user
-CREATE VIEW IF NOT EXISTS v_user_cross_token_overlap AS
-SELECT 
-    ta.author_id,
-    ta.username,
-    COUNT(DISTINCT ar.token_address) as tokens_count,
-    GROUP_CONCAT(DISTINCT ar.token_ticker) as tokens_called,
-    AVG(ta.influence_score) as avg_influence,
-    SUM(ta.pumps_called) as total_pumps
-FROM top_accounts ta
-JOIN analysis_results ar ON ta.analysis_id = ar.id
-GROUP BY ta.author_id, ta.username
-HAVING tokens_count >= 2
-ORDER BY tokens_count DESC, avg_influence DESC;
-
--- View: Cross-token wallet overlap for a user (NEW)
-CREATE VIEW IF NOT EXISTS v_user_cross_wallet_overlap AS
-SELECT 
-    tw.wallet_address,
-    tw.tier,
-    COUNT(DISTINCT war.token_address) as tokens_count,
-    GROUP_CONCAT(DISTINCT war.token_ticker) as tokens_called,
-    AVG(tw.avg_distance_to_peak) as avg_distance,
-    AVG(tw.avg_roi_to_peak) as avg_roi,
-    SUM(tw.pump_count) as total_pumps
-FROM top_wallets tw
-JOIN wallet_analysis_results war ON tw.wallet_analysis_id = war.id
-GROUP BY tw.wallet_address, tw.tier
-HAVING tokens_count >= 2
-ORDER BY tokens_count DESC, avg_distance DESC;
+CREATE INDEX IF NOT EXISTS idx_monitor_status_last_checked
+ON wallet_monitor_status(last_checked_at);
 
 -- ============================================================================
--- TRIGGERS
+-- SCHEMA VERSION
 -- ============================================================================
+CREATE TABLE IF NOT EXISTS schema_version (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    description TEXT
+);
+"""
+    
+    try:
+        # Execute the schema
+        cursor.executescript(schema_sql)
+        
+        # Insert/update schema version
+        cursor.execute("""
+            INSERT OR REPLACE INTO schema_version (version, description) 
+            VALUES ('7.0', 'Real-time wallet activity monitoring and alert system')
+        """)
+        
+        # Create demo user if not exists
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (user_id, subscription_tier) 
+            VALUES ('demo_user', 'free')
+        """)
+        
+        conn.commit()
+        
+        # Verify critical tables exist
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' 
+            ORDER BY name
+        """)
+        
+        tables = [row[0] for row in cursor.fetchall()]
+        
+        print(f"\n✅ Database initialized successfully!")
+        print(f"\nCreated/verified {len(tables)} tables:")
+        
+        critical_tables = [
+            'wallet_watchlist',
+            'wallet_activity', 
+            'wallet_notifications',
+            'wallet_monitor_status'
+        ]
+        
+        for table in critical_tables:
+            status = "✓" if table in tables else "✗"
+            print(f"  {status} {table}")
+        
+        # Check if all critical tables exist
+        all_exist = all(table in tables for table in critical_tables)
+        
+        if all_exist:
+            print(f"\n{'='*80}")
+            print(f"✅ ALL CRITICAL TABLES READY - Wallet monitor can now start!")
+            print(f"{'='*80}\n")
+            return True
+        else:
+            print(f"\n⚠️  Some critical tables are missing!")
+            return False
+        
+    except Exception as e:
+        print(f"\n❌ Error initializing database: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    finally:
+        conn.close()
 
--- Trigger: Update cross-token Twitter tracking after inserting top accounts
-CREATE TRIGGER IF NOT EXISTS update_cross_token_after_insert
-AFTER INSERT ON top_accounts
-BEGIN
-    INSERT OR REPLACE INTO cross_token_tracking (
-        author_id,
-        username,
-        total_tokens_called,
-        tokens_list,
-        total_pumps_called,
-        avg_influence_score,
-        last_seen
-    )
-    SELECT 
-        ta.author_id,
-        MAX(ta.username),
-        COUNT(DISTINCT ar.token_address),
-        json_group_array(DISTINCT ar.token_ticker),
-        SUM(ta.pumps_called),
-        AVG(ta.influence_score),
-        CURRENT_TIMESTAMP
-    FROM top_accounts ta
-    JOIN analysis_results ar ON ta.analysis_id = ar.id
-    WHERE ta.author_id = NEW.author_id
-    GROUP BY ta.author_id;
-END;
 
--- Trigger: Update cross-token wallet tracking after inserting top wallets (NEW)
-CREATE TRIGGER IF NOT EXISTS update_cross_wallet_after_insert
-AFTER INSERT ON top_wallets
-BEGIN
-    INSERT OR REPLACE INTO cross_token_wallets (
-        wallet_address,
-        tier,
-        total_tokens_called,
-        tokens_list,
-        total_pumps_called,
-        avg_distance_to_peak,
-        avg_roi_to_peak,
-        consistency_score,
-        last_seen
-    )
-    SELECT 
-        tw.wallet_address,
-        MAX(tw.tier),
-        COUNT(DISTINCT war.token_address),
-        json_group_array(DISTINCT war.token_ticker),
-        SUM(tw.pump_count),
-        AVG(tw.avg_distance_to_peak),
-        AVG(tw.avg_roi_to_peak),
-        AVG(tw.consistency_score),
-        CURRENT_TIMESTAMP
-    FROM top_wallets tw
-    JOIN wallet_analysis_results war ON tw.wallet_analysis_id = war.id
-    WHERE tw.wallet_address = NEW.wallet_address
-    GROUP BY tw.wallet_address;
-END;
-
--- Trigger: Update user last_active on any Twitter analysis
-CREATE TRIGGER IF NOT EXISTS update_user_last_active
-AFTER INSERT ON analysis_results
-BEGIN
-    UPDATE users 
-    SET last_active = CURRENT_TIMESTAMP 
-    WHERE user_id = NEW.user_id;
-END;
-
--- Trigger: Update user last_active on wallet analysis (NEW)
-CREATE TRIGGER IF NOT EXISTS update_user_last_active_wallet
-AFTER INSERT ON wallet_analysis_results
-BEGIN
-    UPDATE users 
-    SET last_active = CURRENT_TIMESTAMP 
-    WHERE user_id = NEW.user_id;
-END;
-
--- ============================================================================
--- INITIAL DATA
--- ============================================================================
-
--- Create demo user
-INSERT OR IGNORE INTO users (user_id, subscription_tier) 
-VALUES ('demo_user', 'free');
+if __name__ == '__main__':
+    import sys
+    
+    db_path = sys.argv[1] if len(sys.argv) > 1 else 'watchlists.db'
+    success = init_database(db_path)
+    
+    sys.exit(0 if success else 1)

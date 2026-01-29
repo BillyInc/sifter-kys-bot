@@ -7,7 +7,7 @@ class WalletPumpAnalyzer:
     """
     Analyzes wallets using ONLY Birdeye API.
     Uses hybrid ALL-TIME HIGH: token_overview → history_price max → OHLCV fallback.
-    Improved price extraction and debug logging.
+    Enhanced with bot/flipper filters and days-to-ATH tracking.
     """
     
     def __init__(self, birdeye_api_key, debug_mode=False):
@@ -107,7 +107,7 @@ class WalletPumpAnalyzer:
     
     def get_pre_pump_buyers(self, token_address, chain, rally_start_unix, 
                            window_minutes_before=35, window_minutes_after=0):
-        print(f"\n[BIRDEYE WALLET ANALYSIS] Fetching pre-pump buyers...")
+        print(f"\n[BIRDEYE WALLET ANALYSIS] Fetching pre-pump trades...")
         print(f"  Token: {token_address[:8]}...{token_address[-6:]}")
         
         after_time = rally_start_unix - (window_minutes_before * 60)
@@ -120,13 +120,14 @@ class WalletPumpAnalyzer:
         print(f"  Window: {after_dt.strftime('%H:%M:%S')} to {before_dt.strftime('%H:%M:%S')}")
         print(f"  Rally Start: {rally_dt.strftime('%H:%M:%S')}")
         
-        all_buys = self._fetch_buys_in_window(token_address, chain, after_time, before_time)
-        unique_buyers = self._aggregate_by_wallet(all_buys)
+        all_buys, all_sells = self._fetch_trades_in_window(token_address, chain, after_time, before_time)
+        unique_buyers = self._aggregate_by_wallet(all_buys, all_sells)
         
-        print(f"  ✓ {len(all_buys)} buy txs → {len(unique_buyers)} unique wallets")
+        print(f"  ✓ {len(all_buys)} buys + {len(all_sells)} sells → {len(unique_buyers)} unique wallets")
         return unique_buyers
     
-    def _fetch_buys_in_window(self, token_address, chain, after_time, before_time):
+    def _fetch_trades_in_window(self, token_address, chain, after_time, before_time):
+        """Fetch BOTH buys and sells for filter calculations"""
         headers = {
             'accept': 'application/json',
             'x-chain': chain,
@@ -145,7 +146,8 @@ class WalletPumpAnalyzer:
         }
         
         all_buys = []
-        processed_txs = set()  # Track processed transactions to avoid duplicates
+        all_sells = []
+        processed_txs = set()
         
         while True:
             try:
@@ -164,17 +166,29 @@ class WalletPumpAnalyzer:
                         continue
                     
                     processed_txs.add(tx_hash)
+                    side = tx.get('side') or tx.get('tx_type')
                     
-                    if tx.get('side') == 'buy' or tx.get('tx_type') == 'buy':
+                    if side == 'buy':
                         price = self._extract_token_price(tx, token_address)
+                        token_amount = self._extract_token_amount(tx, token_address)
                         if price > 0:
                             all_buys.append({
                                 'wallet': tx.get('owner', ''),
                                 'timestamp': tx.get('block_unix_time', 0),
                                 'tx_hash': tx_hash,
                                 'volume_usd': tx.get('volume_usd', 0),
-                                'price': price
+                                'price': price,
+                                'token_amount': token_amount
                             })
+                    
+                    elif side == 'sell':
+                        token_amount = self._extract_token_amount(tx, token_address)
+                        all_sells.append({
+                            'wallet': tx.get('owner', ''),
+                            'timestamp': tx.get('block_unix_time', 0),
+                            'tx_hash': tx_hash,
+                            'token_amount': token_amount
+                        })
                 
                 if len(items) < 100:
                     break
@@ -188,7 +202,15 @@ class WalletPumpAnalyzer:
                 print(f"  ⚠️ Birdeye tx error: {e}")
                 break
         
-        return all_buys
+        return all_buys, all_sells
+    
+    def _extract_token_amount(self, tx, token_address):
+        """Extract token amount from transaction for net accumulation calculation"""
+        for side in ['from', 'to']:
+            side_data = tx.get(side, {})
+            if side_data.get('address') == token_address:
+                return side_data.get('ui_amount') or side_data.get('amount', 0)
+        return 0
     
     def _extract_token_price(self, tx, token_address):
         """
@@ -210,13 +232,7 @@ class WalletPumpAnalyzer:
 
         # Fallback: volume_usd / token amount
         volume_usd = tx.get('volume_usd', 0)
-        token_amount = 0
-
-        for side in ['from', 'to']:
-            side_data = tx.get(side, {})
-            if side_data.get('address') == token_address:
-                token_amount = side_data.get('ui_amount') or side_data.get('amount', 0)
-                break
+        token_amount = self._extract_token_amount(tx, token_address)
 
         if token_amount > 0 and volume_usd > 0:
             calc_price = volume_usd / token_amount
@@ -229,14 +245,19 @@ class WalletPumpAnalyzer:
             print(f"[PRICE FAIL] No valid price for tx {tx.get('tx_hash', 'unknown')[:10]}...")
         return 0.00000001  # tiny fallback to avoid division issues
     
-    def _aggregate_by_wallet(self, buys):
+    def _aggregate_by_wallet(self, buys, sells):
+        """Aggregate trades by wallet and calculate net accumulation"""
         wallet_data = defaultdict(lambda: {
             'total_volume_usd': 0,
             'timestamps': [],
             'tx_hashes': [],
-            'prices': []
+            'prices': [],
+            'total_bought_tokens': 0,
+            'total_sold_tokens': 0,
+            'sell_timestamps': []
         })
         
+        # Process buys
         for buy in buys:
             wallet = buy['wallet']
             price = buy['price']
@@ -248,23 +269,51 @@ class WalletPumpAnalyzer:
             wallet_data[wallet]['timestamps'].append(buy['timestamp'])
             wallet_data[wallet]['tx_hashes'].append(buy['tx_hash'])
             wallet_data[wallet]['prices'].append(price)
+            wallet_data[wallet]['total_bought_tokens'] += buy.get('token_amount', 0)
+        
+        # Process sells
+        for sell in sells:
+            wallet = sell['wallet']
+            if not wallet:
+                continue
+            
+            wallet_data[wallet]['total_sold_tokens'] += sell.get('token_amount', 0)
+            wallet_data[wallet]['sell_timestamps'].append(sell['timestamp'])
         
         unique_buyers = []
         
         for wallet, data in wallet_data.items():
             if not data['prices']:
                 continue
-                
+            
             avg_price = sum(data['prices']) / len(data['prices'])
-            first_timestamp = min(data['timestamps'])
+            first_buy_timestamp = min(data['timestamps'])
+            
+            # Calculate hold time (if they sold)
+            hold_time_minutes = 0
+            if data['sell_timestamps']:
+                first_sell_timestamp = min(data['sell_timestamps'])
+                hold_time_minutes = (first_sell_timestamp - first_buy_timestamp) / 60
+            
+            # Calculate net accumulation percentage
+            total_bought = data['total_bought_tokens']
+            total_sold = data['total_sold_tokens']
+            net_accumulation_pct = 0
+            if total_bought > 0:
+                net_accumulation_pct = ((total_bought - total_sold) / total_bought) * 100
             
             unique_buyers.append({
                 'wallet': wallet,
-                'timestamp': first_timestamp,
+                'timestamp': first_buy_timestamp,
                 'price': avg_price,
                 'total_volume_usd': data['total_volume_usd'],
                 'num_buys': len(data['timestamps']),
-                'tx_hashes': data['tx_hashes']
+                'tx_hashes': data['tx_hashes'],
+                'total_bought_tokens': total_bought,
+                'total_sold_tokens': total_sold,
+                'net_accumulation_pct': net_accumulation_pct,
+                'hold_time_minutes': hold_time_minutes,
+                'num_sells': len(data['sell_timestamps'])
             })
         
         return unique_buyers
@@ -288,6 +337,7 @@ class WalletPumpAnalyzer:
             roi_to_ath = 0.0
         
         hours_to_ath = max((global_ath_timestamp - buy_timestamp) / 3600, 0)
+        days_to_ath = hours_to_ath / 24
         
         if self.debug_mode:
             print(f"[PERF DEBUG] Entry: ${entry_price:.10f} | ATH: ${global_ath:.10f} | "
@@ -296,12 +346,16 @@ class WalletPumpAnalyzer:
         return {
             'wallet': buy_data['wallet'],
             'num_buys': buy_data['num_buys'],
+            'num_sells': buy_data.get('num_sells', 0),
             'entry_price': entry_price,
             'distance_to_ath_pct': round(distance_to_ath, 2),
             'roi_to_ath_pct': round(roi_to_ath, 2),
             'hours_to_ath': round(hours_to_ath, 2),
+            'days_to_ath': round(days_to_ath, 2),
             'total_volume_usd': round(buy_data['total_volume_usd'], 2),
-            'tx_hashes': buy_data['tx_hashes']
+            'tx_hashes': buy_data['tx_hashes'],
+            'net_accumulation_pct': buy_data.get('net_accumulation_pct', 0),
+            'hold_time_minutes': buy_data.get('hold_time_minutes', 0)
         }
     
     def analyze_multi_token_wallets(self, token_rally_data, 
@@ -309,7 +363,7 @@ class WalletPumpAnalyzer:
                                    window_minutes_after=0,
                                    min_pump_count=3):
         print(f"\n{'='*100}")
-        print(f"MULTI-TOKEN WALLET ANALYSIS - HYBRID ATH VERSION")
+        print(f"MULTI-TOKEN WALLET ANALYSIS - ENHANCED WITH FILTERS")
         print(f"Analyzing {len(token_rally_data)} tokens")
         print(f"{'='*100}\n")
         
@@ -318,10 +372,14 @@ class WalletPumpAnalyzer:
             'distances_to_ath': [],
             'rois': [],
             'hours_to_ath': [],
+            'days_to_ath': [],
             'tokens_hit': set(),
             'total_buys': 0,
             'total_volume_usd': 0,
-            'rally_details': []
+            'rally_details': [],
+            'net_accumulations': [],
+            'hold_times': [],
+            'trades_per_rally': []
         })
         
         for token_data in token_rally_data:
@@ -398,9 +456,14 @@ class WalletPumpAnalyzer:
                     wallet_stats[wallet]['distances_to_ath'].append(perf['distance_to_ath_pct'])
                     wallet_stats[wallet]['rois'].append(perf['roi_to_ath_pct'])
                     wallet_stats[wallet]['hours_to_ath'].append(perf['hours_to_ath'])
+                    wallet_stats[wallet]['days_to_ath'].append(perf['days_to_ath'])
                     wallet_stats[wallet]['tokens_hit'].add(token['ticker'])
                     wallet_stats[wallet]['total_buys'] += perf['num_buys']
                     wallet_stats[wallet]['total_volume_usd'] += perf['total_volume_usd']
+                    wallet_stats[wallet]['net_accumulations'].append(perf['net_accumulation_pct'])
+                    wallet_stats[wallet]['hold_times'].append(perf['hold_time_minutes'])
+                    wallet_stats[wallet]['trades_per_rally'].append(perf['num_buys'] + perf['num_sells'])
+                    
                     wallet_stats[wallet]['rally_details'].append({
                         'token': token['ticker'],
                         'rally_date': rally_time.strftime('%Y-%m-%d %H:%M'),
@@ -408,7 +471,10 @@ class WalletPumpAnalyzer:
                         'roi_pct': perf['roi_to_ath_pct'],
                         'entry_price': perf['entry_price'],
                         'global_ath': global_ath,
-                        'hours_to_ath': perf['hours_to_ath']
+                        'hours_to_ath': perf['hours_to_ath'],
+                        'days_to_ath': perf['days_to_ath'],
+                        'net_accumulation_pct': perf['net_accumulation_pct'],
+                        'hold_time_minutes': perf['hold_time_minutes']
                     })
         
         ranked = self._rank_wallets(wallet_stats, min_pump_count)
@@ -418,19 +484,69 @@ class WalletPumpAnalyzer:
     
     def _rank_wallets(self, wallet_stats, min_pump_count):
         ranked = []
+        filtered_count = 0
         
         for wallet, stats in wallet_stats.items():
             if stats['pump_count'] < min_pump_count:
                 continue
             
+            # Calculate all metrics
             avg_distance = statistics.mean(stats['distances_to_ath']) if stats['distances_to_ath'] else 0
             avg_roi = statistics.mean(stats['rois']) if stats['rois'] else 0
             avg_hours = statistics.mean(stats['hours_to_ath']) if stats['hours_to_ath'] else 0
+            avg_days = statistics.mean(stats['days_to_ath']) if stats['days_to_ath'] else 0
+            
+            avg_net_accumulation = statistics.mean(stats['net_accumulations']) if stats['net_accumulations'] else 0
+            avg_hold_time = statistics.mean(stats['hold_times']) if stats['hold_times'] else 0
+            max_trades_per_rally = max(stats['trades_per_rally']) if stats['trades_per_rally'] else 0
+            
+            # Calculate average buy size in SOL (assuming ~$150/SOL)
+            avg_buy_size_sol = stats['total_volume_usd'] / stats['total_buys'] / 150 if stats['total_buys'] > 0 else 0
+            
+            # ========================================
+            # STRINGENT BOT/FLIPPER FILTERS
+            # ========================================
+            if (avg_net_accumulation < 40 or       # Must accumulate (buy > sell by 40%)
+                max_trades_per_rally > 4 or        # Max 4 trades per rally
+                avg_hold_time < 90 or              # Must hold at least 1.5 hours
+                avg_buy_size_sol < 0.8):           # At least 0.8 SOL per buy
+                
+                filtered_count += 1
+                if self.debug_mode:
+                    print(f"  [FILTERED] {wallet[:8]}... - Bot/Scalper pattern")
+                    print(f"    Net Accum: {avg_net_accumulation:.1f}% (need 40%+)")
+                    print(f"    Hold Time: {avg_hold_time:.1f}min (need 90min+)")
+                    print(f"    Max Trades: {max_trades_per_rally} (need ≤4)")
+                    print(f"    Avg Buy: {avg_buy_size_sol:.2f} SOL (need 0.8+)")
+                
+                continue  # Skip this wallet
+            # ========================================
+            
+            # Days to ATH range
+            max_days = max(stats['days_to_ath']) if stats['days_to_ath'] else 0
+            min_days = min(stats['days_to_ath']) if stats['days_to_ath'] else 0
             
             stdev_distance = statistics.stdev(stats['distances_to_ath']) if len(stats['distances_to_ath']) > 1 else 0
             consistency_score = max(0, 100 - stdev_distance)
             
-            tier = self._assign_tier(stats['pump_count'], avg_distance, stdev_distance)
+            # Assign tier (only for qualified wallets)
+            if stats['pump_count'] >= 10 and avg_distance >= 75 and stdev_distance < 15:
+                tier = 'S'
+            elif stats['pump_count'] >= 6 and avg_distance >= 60 and stdev_distance < 25:
+                tier = 'A'
+            elif stats['pump_count'] >= 3 and avg_distance >= 45:
+                tier = 'B'
+            else:
+                tier = 'C'
+            
+            # Calculate composite score
+            composite_score = (
+                stats['pump_count'] * 25 +
+                avg_distance * 1.5 +
+                min(avg_days, 14) * 8 +
+                min(avg_roi, 400) * 0.4 +
+                consistency_score * 0.3
+            )
             
             ranked.append({
                 'wallet': wallet,
@@ -441,33 +557,26 @@ class WalletPumpAnalyzer:
                 'avg_distance_to_ath_pct': round(avg_distance, 2),
                 'avg_roi_to_ath_pct': round(avg_roi, 2),
                 'avg_hours_to_ath': round(avg_hours, 2),
+                'avg_days_to_ath': round(avg_days, 2),
+                'max_days_to_ath': round(max_days, 1),
+                'min_days_to_ath': round(min_days, 1),
                 'consistency_score': round(consistency_score, 2),
                 'stdev_distance': round(stdev_distance, 2),
                 'total_buys': stats['total_buys'],
                 'total_volume_usd': round(stats['total_volume_usd'], 2),
+                'avg_net_accumulation_pct': round(avg_net_accumulation, 2),
+                'avg_hold_time_minutes': round(avg_hold_time, 2),
+                'max_trades_per_rally': max_trades_per_rally,
+                'composite_score': round(composite_score, 2),
                 'rally_history': stats['rally_details'][:10]
             })
         
-        ranked.sort(
-            key=lambda x: (
-                x['pump_count'] *
-                x['avg_distance_to_ath_pct'] *
-                x['consistency_score']
-            ),
-            reverse=True
-        )
+        # Sort by composite score
+        ranked.sort(key=lambda x: x['composite_score'], reverse=True)
+        
+        print(f"\n[FILTER SUMMARY] {filtered_count} wallets filtered out as bots/scalpers")
         
         return ranked
-    
-    def _assign_tier(self, pump_count, avg_distance, stdev):
-        if pump_count >= 10 and avg_distance >= 75 and stdev < 15:
-            return 'S'
-        elif pump_count >= 6 and avg_distance >= 60 and stdev < 25:
-            return 'A'
-        elif pump_count >= 3 and avg_distance >= 45:
-            return 'B'
-        else:
-            return 'C'
     
     def display_top_wallets(self, ranked_wallets, top_n=20):
         print(f"\n{'='*100}")
@@ -475,18 +584,21 @@ class WalletPumpAnalyzer:
         print(f"{'='*100}\n")
         
         for idx, w in enumerate(ranked_wallets[:top_n], 1):
-            print(f"#{idx} - TIER {w['tier']}")
+            print(f"#{idx} - TIER {w['tier']} (Score: {w['composite_score']:.1f})")
             print(f"Wallet: {w['wallet']}")
             print(f"Pumps Hit: {w['pump_count']}")
             print(f"Tokens: {', '.join(w['token_list'])}")
             print(f"Avg Distance to ATH: {w['avg_distance_to_ath_pct']}%")
             print(f"Avg ROI to ATH: {w['avg_roi_to_ath_pct']}%")
-            print(f"Avg Hours to ATH: {w['avg_hours_to_ath']}h")
+            print(f"Avg Days to ATH: {w['avg_days_to_ath']:.1f} days (range: {w['min_days_to_ath']:.1f} - {w['max_days_to_ath']:.1f})")
             print(f"Consistency: {w['consistency_score']}/100")
+            print(f"Net Accumulation: {w['avg_net_accumulation_pct']:.1f}%")
+            print(f"Avg Hold Time: {w['avg_hold_time_minutes']:.1f} minutes")
+            print(f"Max Trades/Rally: {w['max_trades_per_rally']}")
             print(f"Total Volume: ${w['total_volume_usd']:,.2f}")
             print(f"--- Recent Rallies ---")
             for r in w['rally_history'][:5]:
                 print(f"  • {r['token']} {r['rally_date']}: "
                       f"Entry ${r['entry_price']:.8f} → ATH ${r['global_ath']:.8f} "
-                      f"({r['distance_pct']}% dist, {r['roi_pct']}% ROI)")
+                      f"({r['distance_pct']}% dist, {r['roi_pct']}% ROI, {r.get('days_to_ath', 0):.1f} days)")
             print()
