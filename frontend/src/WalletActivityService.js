@@ -5,9 +5,10 @@
  */
 
 class WalletActivityService {
-  constructor(apiUrl = 'http://localhost:5000', userId = 'demo_user') {
-    this.apiUrl = apiUrl;
-    this.userId = userId;
+  constructor() {
+    this.apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+    this.userId = null;
+    this.accessToken = null;
     this.listeners = new Set();
     this.pollInterval = null;
     this.isRunning = false;
@@ -16,11 +17,24 @@ class WalletActivityService {
   }
 
   /**
+   * Configure the service with user credentials
+   */
+  configure(userId, accessToken = null) {
+    this.userId = userId;
+    this.accessToken = accessToken;
+  }
+
+  /**
    * Start monitoring for new notifications
    */
   start() {
     if (this.isRunning) {
       console.log('[WalletActivity] Already running');
+      return;
+    }
+
+    if (!this.userId) {
+      console.log('[WalletActivity] No user configured, skipping start');
       return;
     }
 
@@ -49,12 +63,24 @@ class WalletActivityService {
   }
 
   /**
+   * Get auth headers for API calls
+   */
+  getHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+    return headers;
+  }
+
+  /**
    * Check for new notifications from the backend
    */
   async checkForNotifications() {
     try {
       const response = await fetch(
-        `${this.apiUrl}/api/wallets/notifications?user_id=${this.userId}&unread_only=true`
+        `${this.apiUrl}/api/wallets/notifications?user_id=${this.userId}&unread_only=true`,
+        { headers: this.getHeaders() }
       );
 
       if (!response.ok) {

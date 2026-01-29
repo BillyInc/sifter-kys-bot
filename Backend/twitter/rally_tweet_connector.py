@@ -255,7 +255,7 @@ Configuration:
         return
 
     # Import here to avoid circular imports
-    from .twitter_api_pool import TwitterAPIKeyPool
+    from twitter.twitter_api_pool import TwitterAPIKeyPool
 
     # Initialize API key pool (example with 2 keys)
     api_keys = [

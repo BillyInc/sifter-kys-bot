@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, LogOut, Loader2 } from 'lucide-react';
+import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, LogOut, Loader2, Bell } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext';
 import Auth from './components/Auth';
+import WalletActivityMonitor from './WalletActivityMonitor';
+import walletActivityService from './WalletActivityService';
 
 export default function SifterKYS() {
   const { user, loading: authLoading, signIn, signUp, signOut, resetPassword, updatePassword, getAccessToken, isAuthenticated, isPasswordRecovery } = useAuth();
@@ -63,6 +65,20 @@ export default function SifterKYS() {
 
     return response;
   };
+
+  // Configure wallet activity service when user authenticates
+  useEffect(() => {
+    if (user?.id) {
+      walletActivityService.configure(user.id, getAccessToken());
+      walletActivityService.start();
+    } else {
+      walletActivityService.stop();
+    }
+
+    return () => {
+      walletActivityService.stop();
+    };
+  }, [user?.id, getAccessToken]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -486,6 +502,9 @@ export default function SifterKYS() {
                 Connect Wallet
               </button>
             )}
+
+            {/* Wallet Activity Notifications */}
+            <WalletActivityMonitor />
 
             <a
               href="https://whop.com/sifter"

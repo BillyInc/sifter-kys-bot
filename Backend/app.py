@@ -9,7 +9,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from config import Config
-from routes import analyze_bp, watchlist_bp, health_bp
+from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp
 
 
 def get_rate_limit_key():
@@ -37,6 +37,7 @@ def create_app() -> Flask:
     # Register blueprints
     app.register_blueprint(analyze_bp)
     app.register_blueprint(watchlist_bp)
+    app.register_blueprint(wallets_bp)
     app.register_blueprint(health_bp)
 
     # Apply rate limits to specific endpoints
@@ -65,6 +66,9 @@ def _apply_rate_limits(limiter: Limiter):
         watchlist_bp
     )
 
+    # Wallet endpoints - similar limits to analyze
+    limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(wallets_bp)
+
     # Health endpoint exempt from rate limiting
     limiter.exempt(health_bp)
 
@@ -92,17 +96,19 @@ def print_startup_banner():
     """Print startup banner with configuration status."""
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
-║        SIFTER KYS API SERVER v5.1 - AUTH + RATE LIMITING        ║
+║     SIFTER KYS API SERVER v6.0 - AUTH + WALLET MONITORING       ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 Features:
   - Supabase JWT Authentication
   - Rate limiting (per-user and per-IP)
-  - Better progress logging in console
-  - Twitter API gracefully skipped if not configured
+  - Twitter caller analysis
+  - Wallet analysis with ATH scoring
+  - Real-time wallet activity monitoring
 
 Rate Limits:
   - /api/analyze: 5/hour, 20/day
+  - /api/wallets/*: 5/hour
   - /api/watchlist/*: 30-60/hour
   - Default: 50/hour, 200/day
 
