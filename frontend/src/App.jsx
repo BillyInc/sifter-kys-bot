@@ -1,7 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, LogOut, Loader2 } from 'lucide-react';
+import { useAuth } from './contexts/AuthContext';
+import Auth from './components/Auth';
 
 export default function SifterKYS() {
+  const { user, loading: authLoading, signIn, signUp, signOut, resetPassword, updatePassword, getAccessToken, isAuthenticated, isPasswordRecovery } = useAuth();
+
   const [activeTab, setActiveTab] = useState('analyze');
   const [walletAddress, setWalletAddress] = useState(null);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
@@ -11,20 +15,20 @@ export default function SifterKYS() {
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef(null);
-  
+
   // FIXED Issue 2: Per-token customization state
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
-  
+
   // Global settings
   const [analysisTimeframe, setAnalysisTimeframe] = useState('first_7d');
   const [pumpTimeframe, setPumpTimeframe] = useState('5m');
   const [tMinusWindow, setTMinusWindow] = useState(35);
   const [tPlusWindow, setTPlusWindow] = useState(10);
-  
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
-  
+
   // FIXED Issue 1: Watchlist state
   const [watchlist, setWatchlist] = useState([]);
   const [watchlistStats, setWatchlistStats] = useState(null);
@@ -36,8 +40,29 @@ export default function SifterKYS() {
   // NEW: Expanded tokens state (all expanded by default)
   const [expandedTokens, setExpandedTokens] = useState({});
 
-  const API_URL = 'http://localhost:5000';
-  const userId = 'demo_user'; // In production, get from wallet/auth
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const userId = user?.id || 'demo_user'; // Use authenticated user ID
+
+  // Helper for authenticated API calls with rate limit handling
+  const authFetch = async (url, options = {}) => {
+    const token = getAccessToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+
+    // Handle rate limit errors
+    if (response.status === 429) {
+      const data = await response.json();
+      throw new Error(data.message || 'Rate limit exceeded. Please wait before trying again.');
+    }
+
+    return response;
+  };
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -227,9 +252,8 @@ export default function SifterKYS() {
         };
       });
 
-      const response = await fetch(`${API_URL}/api/analyze`, {
+      const response = await authFetch(`${API_URL}/api/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tokens: tokensToAnalyze })
       });
 
@@ -287,7 +311,7 @@ export default function SifterKYS() {
   // FIXED Issue 1: Watchlist functions
   const loadWatchlist = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setWatchlist(data.accounts);
@@ -299,7 +323,7 @@ export default function SifterKYS() {
 
   const loadWatchlistStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setWatchlistStats(data.stats);
@@ -311,9 +335,8 @@ export default function SifterKYS() {
 
   const addToWatchlist = async (account) => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/add`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/add`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, account })
       });
       const data = await response.json();
@@ -332,9 +355,8 @@ export default function SifterKYS() {
     if (!confirm('Remove this account from watchlist?')) return;
 
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/remove`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId })
       });
       const data = await response.json();
@@ -349,9 +371,8 @@ export default function SifterKYS() {
 
   const updateWatchlistNotes = async (authorId, notes) => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, notes })
       });
       const data = await response.json();
@@ -368,9 +389,8 @@ export default function SifterKYS() {
   const updateWatchlistTags = async (authorId, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
-      const response = await fetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, tags: tagsArray })
       });
       const data = await response.json();
@@ -398,15 +418,44 @@ export default function SifterKYS() {
     return `$${num.toFixed(4)}`;
   };
 
+  // Show loading screen while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 size={48} className="animate-spin text-purple-500 mx-auto mb-4" />
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login screen if not authenticated or if in password recovery mode
+  if (!isAuthenticated || isPasswordRecovery) {
+    return (
+      <Auth
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onResetPassword={resetPassword}
+        onUpdatePassword={updatePassword}
+        isPasswordRecovery={isPasswordRecovery}
+      />
+    );
+  }
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
     <div className="min-h-screen bg-black text-gray-100">
       <nav className="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-xl border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center">
-          <div className="text-xl font-bold">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex justify-between items-center">
+          <div className="text-lg sm:text-xl font-bold">
             SIFTER <span className="text-purple-500">KYS</span>
           </div>
-          
-          <div className="flex gap-3 items-center">
+
+          <div className="flex gap-2 sm:gap-3 items-center">
             {walletAddress ? (
               <div className="relative">
                 <button
@@ -446,11 +495,20 @@ export default function SifterKYS() {
             >
               Upgrade
             </a>
+
+            <button
+              onClick={handleSignOut}
+              className="px-3 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition text-sm flex items-center gap-2"
+              title={user?.email}
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         </div>
       </nav>
 
-      <div className="pt-16 max-w-7xl mx-auto px-6 py-6">
+      <div className="pt-16 max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
         {/* FIXED Issue 1 & 7: Updated tabs */}
         <div className="flex gap-3 mb-6 border-b border-white/10">
           {[
@@ -479,14 +537,14 @@ export default function SifterKYS() {
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
               <h3 className="text-base font-semibold mb-3">Token Search</h3>
               
-              <div className="flex gap-3 mb-3">
+              <div className="flex flex-col sm:flex-row gap-3 mb-3">
                 <div className="relative flex-1" ref={searchRef}>
                   <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && searchTokens(searchQuery)}
+                    onKeyDown={(e) => e.key === 'Enter' && searchTokens(searchQuery)}
                     placeholder="Search by token name, ticker, or contract address..."
                     className="w-full bg-black/50 border border-white/10 rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500"
                   />
@@ -500,7 +558,7 @@ export default function SifterKYS() {
                 <button
                   onClick={() => searchTokens(searchQuery)}
                   disabled={isSearching || !searchQuery.trim()}
-                  className="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/30 rounded-lg font-semibold transition flex items-center gap-2 text-sm"
+                  className="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/30 rounded-lg font-semibold transition flex items-center justify-center gap-2 text-sm"
                 >
                   {isSearching ? (
                     <>
@@ -619,7 +677,7 @@ export default function SifterKYS() {
                         {/* FIXED Issue 2: Per-token settings UI */}
                         {!useGlobalSettings && (
                           <div className="mt-3 pt-3 border-t border-white/10">
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <div>
                                 <label className="block text-xs font-medium mb-1">Timeframe</label>
                                 <select
@@ -701,7 +759,7 @@ export default function SifterKYS() {
                   </div>
 
                   {useGlobalSettings && (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-xs font-medium mb-1">Analysis Timeframe</label>
                         <select
@@ -780,7 +838,7 @@ export default function SifterKYS() {
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
                 <TrendingUp className="text-purple-400 mb-2" size={24} />
                 <h4 className="font-semibold mb-1">Pump Detection</h4>
@@ -806,29 +864,32 @@ export default function SifterKYS() {
             {analysisResults ? (
               <>
                 {/* NEW: Header with Clear Button */}
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold">Analysis Results</h2>
-                  <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                  <h2 className="text-xl sm:text-2xl font-bold">Analysis Results</h2>
+                  <div className="flex flex-wrap gap-2">
                     <button
                       onClick={expandAll}
-                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2"
+                      className="px-2 sm:px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs sm:text-sm flex items-center gap-1 sm:gap-2"
                     >
                       <ChevronDown size={16} />
-                      Expand All
+                      <span className="hidden sm:inline">Expand All</span>
+                      <span className="sm:hidden">Expand</span>
                     </button>
                     <button
                       onClick={collapseAll}
-                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm flex items-center gap-2"
+                      className="px-2 sm:px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs sm:text-sm flex items-center gap-1 sm:gap-2"
                     >
                       <ChevronUp size={16} />
-                      Collapse All
+                      <span className="hidden sm:inline">Collapse All</span>
+                      <span className="sm:hidden">Collapse</span>
                     </button>
                     <button
                       onClick={clearResults}
-                      className="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-sm flex items-center gap-2"
+                      className="px-2 sm:px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-xs sm:text-sm flex items-center gap-1 sm:gap-2"
                     >
                       <RotateCcw size={16} />
-                      Clear Results
+                      <span className="hidden sm:inline">Clear Results</span>
+                      <span className="sm:hidden">Clear</span>
                     </button>
                   </div>
                 </div>
@@ -836,7 +897,7 @@ export default function SifterKYS() {
                 {/* Summary */}
                 <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
                   <h3 className="text-lg font-semibold mb-3">Summary</h3>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="bg-black/30 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-purple-400">{analysisResults.summary.total_tokens}</div>
                       <div className="text-xs text-gray-400">Total Tokens</div>
@@ -865,21 +926,21 @@ export default function SifterKYS() {
                       {/* NEW: Clickable Header */}
                       <button
                         onClick={() => toggleTokenExpansion(idx)}
-                        className="w-full px-4 py-4 flex items-center justify-between hover:bg-white/5 transition"
+                        className="w-full px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between hover:bg-white/5 transition"
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="text-xl font-bold text-purple-400">#{idx + 1}</span>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                          <span className="text-lg sm:text-xl font-bold text-purple-400">#{idx + 1}</span>
                           <div className="text-left">
-                            <h3 className="text-lg font-semibold">{result.token.ticker}</h3>
-                            <p className="text-sm text-gray-400">{result.token.name}</p>
+                            <h3 className="text-base sm:text-lg font-semibold">{result.token.ticker}</h3>
+                            <p className="text-xs sm:text-sm text-gray-400">{result.token.name}</p>
                           </div>
-                          <span className={`px-3 py-1 rounded text-sm ${
+                          <span className={`px-2 sm:px-3 py-1 rounded text-xs sm:text-sm ${
                             result.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
                           }`}>
                             {result.success ? '✓ Success' : '✗ Failed'}
                           </span>
                           {result.success && (
-                            <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded text-sm">
+                            <span className="px-2 sm:px-3 py-1 bg-blue-500/20 text-blue-400 rounded text-xs sm:text-sm">
                               {result.rallies} Pump{result.rallies !== 1 ? 's' : ''}
                             </span>
                           )}
@@ -1020,7 +1081,7 @@ export default function SifterKYS() {
         {activeTab === 'watchlist' && (
           <div className="space-y-4">
             {watchlistStats && (
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                 <div className="bg-white/5 border border-white/10 rounded-lg p-4">
                   <div className="text-2xl font-bold text-purple-400">{watchlistStats.total_accounts}</div>
                   <div className="text-xs text-gray-400">Total Accounts</div>
@@ -1090,7 +1151,7 @@ export default function SifterKYS() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3 mb-3 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-3 text-sm">
                         <div className="bg-white/5 rounded p-2 text-center">
                           <div className="font-bold text-green-400">{account.pumps_called}</div>
                           <div className="text-xs text-gray-400">Pumps Called</div>

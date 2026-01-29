@@ -1,9 +1,8 @@
 import os
 from datetime import datetime, timedelta
 
-from pump_detector import PrecisionRallyDetector
-from tweet_extractor import TwitterTweetExtractor
-from nlp_disambiguator import NLPDisambiguator
+from analyzers import PrecisionRallyDetector, NLPDisambiguator
+from .tweet_extractor import TwitterTweetExtractor
 
 
 class RallyTweetConnector:
