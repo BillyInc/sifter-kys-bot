@@ -4,35 +4,21 @@ import { Settings, ChevronDown, ChevronUp, Clock, TrendingUp, Search } from 'luc
 export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
   const [settingsMode, setSettingsMode] = useState('global'); // 'global' or 'per-token'
   const [globalSettings, setGlobalSettings] = useState({
-    analysisTimeframe: 'first_7d',
-    pumpTimeframe: '5m',
+    daysBack: 7,  // SIMPLIFIED: Just a number
+    candleSize: '5m',
     tweetWindow: { minus: 35, plus: 10 }
   });
   const [perTokenSettings, setPerTokenSettings] = useState({});
   const [expandedTokens, setExpandedTokens] = useState({});
 
-  // Timeframe options
-  const analysisTimeframes = [
-    { value: 'first_5m', label: 'First 5 Minutes After Launch', type: 'launch' },
-    { value: 'first_24h', label: 'First 24 Hours After Launch', type: 'launch' },
-    { value: 'first_7d', label: 'First 7 Days After Launch', type: 'launch' },
-    { value: 'first_30d', label: 'First 30 Days After Launch', type: 'launch' },
-    { value: 'last_1h', label: 'Last 1 Hour', type: 'relative' },
-    { value: 'last_5h', label: 'Last 5 Hours', type: 'relative' },
-    { value: 'last_24h', label: 'Last 24 Hours', type: 'relative' },
-    { value: 'last_3d', label: 'Last 3 Days', type: 'relative' },
-    { value: 'last_7d', label: 'Last 7 Days', type: 'relative' },
-    { value: 'last_30d', label: 'Last 30 Days', type: 'relative' },
-    { value: 'all', label: 'All Time', type: 'relative' }
-  ];
-
-  const pumpTimeframes = [
-    { value: '1m', label: 'M1 (1 Minute Candles)' },
-    { value: '5m', label: 'M5 (5 Minute Candles)' },
-    { value: '15m', label: 'M15 (15 Minute Candles)' },
-    { value: '1h', label: '1H (1 Hour Candles)' },
-    { value: '4h', label: '4H (4 Hour Candles)' },
-    { value: '1d', label: '1D (Daily Candles)' }
+  // SIMPLIFIED: Candle size options only
+  const candleSizes = [
+    { value: '1m', label: '1 Minute (M1)' },
+    { value: '5m', label: '5 Minutes (M5)' },
+    { value: '15m', label: '15 Minutes (M15)' },
+    { value: '1h', label: '1 Hour' },
+    { value: '4h', label: '4 Hours' },
+    { value: '1d', label: '1 Day' }
   ];
 
   // Initialize per-token settings when tokens change
@@ -41,8 +27,8 @@ export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
     selectedTokens.forEach(token => {
       if (!perTokenSettings[token.address]) {
         newPerTokenSettings[token.address] = {
-          analysisTimeframe: globalSettings.analysisTimeframe,
-          pumpTimeframe: globalSettings.pumpTimeframe,
+          daysBack: globalSettings.daysBack,
+          candleSize: globalSettings.candleSize,
           tweetWindow: { ...globalSettings.tweetWindow }
         };
       } else {
@@ -114,8 +100,8 @@ export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
     const updated = {};
     selectedTokens.forEach(token => {
       updated[token.address] = {
-        analysisTimeframe: globalSettings.analysisTimeframe,
-        pumpTimeframe: globalSettings.pumpTimeframe,
+        daysBack: globalSettings.daysBack,
+        candleSize: globalSettings.candleSize,
         tweetWindow: { ...globalSettings.tweetWindow }
       };
     });
@@ -171,49 +157,37 @@ export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
           </h3>
 
           <div className="space-y-6">
-            {/* Analysis Timeframe */}
+            {/* SIMPLIFIED: Days Back Input */}
             <div>
               <label className="flex items-center gap-2 text-sm font-medium mb-2 text-gray-300">
                 <Clock size={16} />
-                1️⃣ Analysis Timeframe (Historical Scope)
+                1️⃣ Days Back (Historical Data)
               </label>
-              <select
-                value={globalSettings.analysisTimeframe}
-                onChange={(e) => updateGlobalSettings('analysisTimeframe', e.target.value)}
+              <input
+                type="number"
+                value={globalSettings.daysBack}
+                onChange={(e) => updateGlobalSettings('daysBack', Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
+                min="1"
+                max="90"
                 className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
-              >
-                <optgroup label="Launch-Anchored Windows">
-                  {analysisTimeframes.filter(t => t.type === 'launch').map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Relative Windows (from now)">
-                  {analysisTimeframes.filter(t => t.type === 'relative').map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
+              />
               <p className="text-xs text-gray-500 mt-1">
-                📊 This determines the time period to analyze for price movements
+                📊 Analyze the last {globalSettings.daysBack} days of price data (1-90 days)
               </p>
             </div>
 
-            {/* Pump Detection Timeframe */}
+            {/* Candle Size */}
             <div>
               <label className="flex items-center gap-2 text-sm font-medium mb-2 text-gray-300">
                 <TrendingUp size={16} />
-                2️⃣ Pump Detection Timeframe (Candle Size)
+                2️⃣ Candle Size
               </label>
               <select
-                value={globalSettings.pumpTimeframe}
-                onChange={(e) => updateGlobalSettings('pumpTimeframe', e.target.value)}
+                value={globalSettings.candleSize}
+                onChange={(e) => updateGlobalSettings('candleSize', e.target.value)}
                 className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
               >
-                {pumpTimeframes.map(option => (
+                {candleSizes.map(option => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -305,44 +279,32 @@ export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
                 {/* Token Settings (Expanded) */}
                 {isExpanded && (
                   <div className="px-6 pb-6 space-y-4 border-t border-white/10 pt-4">
-                    {/* Analysis Timeframe */}
+                    {/* Days Back */}
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-300">
-                        Analysis Timeframe
+                        Days Back
                       </label>
-                      <select
-                        value={settings.analysisTimeframe}
-                        onChange={(e) => updatePerTokenSettings(token.address, 'analysisTimeframe', e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500 text-sm"
-                      >
-                        <optgroup label="Launch-Anchored">
-                          {analysisTimeframes.filter(t => t.type === 'launch').map(option => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="Relative">
-                          {analysisTimeframes.filter(t => t.type === 'relative').map(option => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      </select>
+                      <input
+                        type="number"
+                        value={settings.daysBack}
+                        onChange={(e) => updatePerTokenSettings(token.address, 'daysBack', Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
+                        min="1"
+                        max="90"
+                        className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-purple-500"
+                      />
                     </div>
 
-                    {/* Pump Detection */}
+                    {/* Candle Size */}
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-300">
                         Candle Size
                       </label>
                       <select
-                        value={settings.pumpTimeframe}
-                        onChange={(e) => updatePerTokenSettings(token.address, 'pumpTimeframe', e.target.value)}
+                        value={settings.candleSize}
+                        onChange={(e) => updatePerTokenSettings(token.address, 'candleSize', e.target.value)}
                         className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500 text-sm"
                       >
-                        {pumpTimeframes.map(option => (
+                        {candleSizes.map(option => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -395,7 +357,7 @@ export default function AnalysisSettings({ selectedTokens, onSettingsChange }) {
           <div className="flex-1 text-sm text-gray-300">
             <p className="font-semibold mb-1">What do these settings mean?</p>
             <ul className="space-y-1 text-xs text-gray-400">
-              <li><strong>Analysis Timeframe:</strong> How far back in time to look for pumps</li>
+              <li><strong>Days Back:</strong> How many days of historical data to analyze (1-90)</li>
               <li><strong>Candle Size:</strong> The granularity of price data (smaller = more precise)</li>
               <li><strong>Tweet Window:</strong> How many minutes before/after each pump to search for tweets</li>
             </ul>

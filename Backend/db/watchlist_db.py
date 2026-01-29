@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 class WatchlistDatabase:
     """
     Manages user watchlists with SQLite database
-    Stores accounts, tags, notes, and performance tracking
+    Stores Twitter accounts AND wallets, tags, notes, and performance tracking
     """
     
     def __init__(self, db_path: str = 'watchlists.db'):
@@ -36,7 +36,7 @@ class WatchlistDatabase:
             )
         ''')
         
-        # Watchlist accounts table
+        # Twitter Watchlist accounts table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS watchlist_accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +55,27 @@ class WatchlistDatabase:
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id),
                 UNIQUE(user_id, author_id)
+            )
+        ''')
+        
+        # NEW: Wallet watchlist table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS wallet_watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                tier TEXT,
+                pump_count INTEGER,
+                avg_distance_to_peak REAL,
+                avg_roi_to_peak REAL,
+                consistency_score REAL,
+                tokens_hit TEXT,
+                notes TEXT,
+                tags TEXT,
+                added_at INTEGER,
+                last_updated INTEGER,
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                UNIQUE(user_id, wallet_address)
             )
         ''')
         
@@ -108,16 +129,7 @@ class WatchlistDatabase:
     
     
     def create_user(self, user_id: str, wallet_address: str = None) -> bool:
-        """
-        Create new user
-        
-        Args:
-            user_id: Unique user identifier
-            wallet_address: Optional wallet address
-        
-        Returns:
-            True if successful
-        """
+        """Create new user"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -135,26 +147,16 @@ class WatchlistDatabase:
             return False
     
     
-    def add_to_watchlist(
-        self,
-        user_id: str,
-        account: Dict
-    ) -> bool:
-        """
-        Add account to user's watchlist
-        
-        Args:
-            user_id: User identifier
-            account: Dictionary with account data
-        
-        Returns:
-            True if successful
-        """
+    # =========================================================================
+    # TWITTER ACCOUNT WATCHLIST METHODS (EXISTING)
+    # =========================================================================
+    
+    def add_to_watchlist(self, user_id: str, account: Dict) -> bool:
+        """Add Twitter account to user's watchlist"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Ensure user exists
             self.create_user(user_id)
             
             tags = json.dumps(account.get('tags', []))
@@ -190,16 +192,7 @@ class WatchlistDatabase:
     
     
     def get_watchlist(self, user_id: str, group_id: int = None) -> List[Dict]:
-        """
-        Get user's watchlist
-        
-        Args:
-            user_id: User identifier
-            group_id: Optional group filter
-        
-        Returns:
-            List of watchlist accounts
-        """
+        """Get user's Twitter watchlist"""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -236,16 +229,7 @@ class WatchlistDatabase:
     
     
     def remove_from_watchlist(self, user_id: str, author_id: str) -> bool:
-        """
-        Remove account from watchlist
-        
-        Args:
-            user_id: User identifier
-            author_id: Twitter author ID to remove
-        
-        Returns:
-            True if successful
-        """
+        """Remove Twitter account from watchlist"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -264,25 +248,9 @@ class WatchlistDatabase:
             return False
     
     
-    def update_account_notes(
-        self,
-        user_id: str,
-        author_id: str,
-        notes: str = None,
-        tags: List[str] = None
-    ) -> bool:
-        """
-        Update account notes and tags
-        
-        Args:
-            user_id: User identifier
-            author_id: Twitter author ID
-            notes: Optional notes text
-            tags: Optional list of tags
-        
-        Returns:
-            True if successful
-        """
+    def update_account_notes(self, user_id: str, author_id: str, 
+                            notes: str = None, tags: List[str] = None) -> bool:
+        """Update Twitter account notes and tags"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -315,23 +283,264 @@ class WatchlistDatabase:
             return False
     
     
-    def track_performance(
-        self,
-        user_id: str,
-        author_id: str,
-        token_data: Dict
-    ) -> bool:
+    def get_watchlist_stats(self, user_id: str) -> Dict:
+        """Get statistics about user's Twitter watchlist"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT COUNT(*) FROM watchlist_accounts WHERE user_id = ?
+            ''', (user_id,))
+            total_accounts = cursor.fetchone()[0]
+            
+            cursor.execute('''
+                SELECT AVG(influence_score) FROM watchlist_accounts WHERE user_id = ?
+            ''', (user_id,))
+            avg_influence = cursor.fetchone()[0] or 0
+            
+            cursor.execute('''
+                SELECT SUM(pumps_called) FROM watchlist_accounts WHERE user_id = ?
+            ''', (user_id,))
+            total_pumps = cursor.fetchone()[0] or 0
+            
+            cursor.execute('''
+                SELECT username, influence_score 
+                FROM watchlist_accounts 
+                WHERE user_id = ?
+                ORDER BY influence_score DESC
+                LIMIT 1
+            ''', (user_id,))
+            best = cursor.fetchone()
+            
+            conn.close()
+            
+            return {
+                'total_accounts': total_accounts,
+                'avg_influence': round(avg_influence, 1),
+                'total_pumps_tracked': total_pumps,
+                'best_performer': {
+                    'username': best[0] if best else None,
+                    'influence': best[1] if best else 0
+                }
+            }
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error fetching stats: {e}")
+            return {}
+    
+    
+    # =========================================================================
+    # NEW: WALLET WATCHLIST METHODS
+    # =========================================================================
+    
+    def add_wallet_to_watchlist(self, user_id: str, wallet_data: Dict) -> bool:
         """
-        Track account performance on a specific token
+        Add a wallet to user's watchlist
         
         Args:
-            user_id: User identifier
-            author_id: Twitter author ID
-            token_data: Dictionary with token/pump data
-        
-        Returns:
-            True if successful
+            user_id: User ID
+            wallet_data: {
+                'wallet_address': '0x...',
+                'tier': 'S',
+                'pump_count': 12,
+                'avg_distance_to_peak': 87.5,
+                'avg_roi_to_peak': 345.2,
+                'consistency_score': 92.1,
+                'tokens_hit': ['PEPE', 'PNUT'],
+                'notes': 'Optional notes',
+                'tags': ['tag1', 'tag2']
+            }
         """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            self.create_user(user_id)
+            
+            import time
+            tags = json.dumps(wallet_data.get('tags', []))
+            tokens = ','.join(wallet_data.get('tokens_hit', []))
+            
+            c.execute('''
+                INSERT OR REPLACE INTO wallet_watchlist 
+                (user_id, wallet_address, tier, pump_count, avg_distance_to_peak, 
+                 avg_roi_to_peak, consistency_score, tokens_hit, notes, tags, 
+                 added_at, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                wallet_data['wallet_address'],
+                wallet_data.get('tier', 'C'),
+                wallet_data.get('pump_count', 0),
+                wallet_data.get('avg_distance_to_peak', 0),
+                wallet_data.get('avg_roi_to_peak', 0),
+                wallet_data.get('consistency_score', 0),
+                tokens,
+                wallet_data.get('notes', ''),
+                tags,
+                int(time.time()),
+                int(time.time())
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"[WATCHLIST DB] Added wallet {wallet_data['wallet_address'][:8]}... to watchlist")
+            return True
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error adding wallet: {e}")
+            return False
+    
+    
+    def get_wallet_watchlist(self, user_id: str, tier_filter: str = None) -> List[Dict]:
+        """Get user's watched wallets, optionally filtered by tier"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            if tier_filter:
+                c.execute('''
+                    SELECT * FROM wallet_watchlist 
+                    WHERE user_id = ? AND tier = ?
+                    ORDER BY pump_count DESC, avg_distance_to_peak DESC
+                ''', (user_id, tier_filter))
+            else:
+                c.execute('''
+                    SELECT * FROM wallet_watchlist 
+                    WHERE user_id = ?
+                    ORDER BY 
+                        CASE tier 
+                            WHEN 'S' THEN 1 
+                            WHEN 'A' THEN 2 
+                            WHEN 'B' THEN 3 
+                            ELSE 4 
+                        END,
+                        pump_count DESC
+                ''', (user_id,))
+            
+            rows = c.fetchall()
+            conn.close()
+            
+            wallets = []
+            for row in rows:
+                wallets.append({
+                    'wallet_address': row[2],
+                    'tier': row[3],
+                    'pump_count': row[4],
+                    'avg_distance_to_peak': row[5],
+                    'avg_roi_to_peak': row[6],
+                    'consistency_score': row[7],
+                    'tokens_hit': row[8].split(',') if row[8] else [],
+                    'notes': row[9],
+                    'tags': json.loads(row[10]) if row[10] else [],
+                    'added_at': row[11],
+                    'last_updated': row[12]
+                })
+            
+            return wallets
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error fetching wallet watchlist: {e}")
+            return []
+    
+    
+    def remove_wallet_from_watchlist(self, user_id: str, wallet_address: str) -> bool:
+        """Remove wallet from watchlist"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            c.execute('''
+                DELETE FROM wallet_watchlist
+                WHERE user_id = ? AND wallet_address = ?
+            ''', (user_id, wallet_address))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error removing wallet: {e}")
+            return False
+    
+    
+    def update_wallet_notes(self, user_id: str, wallet_address: str,
+                           notes: str = None, tags: List[str] = None) -> bool:
+        """Update wallet notes and tags"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            import time
+            
+            if notes is not None and tags is not None:
+                c.execute('''
+                    UPDATE wallet_watchlist
+                    SET notes = ?, tags = ?, last_updated = ?
+                    WHERE user_id = ? AND wallet_address = ?
+                ''', (notes, json.dumps(tags), int(time.time()), user_id, wallet_address))
+            elif notes is not None:
+                c.execute('''
+                    UPDATE wallet_watchlist
+                    SET notes = ?, last_updated = ?
+                    WHERE user_id = ? AND wallet_address = ?
+                ''', (notes, int(time.time()), user_id, wallet_address))
+            elif tags is not None:
+                c.execute('''
+                    UPDATE wallet_watchlist
+                    SET tags = ?, last_updated = ?
+                    WHERE user_id = ? AND wallet_address = ?
+                ''', (json.dumps(tags), int(time.time()), user_id, wallet_address))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error updating wallet notes: {e}")
+            return False
+    
+    
+    def get_wallet_stats(self, user_id: str) -> Dict:
+        """Get statistics about user's wallet watchlist"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            c.execute('SELECT COUNT(*) FROM wallet_watchlist WHERE user_id = ?', (user_id,))
+            total_wallets = c.fetchone()[0]
+            
+            c.execute('SELECT COUNT(*) FROM wallet_watchlist WHERE user_id = ? AND tier = ?', (user_id, 'S'))
+            s_tier_count = c.fetchone()[0]
+            
+            c.execute('SELECT AVG(avg_distance_to_peak) FROM wallet_watchlist WHERE user_id = ?', (user_id,))
+            avg_distance = c.fetchone()[0] or 0
+            
+            c.execute('SELECT SUM(pump_count) FROM wallet_watchlist WHERE user_id = ?', (user_id,))
+            total_pumps = c.fetchone()[0] or 0
+            
+            conn.close()
+            
+            return {
+                'total_wallets': total_wallets,
+                's_tier_count': s_tier_count,
+                'avg_distance': avg_distance,
+                'total_pumps': total_pumps
+            }
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error fetching wallet stats: {e}")
+            return {}
+    
+    
+    # =========================================================================
+    # PERFORMANCE TRACKING & GROUPS (EXISTING)
+    # =========================================================================
+    
+    def track_performance(self, user_id: str, author_id: str, token_data: Dict) -> bool:
+        """Track account performance on a specific token"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -362,16 +571,7 @@ class WatchlistDatabase:
     
     
     def get_account_history(self, user_id: str, author_id: str) -> List[Dict]:
-        """
-        Get performance history for an account
-        
-        Args:
-            user_id: User identifier
-            author_id: Twitter author ID
-        
-        Returns:
-            List of performance records
-        """
+        """Get performance history for an account"""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -394,17 +594,7 @@ class WatchlistDatabase:
     
     
     def create_group(self, user_id: str, group_name: str, description: str = '') -> Optional[int]:
-        """
-        Create a watchlist group/folder
-        
-        Args:
-            user_id: User identifier
-            group_name: Name of the group
-            description: Optional description
-        
-        Returns:
-            Group ID if successful, None otherwise
-        """
+        """Create a watchlist group/folder"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -426,16 +616,7 @@ class WatchlistDatabase:
     
     
     def add_to_group(self, group_id: int, account_id: int) -> bool:
-        """
-        Add account to a group
-        
-        Args:
-            group_id: Group ID
-            account_id: Watchlist account ID
-        
-        Returns:
-            True if successful
-        """
+        """Add account to a group"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -455,15 +636,7 @@ class WatchlistDatabase:
     
     
     def get_user_groups(self, user_id: str) -> List[Dict]:
-        """
-        Get all groups for a user
-        
-        Args:
-            user_id: User identifier
-        
-        Returns:
-            List of groups
-        """
+        """Get all groups for a user"""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -486,62 +659,3 @@ class WatchlistDatabase:
         except Exception as e:
             print(f"[WATCHLIST DB] Error fetching groups: {e}")
             return []
-    
-    
-    def get_watchlist_stats(self, user_id: str) -> Dict:
-        """
-        Get statistics about user's watchlist
-        
-        Args:
-            user_id: User identifier
-        
-        Returns:
-            Dictionary with stats
-        """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Total accounts
-            cursor.execute('''
-                SELECT COUNT(*) FROM watchlist_accounts WHERE user_id = ?
-            ''', (user_id,))
-            total_accounts = cursor.fetchone()[0]
-            
-            # Average influence
-            cursor.execute('''
-                SELECT AVG(influence_score) FROM watchlist_accounts WHERE user_id = ?
-            ''', (user_id,))
-            avg_influence = cursor.fetchone()[0] or 0
-            
-            # Total pumps tracked
-            cursor.execute('''
-                SELECT SUM(pumps_called) FROM watchlist_accounts WHERE user_id = ?
-            ''', (user_id,))
-            total_pumps = cursor.fetchone()[0] or 0
-            
-            # Best performer
-            cursor.execute('''
-                SELECT username, influence_score 
-                FROM watchlist_accounts 
-                WHERE user_id = ?
-                ORDER BY influence_score DESC
-                LIMIT 1
-            ''', (user_id,))
-            best = cursor.fetchone()
-            
-            conn.close()
-            
-            return {
-                'total_accounts': total_accounts,
-                'avg_influence': round(avg_influence, 1),
-                'total_pumps_tracked': total_pumps,
-                'best_performer': {
-                    'username': best[0] if best else None,
-                    'influence': best[1] if best else 0
-                }
-            }
-            
-        except Exception as e:
-            print(f"[WATCHLIST DB] Error fetching stats: {e}")
-            return {}

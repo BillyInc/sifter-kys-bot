@@ -19,7 +19,7 @@ class BatchTokenAnalyzer:
         self,
         token_list: List[Dict],
         rally_tweet_connector,
-        time_range: str = 'first_7d'
+        days_back: int = 7  # SIMPLIFIED: Just a number now
     ) -> List[Dict]:
         """
         Analyze multiple tokens sequentially
@@ -27,7 +27,7 @@ class BatchTokenAnalyzer:
         Args:
             token_list: List of dicts with 'address', 'ticker', 'name' (optional)
             rally_tweet_connector: Initialized RallyTweetConnector instance
-            time_range: Time window to analyze
+            days_back: Number of days to analyze (1-90)
         
         Returns:
             List of analysis results for each token
@@ -41,10 +41,10 @@ class BatchTokenAnalyzer:
             print(f"Address: {token_info['address']}")
             
             try:
-                # Run single token analysis
+                # Run single token analysis with simple days_back
                 results = rally_tweet_connector.analyze_token_with_tweets(
                     token_address=token_info['address'],
-                    days_back=self._parse_time_range(time_range)
+                    days_back=days_back  # SIMPLIFIED: Just pass the number
                 )
                 
                 if results:
@@ -78,6 +78,7 @@ class BatchTokenAnalyzer:
         print(f"{'='*100}\n")
         
         return self.all_results
+
     
     
     def extract_cross_token_accounts(self) -> Dict[str, Dict]:

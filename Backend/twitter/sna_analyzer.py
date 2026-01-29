@@ -2,8 +2,8 @@ import networkx as nx
 import numpy as np
 from collections import defaultdict
 from datetime import datetime, timedelta
-import tweepy
 from typing import List, Dict, Tuple
+from tweet_extractor_twitterapiio import TwitterTweetExtractor
 
 
 class SocialNetworkAnalyzer:
@@ -13,86 +13,73 @@ class SocialNetworkAnalyzer:
     2. Network topology (star vs distributed)
     3. Influence metrics (centrality measures)
     4. Reciprocity patterns (bots, shills, organic users)
+    
+    UPDATED: Uses TwitterAPI.io via TwitterTweetExtractor
     """
     
-    def __init__(self, twitter_client: tweepy.Client):
+    def __init__(self, tweet_extractor: TwitterTweetExtractor):
         """
-        Initialize SNA with Twitter API client
+        Initialize SNA with tweet extractor (contains API key pool)
         
         Args:
-            twitter_client: Authenticated Tweepy client for fetching relationships
+            tweet_extractor: TwitterTweetExtractor instance with API key pool
         """
-        self.client = twitter_client
+        self.extractor = tweet_extractor
         self.graph = nx.DiGraph()  # Directed graph for follower relationships
-        
     
-    def build_network_from_accounts(self, account_ids: List[str], max_depth: int = 1):
+    
+    def build_network_from_accounts(
+        self, 
+        account_usernames: List[str], 
+        account_ids: List[str],
+        max_depth: int = 1
+    ):
         """
         Build network graph by fetching follower/following relationships
         
         Args:
-            account_ids: List of Twitter user IDs to analyze
+            account_usernames: List of Twitter usernames
+            account_ids: List of Twitter user IDs
             max_depth: How many layers deep to fetch relationships (1 = direct only)
         
         Returns:
             NetworkX DiGraph
         """
-        print(f"\n[SNA] Building network graph for {len(account_ids)} accounts...")
+        print(f"\n[SNA] Building network graph for {len(account_usernames)} accounts...")
         
         # Add all accounts as nodes
         for user_id in account_ids:
             self.graph.add_node(user_id)
         
+        # Create lookup map
+        username_to_id = dict(zip(account_usernames, account_ids))
+        id_to_username = dict(zip(account_ids, account_usernames))
+        
         # Fetch relationships between accounts
         relationships_found = 0
         
-        for i, user_id in enumerate(account_ids):
-            print(f"[SNA] Fetching relationships for account {i+1}/{len(account_ids)}...")
+        for i, username in enumerate(account_usernames):
+            user_id = username_to_id[username]
+            
+            print(f"[SNA] Fetching relationships for account {i+1}/{len(account_usernames)} (@{username})...")
             
             try:
-                # Check who this user follows (among our account list)
-                following = self._get_following_in_list(user_id, account_ids)
+                # Get who this user follows (using TwitterAPI.io)
+                following_ids = self.extractor.get_user_followings(username, max_results=200)
                 
-                for followed_id in following:
-                    self.graph.add_edge(user_id, followed_id)
-                    relationships_found += 1
+                # Only keep followings that are in our account list
+                for followed_id in following_ids:
+                    if followed_id in account_ids:
+                        self.graph.add_edge(user_id, followed_id)
+                        relationships_found += 1
                 
             except Exception as e:
-                print(f"[SNA] Error fetching relationships for {user_id}: {e}")
+                print(f"[SNA] Error fetching relationships for {username}: {e}")
                 continue
         
         print(f"[SNA] Network built: {len(account_ids)} nodes, {relationships_found} edges\n")
         
         return self.graph
-    
-    
-    def _get_following_in_list(self, user_id: str, target_ids: List[str]) -> List[str]:
-        """
-        Get which accounts from target_ids the user follows
-        
-        This is optimized to only check relationships within our account list
-        """
-        following_in_list = []
-        
-        try:
-            # Get user's following list (paginated)
-            # Note: This requires elevated Twitter API access
-            following = self.client.get_users_following(
-                id=user_id,
-                max_results=1000  # Adjust based on your API tier
-            )
-            
-            if following.data:
-                following_ids = {str(user.id) for user in following.data}
-                
-                # Only keep those in our target list
-                following_in_list = [uid for uid in target_ids if uid in following_ids]
-        
-        except tweepy.TweepyException as e:
-            # API limit hit or user protected
-            print(f"[SNA] Could not fetch following for {user_id}: {e}")
-        
-        return following_in_list
     
     
     def calculate_reciprocity(self) -> float:
@@ -323,7 +310,7 @@ class SocialNetworkAnalyzer:
         undirected = self.graph.to_undirected()
         
         try:
-            # Use Louvain method for community detection
+            # Try using Louvain method for community detection
             import community as community_louvain
             communities = community_louvain.best_partition(undirected)
             
@@ -500,22 +487,26 @@ class SocialNetworkAnalyzer:
 
 
 # Example usage helper
-def analyze_accounts_network(twitter_bearer_token: str, account_ids: List[str]) -> Dict:
+def analyze_accounts_network(
+    tweet_extractor: TwitterTweetExtractor,
+    account_usernames: List[str],
+    account_ids: List[str]
+) -> Dict:
     """
     Convenience function to run full SNA on a list of accounts
     
     Args:
-        twitter_bearer_token: Twitter API bearer token
-        account_ids: List of Twitter user IDs to analyze
+        tweet_extractor: TwitterTweetExtractor with API key pool
+        account_usernames: List of Twitter usernames
+        account_ids: List of Twitter user IDs
     
     Returns:
         Complete SNA report
     """
-    client = tweepy.Client(bearer_token=twitter_bearer_token)
-    sna = SocialNetworkAnalyzer(client)
+    sna = SocialNetworkAnalyzer(tweet_extractor)
     
     # Build network
-    sna.build_network_from_accounts(account_ids)
+    sna.build_network_from_accounts(account_usernames, account_ids)
     
     # Generate report
     report = sna.generate_network_report()

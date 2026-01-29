@@ -1,25 +1,27 @@
-import tweepy
 from datetime import datetime, timedelta
 from typing import List, Dict
 import time
 from collections import defaultdict
 import networkx as nx
+from tweet_extractor_twitterapiio import TwitterTweetExtractor
 
 
 class ExpandedSNAAnalyzer:
     """
     Analyzes interactions (mentions, replies, retweets) between top accounts
     over user-selected time windows (3d, 7d, 30d, all-time)
+    
+    UPDATED: Uses TwitterAPI.io via TwitterTweetExtractor
     """
     
-    def __init__(self, twitter_client: tweepy.Client):
+    def __init__(self, tweet_extractor: TwitterTweetExtractor):
         """
-        Initialize with Twitter API client
+        Initialize with tweet extractor (contains API key pool)
         
         Args:
-            twitter_client: Authenticated Tweepy client
+            tweet_extractor: TwitterTweetExtractor instance with API key pool
         """
-        self.client = twitter_client
+        self.extractor = tweet_extractor
         self.interaction_graph = nx.DiGraph()
     
     
@@ -42,10 +44,6 @@ class ExpandedSNAAnalyzer:
         """
         print(f"\n[EXPANDED SNA] Fetching interactions for {len(account_usernames)} accounts over last {days_back} days...")
         
-        # Calculate time window
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=days_back)
-        
         all_interactions = {
             'mentions': [],
             'replies': [],
@@ -53,94 +51,48 @@ class ExpandedSNAAnalyzer:
             'quote_tweets': []
         }
         
-        # Build query to find interactions between these accounts
-        username_list = ' OR '.join([f'@{u}' for u in account_usernames])
-        from_list = ' OR '.join([f'from:{u}' for u in account_usernames])
+        # Use TwitterAPI.io get_account_interactions method
+        interactions = self.extractor.get_account_interactions(
+            account_usernames=account_usernames,
+            days_back=days_back
+        )
         
-        # Query: tweets FROM these accounts that MENTION any of these accounts
-        query = f"({from_list}) ({username_list}) -is:retweet"
+        # Merge results
+        all_interactions['mentions'].extend(interactions.get('mentions', []))
+        all_interactions['replies'].extend(interactions.get('replies', []))
+        all_interactions['retweets'].extend(interactions.get('retweets', []))
+        all_interactions['quote_tweets'].extend(interactions.get('quote_tweets', []))
         
-        print(f"[EXPANDED SNA] Query: {query[:100]}...")
+        print(f"[EXPANDED SNA] Interactions breakdown:")
+        print(f"   Mentions: {len(all_interactions['mentions'])}")
+        print(f"   Replies: {len(all_interactions['replies'])}")
+        print(f"   Retweets: {len(all_interactions['retweets'])}")
+        print(f"   Quotes: {len(all_interactions['quote_tweets'])}")
         
-        try:
-            # Search for tweets
-            tweets = self.client.search_recent_tweets(
-                query=query,
-                start_time=start_time,
-                end_time=end_time,
-                max_results=100,
-                tweet_fields=['created_at', 'author_id', 'referenced_tweets', 'entities'],
-                expansions=['author_id', 'referenced_tweets.id']
-            )
-            
-            if not tweets.data:
-                print("[EXPANDED SNA] No interactions found")
-                return all_interactions
-            
-            print(f"[EXPANDED SNA] Found {len(tweets.data)} interaction tweets")
-            
-            # Process each tweet
-            for tweet in tweets.data:
-                tweet_data = {
-                    'id': tweet.id,
-                    'text': tweet.text,
-                    'author_id': tweet.author_id,
-                    'created_at': tweet.created_at
-                }
-                
-                # Check for mentions
-                if tweet.entities and 'mentions' in tweet.entities:
-                    for mention in tweet.entities['mentions']:
-                        all_interactions['mentions'].append({
-                            **tweet_data,
-                            'mentioned_user_id': mention['id'],
-                            'mentioned_username': mention['username']
-                        })
-                
-                # Check for replies
-                if tweet.referenced_tweets:
-                    for ref in tweet.referenced_tweets:
-                        if ref.type == 'replied_to':
-                            all_interactions['replies'].append({
-                                **tweet_data,
-                                'replied_to_id': ref.id
-                            })
-                        elif ref.type == 'retweeted':
-                            all_interactions['retweets'].append({
-                                **tweet_data,
-                                'retweeted_id': ref.id
-                            })
-                        elif ref.type == 'quoted':
-                            all_interactions['quote_tweets'].append({
-                                **tweet_data,
-                                'quoted_id': ref.id
-                            })
-            
-            print(f"[EXPANDED SNA] Interactions breakdown:")
-            print(f"   Mentions: {len(all_interactions['mentions'])}")
-            print(f"   Replies: {len(all_interactions['replies'])}")
-            print(f"   Retweets: {len(all_interactions['retweets'])}")
-            print(f"   Quotes: {len(all_interactions['quote_tweets'])}")
-            
-            return all_interactions
-            
-        except tweepy.TweepyException as e:
-            print(f"[EXPANDED SNA] Twitter API error: {e}")
-            return all_interactions
+        return all_interactions
     
     
-    def build_interaction_network(self, interactions: Dict, account_ids: List[str]) -> nx.DiGraph:
+    def build_interaction_network(
+        self, 
+        interactions: Dict, 
+        account_ids: List[str],
+        account_usernames: List[str]
+    ) -> nx.DiGraph:
         """
         Build directed graph from interaction data
         
         Args:
             interactions: Dictionary with mentions, replies, retweets
             account_ids: List of account IDs to include
+            account_usernames: List of account usernames
         
         Returns:
             NetworkX DiGraph
         """
         print(f"\n[EXPANDED SNA] Building interaction network...")
+        
+        # Create username to ID mapping
+        username_to_id = dict(zip(account_usernames, account_ids))
         
         # Add all accounts as nodes
         for user_id in account_ids:
@@ -150,16 +102,19 @@ class ExpandedSNAAnalyzer:
         
         # Add edges for mentions
         for mention in interactions['mentions']:
-            source = str(mention['author_id'])
-            target = str(mention['mentioned_user_id'])
+            source_id = str(mention.get('author_id'))
             
-            if source in account_ids and target in account_ids:
-                if self.interaction_graph.has_edge(source, target):
-                    self.interaction_graph[source][target]['weight'] += 1
-                    self.interaction_graph[source][target]['mentions'] += 1
+            # Find target ID from username
+            mentioned_username = mention.get('mentioned_username', '')
+            target_id = username_to_id.get(mentioned_username)
+            
+            if source_id in account_ids and target_id and target_id in account_ids:
+                if self.interaction_graph.has_edge(source_id, target_id):
+                    self.interaction_graph[source_id][target_id]['weight'] += 1
+                    self.interaction_graph[source_id][target_id]['mentions'] += 1
                 else:
                     self.interaction_graph.add_edge(
-                        source, target, 
+                        source_id, target_id, 
                         weight=1, 
                         mentions=1, 
                         replies=0, 
@@ -167,23 +122,9 @@ class ExpandedSNAAnalyzer:
                     )
                 edge_count += 1
         
-        # Add edges for replies
-        for reply in interactions['replies']:
-            source = str(reply['author_id'])
-            # Note: We'd need to lookup who the replied_to_id belongs to
-            # For now, we'll increment existing edges
-            for target in account_ids:
-                if target != source and self.interaction_graph.has_edge(source, target):
-                    self.interaction_graph[source][target]['replies'] += 1
-                    self.interaction_graph[source][target]['weight'] += 2  # Replies weighted higher
-        
-        # Add edges for retweets
-        for rt in interactions['retweets']:
-            source = str(rt['author_id'])
-            for target in account_ids:
-                if target != source and self.interaction_graph.has_edge(source, target):
-                    self.interaction_graph[source][target]['retweets'] += 1
-                    self.interaction_graph[source][target]['weight'] += 1.5
+        # Note: For replies and retweets, we'd need additional API calls to resolve
+        # who was replied to / retweeted. For now, we're primarily tracking mentions
+        # which are the most direct form of interaction.
         
         print(f"[EXPANDED SNA] Interaction network: {self.interaction_graph.number_of_nodes()} nodes, {self.interaction_graph.number_of_edges()} edges")
         
@@ -261,28 +202,114 @@ class ExpandedSNAAnalyzer:
         return metrics
     
     
-    def generate_interaction_matrix(self, account_usernames: List[str]) -> List[List[int]]:
+    def calculate_coordination_index(self, metrics: Dict) -> Dict[str, any]:
         """
-        Generate interaction matrix (who interacted with whom, how many times)
+        Calculate Coordination Index (0-100)
         
-        Args:
-            account_usernames: List of usernames in order
+        High coordination indicators:
+        - High reciprocity (mutual interaction)
+        - High clustering (tight groups)
+        - High interaction density
+        - Many strongly connected components
         
         Returns:
-            2D matrix where matrix[i][j] = interactions from i to j
+            Dictionary with index and breakdown
         """
-        n = len(account_usernames)
-        matrix = [[0] * n for _ in range(n)]
+        print(f"\n[EXPANDED SNA] Calculating Coordination Index...")
         
-        username_to_idx = {username: i for i, username in enumerate(account_usernames)}
+        # Initialize score components
+        scores = {
+            'reciprocity_score': 0,
+            'clustering_score': 0,
+            'density_score': 0,
+            'component_score': 0
+        }
         
-        for source, target, data in self.interaction_graph.edges(data=True):
-            # Find indices (we'd need to map user_id back to username)
-            # This is a simplified version
+        # Reciprocity Score (0-35 points)
+        if metrics['reciprocity'] > 0.7:
+            scores['reciprocity_score'] = 35
+        elif metrics['reciprocity'] > 0.5:
+            scores['reciprocity_score'] = 25
+        elif metrics['reciprocity'] > 0.3:
+            scores['reciprocity_score'] = 15
+        
+        # Clustering Score (0-30 points)
+        if metrics['clustering'] > 0.6:
+            scores['clustering_score'] = 30
+        elif metrics['clustering'] > 0.4:
+            scores['clustering_score'] = 20
+        elif metrics['clustering'] > 0.2:
+            scores['clustering_score'] = 10
+        
+        # Density Score (0-25 points)
+        if metrics['density'] > 0.3:
+            scores['density_score'] = 25
+        elif metrics['density'] > 0.2:
+            scores['density_score'] = 15
+        elif metrics['density'] > 0.1:
+            scores['density_score'] = 8
+        
+        # Component Score (0-10 points)
+        strong_components = metrics.get('strong_components', 0)
+        if strong_components >= 3:
+            scores['component_score'] = 10
+        elif strong_components >= 2:
+            scores['component_score'] = 6
+        elif strong_components >= 1:
+            scores['component_score'] = 3
+        
+        # Calculate final index
+        coordination_index = sum(scores.values())
+        
+        # Determine coordination level
+        if coordination_index >= 70:
+            level = 'Very High'
+            description = 'Strong evidence of organized coordination'
+        elif coordination_index >= 50:
+            level = 'High'
+            description = 'Likely coordinated group activity'
+        elif coordination_index >= 30:
+            level = 'Moderate'
+            description = 'Some coordination patterns detected'
+        else:
+            level = 'Low'
+            description = 'Organic interaction patterns'
+        
+        result = {
+            'index': round(coordination_index, 1),
+            'level': level,
+            'description': description,
+            'breakdown': scores,
+            'max_possible': 100
+        }
+        
+        print(f"[EXPANDED SNA] Coordination Index: {result['index']}/100 ({result['level']})")
+        
+        return result
+    
+    
+    def get_top_interaction_pairs(self, top_n: int = 10) -> List[Dict]:
+        """Get the most interactive account pairs"""
+        
+        pairs = []
+        
+        # Count interactions between pairs
+        for edge in self.interaction_graph.edges(data=True):
+            source, target, data = edge
             weight = data.get('weight', 1)
-            # matrix[source_idx][target_idx] = weight
+            
+            pairs.append({
+                'account_1': source,
+                'account_2': target,
+                'interactions': weight,
+                'mentions': data.get('mentions', 0),
+                'type': 'mentions'
+            })
         
-        return matrix
+        # Sort by interaction count
+        pairs.sort(key=lambda x: x['interactions'], reverse=True)
+        
+        return pairs[:top_n]
     
     
     def analyze_expanded_network(
@@ -302,6 +329,11 @@ class ExpandedSNAAnalyzer:
         Returns:
             Complete analysis report
         """
+        print(f"\n{'='*80}")
+        print(f"EXPANDED SNA ANALYSIS")
+        print(f"Accounts: {len(account_usernames)} | Timeframe: {days_back} days")
+        print(f"{'='*80}")
+        
         # Fetch interactions
         interactions = self.fetch_interactions_between_accounts(
             account_usernames=account_usernames,
@@ -309,24 +341,37 @@ class ExpandedSNAAnalyzer:
         )
         
         # Build network
-        self.build_interaction_network(interactions, account_ids)
+        self.build_interaction_network(interactions, account_ids, account_usernames)
         
         # Calculate metrics
         metrics = self.calculate_interaction_metrics()
         
+        # Calculate coordination index
+        coordination_index = self.calculate_coordination_index(metrics)
+        
+        # Get top pairs
+        top_pairs = self.get_top_interaction_pairs()
+        
         # Export for visualization
         viz_data = self.export_for_visualization()
         
-        return {
+        report = {
             'interactions': interactions,
             'metrics': metrics,
+            'coordination_index': coordination_index,
+            'top_interaction_pairs': top_pairs,
             'visualization': viz_data,
             'summary': {
                 'total_interactions': sum(len(v) for v in interactions.values()),
                 'unique_pairs': self.interaction_graph.number_of_edges(),
-                'timeframe_days': days_back
+                'timeframe_days': days_back,
+                'coordination_likely': coordination_index['index'] >= 50
             }
         }
+        
+        self._print_report(report)
+        
+        return report
     
     
     def export_for_visualization(self) -> Dict[str, any]:
@@ -355,3 +400,65 @@ class ExpandedSNAAnalyzer:
             'nodes': nodes,
             'links': links
         }
+    
+    
+    def _print_report(self, report: Dict):
+        """Print formatted analysis report"""
+        
+        print(f"\n{'='*80}")
+        print("EXPANDED SNA REPORT")
+        print(f"{'='*80}\n")
+        
+        coord = report['coordination_index']
+        
+        print(f"📊 COORDINATION INDEX: {coord['index']}/100")
+        print(f"   Level: {coord['level']}")
+        print(f"   {coord['description']}\n")
+        
+        print(f"📈 SCORE BREAKDOWN:")
+        for key, value in coord['breakdown'].items():
+            print(f"   • {key.replace('_', ' ').title()}: {value}")
+        
+        print(f"\n💬 INTERACTION SUMMARY:")
+        print(f"   Total Interactions: {report['summary']['total_interactions']}")
+        for itype, count in report['interactions'].items():
+            if count > 0:
+                print(f"   • {itype.title()}: {len(count)}")
+        
+        if report['top_interaction_pairs']:
+            print(f"\n🔗 TOP INTERACTION PAIRS:")
+            for i, pair in enumerate(report['top_interaction_pairs'][:5], 1):
+                print(f"   {i}. User {pair['account_1']} ↔ User {pair['account_2']}: "
+                      f"{pair['interactions']} interactions")
+        
+        print(f"\n{'='*80}\n")
+
+
+# Example usage helper
+def analyze_expanded_interactions(
+    tweet_extractor: TwitterTweetExtractor,
+    account_usernames: List[str],
+    account_ids: List[str],
+    days_back: int = 30
+) -> Dict:
+    """
+    Convenience function to analyze interactions between Top 20 accounts
+    
+    Args:
+        tweet_extractor: TwitterTweetExtractor with API key pool
+        account_usernames: List of usernames from Top 20
+        account_ids: List of user IDs from Top 20
+        days_back: Days to analyze (7, 30, 90, 180)
+    
+    Returns:
+        Complete expanded SNA analysis report
+    """
+    analyzer = ExpandedSNAAnalyzer(tweet_extractor)
+    
+    report = analyzer.analyze_expanded_network(
+        account_usernames=account_usernames,
+        account_ids=account_ids,
+        days_back=days_back
+    )
+    
+    return report

@@ -6,10 +6,11 @@ import statistics
 class PrecisionRallyDetector:
     def __init__(self, birdeye_api_key=None):
         self.dex_screener_url = "https://api.dexscreener.com/latest/dex"
+        # FIXED: Use the pair endpoint (working version)
         self.birdeye_url = "https://public-api.birdeye.so/defi/v3/ohlcv/pair"
         self.birdeye_api_key = birdeye_api_key
         
-        # Rally detection thresholds (proven working values from Document 8)
+        # Rally detection thresholds (proven working values)
         self.MIN_START_GAIN = 1.5
         self.MIN_TOTAL_GAIN = 20.0
         self.MIN_GREEN_RATIO = 0.40
@@ -18,7 +19,7 @@ class PrecisionRallyDetector:
         self.DRAWDOWN_END_THRESHOLD = -15.0
         self.VOLUME_EXHAUSTION = 0.3
         
-        # FIXED: Add candle size mapping for multi-timeframe support
+        # Candle size mapping for multi-timeframe support
         self.CANDLE_SIZE_MAPPING = {
             '1m': '1m',
             '5m': '5m',
@@ -111,126 +112,40 @@ class PrecisionRallyDetector:
         }
         return chain_mapping.get(chain_id.lower(), 'solana')
     
-    def get_token_launch_time(self, token_address):
-        """Get token creation timestamp from Birdeye"""
-        print(f"\n[LAUNCH] Fetching token creation time...")
-        
-        url = f"https://public-api.birdeye.so/defi/token_creation_info"
-        
-        params = {'address': token_address}
-        headers = {
-            'accept': 'application/json',
-            'X-API-KEY': self.birdeye_api_key
-        }
-        
-        try:
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get('success') and data.get('data'):
-                launch_time = data['data'].get('blockUnixTime')
-                
-                if launch_time:
-                    launch_date = datetime.fromtimestamp(launch_time)
-                    print(f"✓ Token launched: {launch_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                    return launch_time
-            
-            print("⚠️ Could not find token creation time")
-            return None
-            
-        except Exception as e:
-            print(f"❌ Error fetching launch time: {e}")
-            return None
-    
-    def calculate_launch_window(self, launch_timestamp, window_type):
-        """Calculate time range based on launch time"""
-        if not launch_timestamp:
-            # Fallback to relative windows
-            time_to = int(time.time())
-            
-            mapping = {
-                'first_5m': 5 * 60,
-                'first_24h': 24 * 60 * 60,
-                'first_7d': 7 * 24 * 60 * 60,
-                'first_30d': 30 * 24 * 60 * 60,
-                'last_1h': 1 * 60 * 60,
-                'last_24h': 24 * 60 * 60,
-                'last_7d': 7 * 24 * 60 * 60,
-                'last_30d': 30 * 24 * 60 * 60,
-                'all': 90 * 24 * 60 * 60
-            }
-            
-            seconds_back = mapping.get(window_type, 7 * 24 * 60 * 60)
-            time_from = time_to - seconds_back
-            
-            return (time_from, time_to)
-        
-        # Calculate from launch time
-        launch_time = launch_timestamp
-        
-        if window_type == 'first_5m':
-            return (launch_time, launch_time + 5 * 60)
-        elif window_type == 'first_24h':
-            return (launch_time, launch_time + 24 * 60 * 60)
-        elif window_type == 'first_7d':
-            return (launch_time, launch_time + 7 * 24 * 60 * 60)
-        elif window_type == 'first_30d':
-            return (launch_time, launch_time + 30 * 24 * 60 * 60)
-        elif window_type == 'all':
-            return (launch_time, int(time.time()))
-        else:
-            # Default: first 7 days
-            return (launch_time, launch_time + 7 * 24 * 60 * 60)
-    
-    def get_ohlcv_data_with_launch(self, pair_address, chain, launch_timestamp=None, 
-                                    window_type='first_7d', candle_size='5m'):
+    def get_ohlcv_data(self, pair_address, chain, days_back=30, candle_size='5m'):
         """
-        COMPLETE VERSION: Fetch OHLCV data with support for:
-        - Launch-anchored windows (first_5m, first_24h, etc.)
-        - Relative windows (last_7d, last_30d, etc.)
-        - Different candle sizes (1m, 5m, 15m, 1h, 4h, 1d)
+        FIXED VERSION: Fetch OHLCV data using PAIR ADDRESS
+        
+        Args:
+            pair_address: Trading pair address (from DexScreener)
+            chain: Blockchain name (solana, ethereum, base, etc.)
+            days_back: Number of days to look back (1-90)
+            candle_size: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
+        
+        Returns:
+            List of OHLCV candles or None if error
         """
         print(f"\n[2/3] Fetching candlestick data from Birdeye...")
-        print(f"Window type: {window_type}")
+        print(f"Pair: {pair_address[:8]}...{pair_address[-6:]}")
+        print(f"Chain: {chain}")
+        print(f"Days back: {days_back}")
         print(f"Candle size: {candle_size}")
         
         if not self.birdeye_api_key:
             print("❌ Birdeye API key is required!")
             return None
         
-        # FIXED: Map candle size to Birdeye format
+        # Map candle size to Birdeye format
         birdeye_candle_size = self.CANDLE_SIZE_MAPPING.get(candle_size, '5m')
         
-        # Calculate time range
-        if window_type.startswith('first_'):
-            time_from, time_to = self.calculate_launch_window(launch_timestamp, window_type)
-            
-            if launch_timestamp:
-                launch_date = datetime.fromtimestamp(launch_timestamp)
-                from_date = datetime.fromtimestamp(time_from)
-                to_date = datetime.fromtimestamp(time_to)
-                print(f"✓ Launch time: {launch_date.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"✓ Analysis window: {from_date.strftime('%Y-%m-%d %H:%M:%S')} to {to_date.strftime('%Y-%m-%d %H:%M:%S')}")
-        else:
-            # Relative window (last X days from now)
-            time_to = int(time.time())
-            
-            mapping = {
-                'last_1h': 1 * 60 * 60,
-                'last_5h': 5 * 60 * 60,
-                'last_24h': 24 * 60 * 60,
-                'last_3d': 3 * 24 * 60 * 60,
-                'last_7d': 7 * 24 * 60 * 60,
-                'last_30d': 30 * 24 * 60 * 60
-            }
-            
-            seconds_back = mapping.get(window_type, 7 * 24 * 60 * 60)
-            time_from = time_to - seconds_back
+        # Simple time calculation
+        time_to = int(time.time())
+        time_from = time_to - (days_back * 24 * 60 * 60)
         
+        # FIXED: Use pair address with correct endpoint
         params = {
-            'address': pair_address,
-            'type': birdeye_candle_size,  # FIXED: Now dynamic
+            'address': pair_address,  # PAIR ADDRESS (not token)
+            'type': birdeye_candle_size,
             'time_from': time_from,
             'time_to': time_to,
         }
@@ -243,6 +158,20 @@ class PrecisionRallyDetector:
         
         try:
             response = requests.get(self.birdeye_url, params=params, headers=headers)
+            
+            # Better error handling
+            if response.status_code == 400:
+                print(f"❌ 400 Bad Request - Check if pair address is correct")
+                print(f"   Address used: {pair_address}")
+                print(f"   Chain: {chain}")
+                return None
+            elif response.status_code == 401:
+                print(f"❌ 401 Unauthorized - Check API key")
+                return None
+            elif response.status_code == 429:
+                print(f"❌ 429 Rate Limited - Wait and retry")
+                return None
+            
             response.raise_for_status()
             data = response.json()
             
@@ -256,17 +185,23 @@ class PrecisionRallyDetector:
                 print("❌ No candlestick data returned")
                 return None
             
-            # DEBUG: Log what fields Birdeye actually returns
-            if items:
-                print(f"[DEBUG] Available fields in candle data: {list(items[0].keys())}")
-                # Check for volume field variations
-                if 'v_usd' not in items[0]:
-                    print(f"[WARNING] 'v_usd' field not found. Sample candle: {items[0]}")
-            
             print(f"✓ Retrieved {len(items)} {candle_size} candles")
             print(f"✓ Time range: {datetime.fromtimestamp(items[0]['unix_time'])} to {datetime.fromtimestamp(items[-1]['unix_time'])}")
             
-            return items
+            # Normalize field names (v3 API already has correct format)
+            normalized_items = []
+            for item in items:
+                normalized_items.append({
+                    'unix_time': item.get('unix_time', 0),
+                    'o': item.get('o', 0),
+                    'h': item.get('h', 0),
+                    'l': item.get('l', 0),
+                    'c': item.get('c', 0),
+                    'v': item.get('v', 0),
+                    'v_usd': item.get('v', 0) * item.get('c', 0)  # Approximate USD volume
+                })
+            
+            return normalized_items
             
         except requests.exceptions.RequestException as e:
             print(f"❌ Error fetching OHLCV data: {e}")
@@ -420,7 +355,7 @@ class PrecisionRallyDetector:
         green_count = sum(1 for c in window if c['c'] > c['o'])
         green_ratio = green_count / len(window) if len(window) > 0 else 0
         
-        # FIXED: Better price reference handling
+        # Better price reference handling
         if start_idx > 0:
             start_price = ohlcv_data[start_idx - 1]['c']
         else:
@@ -430,17 +365,15 @@ class PrecisionRallyDetector:
         closes = [c['c'] for c in window]
         peak_price = max(closes)
         
-        # FIXED: Validation for unrealistic prices
+        # Validation for unrealistic prices
         if start_price <= 0 or end_price <= 0:
-            print(f"[WARNING] Invalid price data: start={start_price}, end={end_price}")
             return None
         
         total_gain = ((end_price - start_price) / start_price) * 100
         peak_gain = ((peak_price - start_price) / start_price) * 100
         
-        # FIXED: Sanity check for unrealistic gains
-        if total_gain > 500:
-            print(f"[WARNING] Unrealistic gain detected: {total_gain}% (likely data error)")
+        # Sanity check for unrealistic gains (likely data error)
+        if total_gain > 10000:
             return None
         
         # Minimum thresholds
@@ -575,3 +508,74 @@ class PrecisionRallyDetector:
         print(f"   → After deduplication: {len(final_rallies)} unique rallies\n")
         
         return final_rallies
+    
+    def display_rallies(self, rallies):
+        """Display detected rallies in formatted output"""
+        print(f"\n{'='*100}")
+        
+        if not rallies:
+            print("NO RALLIES DETECTED")
+            print("="*100)
+            return
+        
+        print(f"DETECTED {len(rallies)} RALLY/RALLIES")
+        print(f"{'='*100}\n")
+        
+        for idx, rally in enumerate(rallies, 1):
+            pump_time = datetime.fromtimestamp(rally['window'][0]['unix_time'])
+            end_time = datetime.fromtimestamp(rally['window'][-1]['unix_time'])
+            t_minus_35 = pump_time - timedelta(minutes=35)
+            t_plus_10 = end_time + timedelta(minutes=10)
+            
+            print(f"{'─'*100}")
+            print(f"RALLY #{idx} - TYPE: {rally['type'].upper()}")
+            print(f"{'─'*100}")
+            print(f"⏰ START TIME: {pump_time.strftime('%A, %B %d, %Y at %H:%M:%S')}")
+            print(f"🏁 END TIME: {end_time.strftime('%A, %B %d, %Y at %H:%M:%S')}")
+            print(f"⏪ T-35 MINS: {t_minus_35.strftime('%A, %B %d, %Y at %H:%M:%S')}")
+            print(f"⏩ T+10 MINS: {t_plus_10.strftime('%A, %B %d, %Y at %H:%M:%S')}")
+            print(f"")
+            print(f"📊 METRICS:")
+            print(f" Duration: {rally['length']} candles ({rally['length']*5} minutes)")
+            print(f" Candle Composition: {rally['green_count']} green, {rally['red_count']} red")
+            print(f" Green Ratio: {rally['green_ratio']*100:.1f}%")
+            print(f" Total Gain: +{rally['total_gain']:.2f}%")
+            print(f" Peak Gain: +{rally['peak_gain']:.2f}%")
+            print(f" Max Drawdown: {rally['max_drawdown']:.2f}%")
+            print(f" Combined Volume: ${rally['combined_volume']:,.2f}")
+            print(f" Price Range: ${rally['start_price']:.8f} → ${rally['end_price']:.8f} (peak: ${rally['peak_price']:.8f})")
+            print()
+        
+        print(f"{'='*100}\n")
+    
+    def analyze_token(self, token_address, days_back=30, candle_size='5m'):
+        """
+        SIMPLIFIED: Main analysis function with simple parameters
+        
+        Args:
+            token_address: Token contract address
+            days_back: Number of days to analyze (1-90)
+            candle_size: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
+        
+        Returns:
+            List of detected rallies
+        """
+        pair_data = self.get_token_data(token_address)
+        if not pair_data:
+            return None
+        
+        # FIXED: Use pair address, not token mint
+        pair_address = pair_data['pairAddress']
+        chain_id = pair_data['chainId']
+        chain_name = self.get_chain_name(chain_id)
+        
+        print(f"\nUsing pair address: {pair_address}")
+        
+        ohlcv_data = self.get_ohlcv_data(pair_address, chain_name, days_back, candle_size)
+        if not ohlcv_data:
+            return None
+        
+        rallies = self.detect_all_rallies(ohlcv_data)
+        self.display_rallies(rallies)
+        
+        return rallies

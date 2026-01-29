@@ -1,9 +1,9 @@
-import tweepy
 from datetime import datetime, timedelta
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from collections import defaultdict
 import networkx as nx
 import time
+from tweet_extractor_twitterapiio import TwitterTweetExtractor
 
 
 class InteractionAnalyzer:
@@ -13,16 +13,18 @@ class InteractionAnalyzer:
     
     This determines if accounts are working together organically or as part 
     of an organized group.
+    
+    UPDATED: Uses TwitterAPI.io via TwitterTweetExtractor
     """
     
-    def __init__(self, twitter_client: tweepy.Client):
+    def __init__(self, tweet_extractor: TwitterTweetExtractor):
         """
-        Initialize with Twitter API client
+        Initialize with tweet extractor (contains API key pool)
         
         Args:
-            twitter_client: Authenticated Tweepy client
+            tweet_extractor: TwitterTweetExtractor instance with API key pool
         """
-        self.client = twitter_client
+        self.extractor = tweet_extractor
         self.interaction_graph = nx.DiGraph()
         self.interactions = {
             'likes': [],
@@ -54,10 +56,6 @@ class InteractionAnalyzer:
         print(f"INTERACTION ANALYSIS: {len(account_ids)} accounts over last {days_back} days")
         print(f"{'='*80}\n")
         
-        # Calculate time window
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=days_back)
-        
         print(f"[STEP 1/4] Fetching recent tweets from each account...")
         
         # Fetch tweets from each account
@@ -68,27 +66,20 @@ class InteractionAnalyzer:
             print(f"   [{idx}/{len(account_ids)}] @{username}...", end=' ')
             
             try:
-                # Get user's recent tweets
-                tweets = self.client.get_users_tweets(
-                    id=user_id,
-                    start_time=start_time,
-                    end_time=end_time,
-                    max_results=100,  # Last 100 tweets
-                    tweet_fields=['created_at', 'author_id', 'referenced_tweets', 'entities'],
-                    expansions=['referenced_tweets.id', 'referenced_tweets.id.author_id']
-                )
+                # Get user's recent tweets using TwitterAPI.io
+                tweets = self.extractor.get_user_timeline(user_id, max_results=100)
                 
-                if tweets.data:
-                    account_tweets[user_id] = tweets.data
-                    total_tweets_fetched += len(tweets.data)
-                    print(f"✓ {len(tweets.data)} tweets")
+                if tweets:
+                    account_tweets[user_id] = tweets
+                    total_tweets_fetched += len(tweets)
+                    print(f"✓ {len(tweets)} tweets")
                 else:
                     account_tweets[user_id] = []
                     print("✓ 0 tweets")
                 
                 time.sleep(1)  # Rate limiting
                 
-            except tweepy.TweepyException as e:
+            except Exception as e:
                 print(f"✗ Error: {e}")
                 account_tweets[user_id] = []
         
@@ -102,10 +93,22 @@ class InteractionAnalyzer:
             account_ids=account_ids
         )
         
+        # Also get direct interactions via API
+        interactions_data = self.extractor.get_account_interactions(
+            account_usernames=account_usernames,
+            days_back=days_back
+        )
+        
+        # Merge interactions
+        self.interactions['mentions'].extend(interactions_data.get('mentions', []))
+        self.interactions['replies'].extend(interactions_data.get('replies', []))
+        self.interactions['retweets'].extend(interactions_data.get('retweets', []))
+        self.interactions['quote_tweets'].extend(interactions_data.get('quote_tweets', []))
+        
         # Build interaction graph
         print(f"\n[STEP 3/4] Building interaction network...")
         
-        self._build_interaction_graph(account_ids)
+        self._build_interaction_graph(account_ids, account_usernames)
         
         # Calculate metrics
         print(f"\n[STEP 4/4] Calculating Coordination Index...\n")
@@ -153,69 +156,38 @@ class InteractionAnalyzer:
         for user_id, tweets in account_tweets.items():
             for tweet in tweets:
                 
-                # Check for retweets
-                if tweet.referenced_tweets:
-                    for ref in tweet.referenced_tweets:
-                        ref_type = ref.type
-                        
-                        # Get the author of referenced tweet
-                        # (This requires the expansion to be included)
-                        if ref_type == 'retweeted':
-                            self.interactions['retweets'].append({
-                                'from': user_id,
-                                'tweet_id': tweet.id,
-                                'created_at': tweet.created_at
-                            })
-                        
-                        elif ref_type == 'replied_to':
-                            self.interactions['replies'].append({
-                                'from': user_id,
-                                'tweet_id': tweet.id,
-                                'created_at': tweet.created_at
-                            })
-                        
-                        elif ref_type == 'quoted':
-                            self.interactions['quote_tweets'].append({
-                                'from': user_id,
-                                'tweet_id': tweet.id,
-                                'created_at': tweet.created_at
-                            })
+                # Check tweet structure (from our extractor)
+                # Tweets have: id, text, created_at, likes, retweets
                 
-                # Check for mentions
-                if tweet.entities and 'mentions' in tweet.entities:
-                    for mention in tweet.entities['mentions']:
-                        mentioned_id = str(mention['id'])
-                        
-                        # Only count if mentioning someone in our account list
-                        if mentioned_id in account_id_set:
-                            self.interactions['mentions'].append({
-                                'from': user_id,
-                                'to': mentioned_id,
-                                'tweet_id': tweet.id,
-                                'created_at': tweet.created_at
-                            })
+                # Note: TwitterAPI.io doesn't return referenced_tweets or entities
+                # in the basic timeline, so we're limited in what we can extract here
+                # We'll rely more on the get_account_interactions() method
+                
+                pass
         
-        print(f"   Extracted interactions:")
-        print(f"      • Mentions: {len(self.interactions['mentions'])}")
-        print(f"      • Retweets: {len(self.interactions['retweets'])}")
-        print(f"      • Replies: {len(self.interactions['replies'])}")
-        print(f"      • Quotes: {len(self.interactions['quote_tweets'])}")
+        print(f"   Extracted interactions from timelines (limited data)")
     
     
-    def _build_interaction_graph(self, account_ids: List[str]):
+    def _build_interaction_graph(self, account_ids: List[str], account_usernames: List[str]):
         """Build directed graph from interactions"""
         
         # Add all accounts as nodes
         for user_id in account_ids:
             self.interaction_graph.add_node(user_id)
         
+        # Create username to ID mapping
+        username_to_id = dict(zip(account_usernames, account_ids))
+        
         # Add edges for mentions (weighted)
         mention_counts = defaultdict(lambda: defaultdict(int))
         
         for mention in self.interactions['mentions']:
-            source = mention['from']
-            target = mention['to']
-            mention_counts[source][target] += 1
+            source_id = str(mention.get('author_id'))
+            mentioned_username = mention.get('mentioned_username', '')
+            target_id = username_to_id.get(mentioned_username)
+            
+            if source_id in account_ids and target_id:
+                mention_counts[source_id][target_id] += 1
         
         # Add edges to graph
         for source in mention_counts:
@@ -295,7 +267,6 @@ class InteractionAnalyzer:
         }
         
         # Reciprocity Score (0-30 points)
-        # >0.7 = very high coordination
         if metrics['reciprocity'] > 0.7:
             scores['reciprocity_score'] = 30
         elif metrics['reciprocity'] > 0.5:
@@ -304,7 +275,6 @@ class InteractionAnalyzer:
             scores['reciprocity_score'] = 10
         
         # Clustering Score (0-30 points)
-        # >0.6 = tight group
         if metrics['clustering'] > 0.6:
             scores['clustering_score'] = 30
         elif metrics['clustering'] > 0.4:
@@ -313,7 +283,6 @@ class InteractionAnalyzer:
             scores['clustering_score'] = 10
         
         # Density Score (0-25 points)
-        # >0.3 = highly connected
         if metrics['density'] > 0.3:
             scores['density_score'] = 25
         elif metrics['density'] > 0.2:
@@ -495,7 +464,7 @@ class InteractionAnalyzer:
 
 # Example usage helper
 def analyze_top_accounts(
-    twitter_bearer_token: str,
+    tweet_extractor: TwitterTweetExtractor,
     account_ids: List[str],
     account_usernames: List[str],
     days_back: int = 30
@@ -504,7 +473,7 @@ def analyze_top_accounts(
     Convenience function to analyze interactions between Top 20 accounts
     
     Args:
-        twitter_bearer_token: Twitter API bearer token
+        tweet_extractor: TwitterTweetExtractor with API key pool
         account_ids: List of user IDs from Top 20
         account_usernames: List of usernames from Top 20
         days_back: Days to analyze (7, 30, 90, 180)
@@ -512,8 +481,7 @@ def analyze_top_accounts(
     Returns:
         Complete interaction analysis report
     """
-    client = tweepy.Client(bearer_token=twitter_bearer_token)
-    analyzer = InteractionAnalyzer(client)
+    analyzer = InteractionAnalyzer(tweet_extractor)
     
     report = analyzer.analyze_account_interactions(
         account_ids=account_ids,
