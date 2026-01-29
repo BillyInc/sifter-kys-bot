@@ -3,6 +3,7 @@ import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarCh
 import { useAuth } from './contexts/AuthContext';
 import Auth from './components/Auth';
 import WalletActivityMonitor from './WalletActivityMonitor';
+import WalletAlertSettings from './WalletAlertSettings';
 import walletActivityService from './WalletActivityService';
 
 export default function SifterKYS() {
@@ -31,7 +32,7 @@ export default function SifterKYS() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
 
-  // FIXED Issue 1: Watchlist state
+  // Twitter Watchlist state
   const [watchlist, setWatchlist] = useState([]);
   const [watchlistStats, setWatchlistStats] = useState(null);
   const [editingNotes, setEditingNotes] = useState(null);
@@ -39,7 +40,15 @@ export default function SifterKYS() {
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
 
-  // NEW: Expanded tokens state (all expanded by default)
+  // Wallet Watchlist state
+  const [walletWatchlist, setWalletWatchlist] = useState([]);
+  const [walletWatchlistStats, setWalletWatchlistStats] = useState(null);
+  const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
+
+  // Wallet Analysis state
+  const [walletAnalysisResults, setWalletAnalysisResults] = useState(null);
+
+  // Expanded tokens state (all expanded by default)
   const [expandedTokens, setExpandedTokens] = useState({});
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -90,11 +99,14 @@ export default function SifterKYS() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // FIXED Issue 1: Load watchlist when tab changes
+  // Load watchlist data when tab changes
   useEffect(() => {
     if (activeTab === 'watchlist') {
       loadWatchlist();
       loadWatchlistStats();
+    } else if (activeTab === 'wallet-watchlist') {
+      loadWalletWatchlist();
+      loadWalletWatchlistStats();
     }
   }, [activeTab]);
 
@@ -420,6 +432,91 @@ export default function SifterKYS() {
     }
   };
 
+  // Wallet Watchlist functions
+  const loadWalletWatchlist = async () => {
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/get?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlist(data.wallets);
+      }
+    } catch (error) {
+      console.error('Error loading wallet watchlist:', error);
+    }
+  };
+
+  const loadWalletWatchlistStats = async () => {
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlistStats(data.stats);
+      }
+    } catch (error) {
+      console.error('Error loading wallet stats:', error);
+    }
+  };
+
+  const addWalletToWatchlist = async (wallet) => {
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, wallet })
+      });
+      const data = await response.json();
+      if (data.success) {
+        alert('Wallet added to watchlist!');
+        if (activeTab === 'wallet-watchlist') {
+          loadWalletWatchlist();
+          loadWalletWatchlistStats();
+        }
+      } else {
+        alert(data.error || 'Failed to add wallet');
+      }
+    } catch (error) {
+      console.error('Error adding wallet to watchlist:', error);
+      alert(error.message);
+    }
+  };
+
+  const removeWalletFromWatchlist = async (walletAddress) => {
+    if (!confirm('Remove this wallet from watchlist?')) return;
+
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/remove`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId, wallet_address: walletAddress })
+      });
+      const data = await response.json();
+      if (data.success) {
+        loadWalletWatchlist();
+        loadWalletWatchlistStats();
+      }
+    } catch (error) {
+      console.error('Error removing wallet from watchlist:', error);
+    }
+  };
+
+  const updateWalletAlertSettings = async (walletAddress, settings) => {
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/alerts/update`, {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userId,
+          wallet_address: walletAddress,
+          settings
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        loadWalletWatchlist();
+        setAlertSettingsWallet(null);
+      }
+    } catch (error) {
+      console.error('Error updating alert settings:', error);
+    }
+  };
+
   const formatNumber = (num) => {
     if (num >= 1000000) return `$${(num / 1000000).toFixed(2)}M`;
     if (num >= 1000) return `$${(num / 1000).toFixed(1)}K`;
@@ -533,7 +630,8 @@ export default function SifterKYS() {
           {[
             { id: 'analyze', label: 'Analyze', icon: Search },
             { id: 'results', label: 'Results', icon: BarChart3 },
-            { id: 'watchlist', label: 'Watchlist', icon: BookmarkPlus },
+            { id: 'watchlist', label: 'Twitter Watchlist', icon: Users },
+            { id: 'wallet-watchlist', label: 'Wallet Watchlist', icon: Wallet },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1292,6 +1390,132 @@ export default function SifterKYS() {
               </div>
             )}
           </div>
+        )}
+
+        {/* Wallet Watchlist Tab */}
+        {activeTab === 'wallet-watchlist' && (
+          <div className="space-y-4">
+            {walletWatchlistStats && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-purple-400">{walletWatchlistStats.total_wallets || 0}</div>
+                  <div className="text-xs text-gray-400">Total Wallets</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-yellow-400">{walletWatchlistStats.s_tier || 0}</div>
+                  <div className="text-xs text-gray-400">S-Tier</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-green-400">{walletWatchlistStats.a_tier || 0}</div>
+                  <div className="text-xs text-gray-400">A-Tier</div>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                  <div className="text-2xl font-bold text-blue-400">{walletWatchlistStats.b_tier || 0}</div>
+                  <div className="text-xs text-gray-400">B-Tier</div>
+                </div>
+              </div>
+            )}
+
+            {walletWatchlist.length === 0 ? (
+              <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">
+                <Wallet className="mx-auto mb-4 text-gray-400" size={48} />
+                <h3 className="text-lg font-semibold mb-2">No Wallets in Watchlist</h3>
+                <p className="text-sm text-gray-400">
+                  Run wallet analysis and add top performers to track their activity
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <h3 className="text-lg font-semibold mb-4">
+                  Wallet Watchlist ({walletWatchlist.length} wallets)
+                </h3>
+
+                <div className="space-y-3">
+                  {walletWatchlist.map((wallet) => (
+                    <div key={wallet.wallet_address} className="bg-black/30 border border-white/10 rounded-lg p-4">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                              wallet.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                              wallet.tier === 'A' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                              'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                            }`}>
+                              {wallet.tier}-TIER
+                            </span>
+                            <span className="font-mono text-sm">
+                              {wallet.wallet_address.slice(0, 6)}...{wallet.wallet_address.slice(-4)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 items-center">
+                          <button
+                            onClick={() => setAlertSettingsWallet(wallet.wallet_address)}
+                            className="p-2 hover:bg-white/10 rounded text-gray-400 hover:text-white"
+                            title="Alert Settings"
+                          >
+                            <Bell size={16} />
+                          </button>
+                          <a
+                            href={`https://solscan.io/account/${wallet.wallet_address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 hover:bg-white/10 rounded text-gray-400 hover:text-white"
+                            title="View on Solscan"
+                          >
+                            <ExternalLink size={16} />
+                          </a>
+                          <button
+                            onClick={() => removeWalletFromWatchlist(wallet.wallet_address)}
+                            className="p-2 hover:bg-red-500/20 rounded text-red-400"
+                            title="Remove"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-sm">
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-green-400">{wallet.pump_count || 0}</div>
+                          <div className="text-xs text-gray-400">Pumps Hit</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-blue-400">{wallet.avg_roi_to_peak?.toFixed(1) || 0}x</div>
+                          <div className="text-xs text-gray-400">Avg ROI</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-purple-400">{wallet.avg_distance_to_peak?.toFixed(1) || 0}%</div>
+                          <div className="text-xs text-gray-400">Avg Distance</div>
+                        </div>
+                        <div className="bg-white/5 rounded p-2 text-center">
+                          <div className="font-bold text-yellow-400">{(wallet.consistency_score * 100)?.toFixed(0) || 0}%</div>
+                          <div className="text-xs text-gray-400">Consistency</div>
+                        </div>
+                      </div>
+
+                      {wallet.notes && (
+                        <div className="mt-3 text-sm text-gray-400">
+                          <StickyNote size={12} className="inline mr-1" />
+                          {wallet.notes}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Wallet Alert Settings Modal */}
+        {alertSettingsWallet && (
+          <WalletAlertSettings
+            walletAddress={alertSettingsWallet}
+            onClose={() => setAlertSettingsWallet(null)}
+            onSave={(settings) => updateWalletAlertSettings(alertSettingsWallet, settings)}
+          />
         )}
       </div>
     </div>
