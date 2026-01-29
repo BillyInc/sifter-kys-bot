@@ -47,6 +47,8 @@ export default function SifterKYS() {
 
   // Wallet Analysis state
   const [walletAnalysisResults, setWalletAnalysisResults] = useState(null);
+  const [isAnalyzingWallets, setIsAnalyzingWallets] = useState(false);
+  const [expandedWallets, setExpandedWallets] = useState({});
 
   // Expanded tokens state (all expanded by default)
   const [expandedTokens, setExpandedTokens] = useState({});
@@ -334,6 +336,83 @@ export default function SifterKYS() {
 
   const collapseAll = () => {
     setExpandedTokens({});
+  };
+
+  // Wallet Analysis functions
+  const handleWalletAnalysis = async () => {
+    if (selectedTokens.length === 0) {
+      alert('Please select at least one token');
+      return;
+    }
+
+    setIsAnalyzingWallets(true);
+    setActiveTab('wallet-analysis');
+
+    try {
+      const tokensToAnalyze = selectedTokens.map(token => {
+        const key = `${token.chain}-${token.address}`;
+        const settings = useGlobalSettings ? {
+          days_back: 7,
+          candle_size: pumpTimeframe,
+          wallet_window_before: 35,
+          wallet_window_after: 0
+        } : (tokenSettings[key] || {
+          days_back: 7,
+          candle_size: pumpTimeframe,
+          wallet_window_before: 35,
+          wallet_window_after: 0
+        });
+
+        return {
+          address: token.address,
+          ticker: token.ticker,
+          name: token.name,
+          chain: token.chain,
+          pair_address: token.pairAddress,
+          settings: settings
+        };
+      });
+
+      const response = await authFetch(`${API_URL}/api/wallets/analyze`, {
+        method: 'POST',
+        body: JSON.stringify({
+          tokens: tokensToAnalyze,
+          global_settings: {
+            min_pump_count: 5,
+            wallet_window_before: 35,
+            wallet_window_after: 0
+          }
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setWalletAnalysisResults(data);
+      } else {
+        throw new Error(data.error || 'Wallet analysis failed');
+      }
+    } catch (error) {
+      console.error('Wallet analysis error:', error);
+      alert(`Wallet analysis failed: ${error.message}`);
+      setActiveTab('analyze');
+    }
+
+    setIsAnalyzingWallets(false);
+  };
+
+  const clearWalletResults = () => {
+    if (confirm('Clear wallet analysis results?')) {
+      setWalletAnalysisResults(null);
+      setExpandedWallets({});
+    }
+  };
+
+  const toggleWalletExpansion = (idx) => {
+    setExpandedWallets(prev => ({
+      ...prev,
+      [idx]: !prev[idx]
+    }));
   };
 
   // FIXED Issue 1: Watchlist functions
@@ -625,27 +704,31 @@ export default function SifterKYS() {
       </nav>
 
       <div className="pt-16 max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-        {/* FIXED Issue 1 & 7: Updated tabs */}
-        <div className="flex gap-3 mb-6 border-b border-white/10">
-          {[
-            { id: 'analyze', label: 'Analyze', icon: Search },
-            { id: 'results', label: 'Results', icon: BarChart3 },
-            { id: 'watchlist', label: 'Twitter Watchlist', icon: Users },
-            { id: 'wallet-watchlist', label: 'Wallet Watchlist', icon: Wallet },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 border-b-2 transition text-sm ${
-                activeTab === tab.id
-                  ? 'border-purple-500 text-white'
-                  : 'border-transparent text-gray-400 hover:text-white'
-              }`}
-            >
-              <tab.icon size={16} />
-              {tab.label}
-            </button>
-          ))}
+        {/* Responsive tabs with horizontal scroll on mobile */}
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 mb-6">
+          <div className="flex gap-1 sm:gap-3 border-b border-white/10 min-w-max sm:min-w-0">
+            {[
+              { id: 'analyze', label: 'Analyze', shortLabel: 'Analyze', icon: Search },
+              { id: 'results', label: 'Results', shortLabel: 'Results', icon: BarChart3 },
+              { id: 'wallet-analysis', label: 'Wallet Analysis', shortLabel: 'Wallets', icon: Wallet },
+              { id: 'watchlist', label: 'Twitter Watchlist', shortLabel: 'Twitter', icon: Users },
+              { id: 'wallet-watchlist', label: 'Wallet Watchlist', shortLabel: 'Watch', icon: Wallet },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-3 border-b-2 transition text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
+                  activeTab === tab.id
+                    ? 'border-purple-500 text-white bg-white/5'
+                    : 'border-transparent text-gray-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <tab.icon size={16} />
+                <span className="hidden sm:inline">{tab.label}</span>
+                <span className="sm:hidden">{tab.shortLabel}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Analyze Tab */}
@@ -952,6 +1035,24 @@ export default function SifterKYS() {
                     </>
                   )}
                 </button>
+
+                <button
+                  onClick={handleWalletAnalysis}
+                  disabled={isAnalyzingWallets}
+                  className="w-full mt-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-600/30 rounded-lg font-semibold transition flex items-center justify-center gap-2 text-sm"
+                >
+                  {isAnalyzingWallets ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Analyzing Wallets...
+                    </>
+                  ) : (
+                    <>
+                      <Wallet size={18} />
+                      Analyze Wallets (Find Smart Money)
+                    </>
+                  )}
+                </button>
               </div>
             )}
 
@@ -1189,6 +1290,156 @@ export default function SifterKYS() {
               <div className="text-center py-12 text-gray-400">
                 <BarChart3 size={48} className="mx-auto mb-3 opacity-50" />
                 <p>No analysis results yet. Run an analysis to see results here.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Wallet Analysis Tab */}
+        {activeTab === 'wallet-analysis' && (
+          <div className="space-y-4">
+            {walletAnalysisResults ? (
+              <>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold">Wallet Analysis Results</h2>
+                  <button
+                    onClick={clearWalletResults}
+                    className="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-sm flex items-center gap-2"
+                  >
+                    <RotateCcw size={16} />
+                    Clear Results
+                  </button>
+                </div>
+
+                <div className="bg-gradient-to-br from-green-900/20 to-green-800/10 border border-green-500/20 rounded-xl p-4">
+                  <h3 className="text-lg font-semibold mb-3">Wallet Analysis Summary</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-green-400">
+                        {walletAnalysisResults.summary?.qualified_wallets || 0}
+                      </div>
+                      <div className="text-xs text-gray-400">Qualified Wallets</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-yellow-400">
+                        {walletAnalysisResults.summary?.s_tier || 0}
+                      </div>
+                      <div className="text-xs text-gray-400">S-Tier Wallets</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-blue-400">
+                        {walletAnalysisResults.summary?.total_rallies || 0}
+                      </div>
+                      <div className="text-xs text-gray-400">Total Rallies</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-purple-400">
+                        {walletAnalysisResults.summary?.tokens_analyzed || 0}
+                      </div>
+                      <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {walletAnalysisResults.top_wallets && walletAnalysisResults.top_wallets.slice(0, 20).map((wallet, idx) => {
+                    const isExpanded = expandedWallets[idx];
+
+                    return (
+                      <div key={wallet.wallet} className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                        <button
+                          onClick={() => toggleWalletExpansion(idx)}
+                          className="w-full px-4 py-4 flex items-center justify-between hover:bg-white/5 transition"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg font-bold text-purple-400">#{idx + 1}</span>
+                            <span className={`px-2 py-1 rounded text-sm font-bold ${
+                              wallet.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400' :
+                              wallet.tier === 'A' ? 'bg-green-500/20 text-green-400' :
+                              wallet.tier === 'B' ? 'bg-blue-500/20 text-blue-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              Tier {wallet.tier}
+                            </span>
+                            <div className="text-left">
+                              <div className="text-xs font-mono text-gray-400">
+                                {wallet.wallet.slice(0, 8)}...{wallet.wallet.slice(-6)}
+                              </div>
+                            </div>
+                          </div>
+                          {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                        </button>
+
+                        {isExpanded && (
+                          <div className="px-4 pb-4 border-t border-white/10 pt-4">
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="flex-1">
+                                <div className="text-xs font-mono text-gray-400 mb-2">
+                                  {wallet.wallet}
+                                </div>
+                                {wallet.token_list && wallet.token_list.length > 0 && (
+                                  <div className="text-xs text-gray-500">
+                                    <strong>Tokens:</strong> {wallet.token_list.join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => addWalletToWatchlist(wallet)}
+                                className="p-2 hover:bg-purple-500/20 rounded text-purple-400"
+                                title="Add to wallet watchlist"
+                              >
+                                <BookmarkPlus size={16} />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                              <div className="bg-black/30 rounded p-2 text-center">
+                                <div className="font-bold text-green-400">{wallet.pump_count}</div>
+                                <div className="text-xs text-gray-400">Pumps Hit</div>
+                              </div>
+                              <div className="bg-black/30 rounded p-2 text-center">
+                                <div className="font-bold text-yellow-400">{wallet.avg_distance_to_peak_pct}%</div>
+                                <div className="text-xs text-gray-400">Avg Distance</div>
+                              </div>
+                              <div className="bg-black/30 rounded p-2 text-center">
+                                <div className="font-bold text-blue-400">{wallet.avg_roi_to_peak_pct}%</div>
+                                <div className="text-xs text-gray-400">Avg ROI</div>
+                              </div>
+                              <div className="bg-black/30 rounded p-2 text-center">
+                                <div className="font-bold text-purple-400">{wallet.consistency_score}</div>
+                                <div className="text-xs text-gray-400">Consistency</div>
+                              </div>
+                            </div>
+
+                            {wallet.rally_history && wallet.rally_history.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-white/10">
+                                <h4 className="text-xs font-semibold mb-2 text-gray-400">Recent Rallies:</h4>
+                                <div className="space-y-1">
+                                  {wallet.rally_history.slice(0, 5).map((rally, ridx) => (
+                                    <div key={ridx} className="text-xs text-gray-500">
+                                      • {rally.token} on {rally.rally_date}: {rally.distance_pct}% to ATH, {rally.roi_pct}% ROI
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : isAnalyzingWallets ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 border-4 border-white/30 border-t-green-500 rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-gray-400">Analyzing wallet behavior...</p>
+                <p className="text-sm text-gray-500 mt-2">Finding smart money wallets...</p>
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-400">
+                <Wallet size={48} className="mx-auto mb-3 opacity-50" />
+                <p>No wallet analysis yet. Run wallet analysis to find smart money.</p>
               </div>
             )}
           </div>

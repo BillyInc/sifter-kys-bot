@@ -98,6 +98,29 @@ def get_watchlist_groups():
     return jsonify({'success': True, 'groups': groups}), 200
 
 
+@watchlist_bp.route('/groups/create', methods=['POST'])
+@require_auth
+def create_watchlist_group():
+    """Create a new watchlist group."""
+    data = request.json
+    user_id = _get_user_id() or data.get('user_id')
+    group_name = data.get('group_name')
+    description = data.get('description', '')
+
+    if not user_id or not group_name:
+        return jsonify({'error': 'user_id and group_name required'}), 400
+
+    group_id = watchlist_db.create_group(user_id, group_name, description)
+
+    if group_id:
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'group_name': group_name
+        }), 201
+    return jsonify({'success': False, 'error': 'Failed to create group'}), 500
+
+
 @watchlist_bp.route('/stats', methods=['GET'])
 @require_auth
 def get_watchlist_stats():

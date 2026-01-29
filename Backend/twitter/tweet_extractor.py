@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 import time
 from typing import List, Dict, Optional
-from twitter_api_pool import TwitterAPIKeyPool
+from .twitter_api_pool import TwitterAPIKeyPool
 
 
 class TwitterTweetExtractor:
@@ -533,7 +533,7 @@ class TwitterTweetExtractor:
 
 # Testing function
 if __name__ == "__main__":
-    from twitter_api_pool import TwitterAPIKeyPool
+    from .twitter_api_pool import TwitterAPIKeyPool
     
     all_keys = [
         {'user_id': '405920194964049920', 'api_key': 'new1_f62eefe95d5349938ea4f77ca8f198ad', 'name': 'dnjunu'}

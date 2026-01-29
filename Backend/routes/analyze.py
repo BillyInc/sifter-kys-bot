@@ -2,6 +2,7 @@
 from flask import Blueprint, request, jsonify
 
 from services.token_analyzer import TokenAnalyzerService
+from config import Config
 
 analyze_bp = Blueprint('analyze', __name__, url_prefix='/api')
 
@@ -90,3 +91,18 @@ def analyze_tokens():
     print(f"{'='*100}\n")
 
     return jsonify(response), 200
+
+
+@analyze_bp.route('/key_pool/status', methods=['GET'])
+def get_key_pool_status():
+    """Get Twitter API configuration status."""
+    is_configured = Config.is_twitter_configured()
+
+    return jsonify({
+        'success': True,
+        'pool_status': {
+            'configured': is_configured,
+            'type': 'bearer_token' if is_configured else 'not_configured',
+            'active': is_configured
+        }
+    }), 200

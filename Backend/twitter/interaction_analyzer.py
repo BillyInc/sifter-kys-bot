@@ -3,7 +3,7 @@ from typing import List, Dict
 from collections import defaultdict
 import networkx as nx
 import time
-from tweet_extractor_twitterapiio import TwitterTweetExtractor
+from .tweet_extractor import TwitterTweetExtractor
 
 
 class InteractionAnalyzer:
