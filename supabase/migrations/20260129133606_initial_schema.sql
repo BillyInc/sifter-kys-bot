@@ -76,6 +76,39 @@ CREATE TABLE IF NOT EXISTS sifter_kys_dev.group_memberships (
     UNIQUE(group_id, account_id)
 );
 
+-- Wallet watchlist table
+CREATE TABLE IF NOT EXISTS sifter_kys_dev.wallet_watchlist (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_kys_dev.users(user_id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    tier TEXT DEFAULT 'C',
+    pump_count INTEGER DEFAULT 0,
+    avg_distance_to_peak REAL DEFAULT 0,
+    avg_roi_to_peak REAL DEFAULT 0,
+    consistency_score REAL DEFAULT 0,
+    tokens_hit TEXT[] DEFAULT '{}',
+    notes TEXT DEFAULT '',
+    tags JSONB DEFAULT '[]'::jsonb,
+    alert_enabled BOOLEAN DEFAULT TRUE,
+    alert_threshold_usd REAL DEFAULT 100,
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    last_updated TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, wallet_address)
+);
+
+-- Wallet activity/notifications table
+CREATE TABLE IF NOT EXISTS sifter_kys_dev.wallet_notifications (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_kys_dev.users(user_id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT FALSE,
+    sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -88,6 +121,11 @@ CREATE INDEX IF NOT EXISTS idx_account_performance_author_id ON sifter_kys_dev.a
 CREATE INDEX IF NOT EXISTS idx_watchlist_groups_user_id ON sifter_kys_dev.watchlist_groups(user_id);
 CREATE INDEX IF NOT EXISTS idx_group_memberships_group_id ON sifter_kys_dev.group_memberships(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_memberships_account_id ON sifter_kys_dev.group_memberships(account_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_user_id ON sifter_kys_dev.wallet_watchlist(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_address ON sifter_kys_dev.wallet_watchlist(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_tier ON sifter_kys_dev.wallet_watchlist(tier);
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user_id ON sifter_kys_dev.wallet_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_unread ON sifter_kys_dev.wallet_notifications(user_id, is_read) WHERE is_read = FALSE;
 
 -- ============================================
 -- ENABLE ROW LEVEL SECURITY
@@ -98,6 +136,8 @@ ALTER TABLE sifter_kys_dev.watchlist_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sifter_kys_dev.account_performance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sifter_kys_dev.watchlist_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sifter_kys_dev.group_memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sifter_kys_dev.wallet_watchlist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sifter_kys_dev.wallet_notifications ENABLE ROW LEVEL SECURITY;
 
 -- ============================================
 -- RLS POLICIES
@@ -193,6 +233,40 @@ CREATE POLICY "Users can delete memberships from own groups"
             AND user_id = auth.uid()
         )
     );
+
+-- Wallet watchlist policies
+CREATE POLICY "Users can view own wallet watchlist"
+    ON sifter_kys_dev.wallet_watchlist FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert to own wallet watchlist"
+    ON sifter_kys_dev.wallet_watchlist FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own wallet watchlist"
+    ON sifter_kys_dev.wallet_watchlist FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete from own wallet watchlist"
+    ON sifter_kys_dev.wallet_watchlist FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- Wallet notifications policies
+CREATE POLICY "Users can view own notifications"
+    ON sifter_kys_dev.wallet_notifications FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own notifications"
+    ON sifter_kys_dev.wallet_notifications FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own notifications"
+    ON sifter_kys_dev.wallet_notifications FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own notifications"
+    ON sifter_kys_dev.wallet_notifications FOR DELETE
+    USING (auth.uid() = user_id);
 
 -- ============================================
 -- FUNCTION: Auto-create user profile on signup

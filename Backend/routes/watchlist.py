@@ -3,12 +3,11 @@ from flask import Blueprint, request, jsonify
 
 from auth import require_auth
 from db import WatchlistDatabase
-from config import Config
 
 watchlist_bp = Blueprint('watchlist', __name__, url_prefix='/api/watchlist')
 
-# Initialize database
-watchlist_db = WatchlistDatabase(Config.WATCHLIST_DB_PATH)
+# Initialize database (now uses Supabase)
+watchlist_db = WatchlistDatabase()
 
 
 def _get_user_id() -> str | None:

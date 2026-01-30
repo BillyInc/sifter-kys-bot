@@ -12,10 +12,10 @@ _watchlist_db = None
 
 
 def get_watchlist_db():
-    """Get or create watchlist database instance."""
+    """Get or create watchlist database instance (now uses Supabase)."""
     global _watchlist_db
     if _watchlist_db is None:
-        _watchlist_db = WatchlistDatabase(db_path='watchlists.db')
+        _watchlist_db = WatchlistDatabase()
     return _watchlist_db
 
 
@@ -322,7 +322,7 @@ def get_wallet_watchlist_stats():
             return jsonify({'error': 'user_id required'}), 400
 
         db = get_watchlist_db()
-        stats = db.get_wallet_stats(user_id)
+        stats = db.get_wallet_watchlist_stats(user_id)
 
         return jsonify({
             'success': True,
