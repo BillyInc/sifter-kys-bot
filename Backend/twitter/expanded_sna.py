@@ -3,7 +3,7 @@ from typing import List, Dict
 import time
 from collections import defaultdict
 import networkx as nx
-from tweet_extractor_twitterapiio import TwitterTweetExtractor
+from .tweet_extractor import TwitterTweetExtractor
 
 
 class ExpandedSNAAnalyzer:

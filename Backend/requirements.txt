@@ -1,16 +1,19 @@
 flask==3.0.0
 flask-cors==4.0.0
+flask-limiter==3.5.0
 tweepy==4.14.0
 requests==2.31.0
 python-dotenv==1.0.0
+supabase==2.5.1
+PyJWT==2.8.0
 
 # Social Network Analysis
 networkx==3.2.1
-numpy==1.24.3
+numpy>=1.26.0  # 1.26+ required for Python 3.12
 python-louvain==0.16  # For community detection
 
 # Batch Analysis
-pandas==2.0.3
+pandas>=2.1.0  # 2.1+ required for Python 3.12
 gunicorn==21.2.0  # Add this line
 gevent==23.9.1  # For better async handling
 
