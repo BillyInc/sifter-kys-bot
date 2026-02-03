@@ -54,7 +54,7 @@ class WalletActivityService {
   async checkForNotifications() {
     try {
       const response = await fetch(
-        `${this.apiUrl}/api/wallets/notifications?user_id=${this.userId}&unread_only=true`
+        `${this.apiUrl}/api/wallet-monitor/notifications?user_id=${this.userId}&unread_only=true`
       );
 
       if (!response.ok) {
@@ -122,14 +122,11 @@ class WalletActivityService {
    */
   async markAsRead(notificationId) {
     try {
-      const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: this.userId,
-          notification_id: notificationId
-        })
-      });
+      const response = await fetch(`${this.apiUrl}/api/wallet-monitor/notifications/read`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ notification_id: notificationId })
+});
 
       const data = await response.json();
       return data.success;
@@ -144,15 +141,11 @@ class WalletActivityService {
    */
   async markAllAsRead() {
     try {
-      const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: this.userId,
-          mark_all: true
-        })
-      });
-
+     const response = await fetch(`${this.apiUrl}/api/wallet-monitor/notifications/read-all`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ user_id: this.userId })
+});
       const data = await response.json();
       return data.success;
     } catch (error) {
@@ -173,7 +166,7 @@ class WalletActivityService {
       });
 
       const response = await fetch(
-        `${this.apiUrl}/api/wallets/notifications?${params}`
+        `${this.apiUrl}/api/wallet-monitor/notifications?${params}`
       );
 
       const data = await response.json();
@@ -203,7 +196,7 @@ class WalletActivityService {
       }
 
       const response = await fetch(
-        `${this.apiUrl}/api/wallets/activity/recent?${params}`
+        `${this.apiUrl}/api/wallet-monitor/activity/recent?${params}`
       );
 
       const data = await response.json();
@@ -224,7 +217,7 @@ class WalletActivityService {
    */
   async updateAlertSettings(walletAddress, settings) {
     try {
-      const response = await fetch(`${this.apiUrl}/api/wallets/alerts/update`, {
+      const response = await fetch(`${this.apiUrl}/api/wallet-monitor/alerts/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
