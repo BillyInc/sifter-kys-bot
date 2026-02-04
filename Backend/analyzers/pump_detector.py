@@ -1,14 +1,26 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime, timedelta
 import time
 import statistics
 
 class PrecisionRallyDetector:
-    def __init__(self, birdeye_api_key=None):
-        self.dex_screener_url = "https://api.dexscreener.com/latest/dex"
-        # FIXED: Use the pair endpoint (working version)
-        self.birdeye_url = "https://public-api.birdeye.so/defi/v3/ohlcv/pair"
-        self.birdeye_api_key = birdeye_api_key
+    """
+    Rally detection using SolanaTracker for everything:
+    - Token search
+    - Token metadata
+    - OHLCV data
+    
+    Solana-only implementation (multi-chain support removed for now)
+    """
+    
+    def __init__(self, solanatracker_api_key=None):
+        self.st_base_url = "https://data.solanatracker.io"
+        self.api_key = solanatracker_api_key
+        
+        # Create session with retry logic
+        self.session = self._create_session()
         
         # Rally detection thresholds (proven working values)
         self.MIN_START_GAIN = 1.5
@@ -19,151 +31,277 @@ class PrecisionRallyDetector:
         self.DRAWDOWN_END_THRESHOLD = -15.0
         self.VOLUME_EXHAUSTION = 0.3
         
-        # Candle size mapping for multi-timeframe support
+        # Candle size mapping for SolanaTracker
         self.CANDLE_SIZE_MAPPING = {
             '1m': '1m',
             '5m': '5m',
             '15m': '15m',
-            '1h': '1H',
-            '4h': '4H',
-            '1d': '1D'
+            '1h': '1h',
+            '4h': '4h',
+            '1d': '1d'
         }
     
-    def get_token_data(self, token_address):
-        """Fetch token data from DexScreener"""
-        print(f"\n[1/3] Fetching token data from DEX Screener...")
-        print(f"Token: {token_address}")
+    def _create_session(self):
+        """Create requests session with retry logic"""
+        session = requests.Session()
         
-        url = f"{self.dex_screener_url}/search/?q={token_address}"
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
         
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-            
-            if not data.get('pairs'):
-                print("❌ No pairs found for this token")
-                return None
-            
-            pairs = data['pairs']
-            main_pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
-            
-            print(f"✓ Found pair: {main_pair['baseToken']['symbol']}/{main_pair['quoteToken']['symbol']}")
-            print(f"✓ Chain: {main_pair['chainId']}")
-            print(f"✓ DEX: {main_pair['dexId']}")
-            print(f"✓ Liquidity: ${float(main_pair.get('liquidity', {}).get('usd', 0)):,.2f}")
-            
-            return main_pair
-            
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Error fetching data: {e}")
-            return None
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        return session
     
-    def search_tokens(self, query):
+    def get_st_headers(self):
+        """Get headers for SolanaTracker API requests"""
+        return {
+            'accept': 'application/json',
+            'x-api-key': self.api_key
+        }
+    
+    def search_tokens(self, query, limit=20, min_liquidity=0, sort_by='liquidityUsd'):
         """
-        Search for tokens by name or contract address
-        Returns list of matching tokens
-        """
-        print(f"\n[TOKEN SEARCH] Searching for: {query}")
+        Search for tokens by name, symbol, or address using SolanaTracker
         
-        url = f"{self.dex_screener_url}/search/?q={query}"
+        Args:
+            query: Search term (token symbol, name, or address)
+            limit: Number of results to return (max 500)
+            min_liquidity: Minimum liquidity in USD
+            sort_by: Field to sort by (liquidityUsd, marketCapUsd, volume_24h, etc.)
+        
+        Returns:
+            List of matching tokens with metadata
+        """
+        print(f"\n[TOKEN SEARCH] Searching SolanaTracker for: {query}")
+        
+        if not self.api_key:
+            print("❌ SolanaTracker API key is required!")
+            return []
+        
+        url = f"{self.st_base_url}/search"
+        
+        params = {
+            'query': query,
+            'limit': min(limit, 500),
+            'sortBy': sort_by,
+            'sortOrder': 'desc',
+            'minLiquidity': min_liquidity
+        }
         
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
+            response = self.session.get(
+                url,
+                params=params,
+                headers=self.get_st_headers(),
+                timeout=15
+            )
             
-            if not data.get('pairs'):
+            if response.status_code != 200:
+                print(f"❌ Error: HTTP {response.status_code}")
                 return []
             
-            tokens = []
+            data = response.json()
             
-            for pair in data['pairs'][:20]:
+            if data.get('status') != 'success':
+                print(f"❌ API returned non-success status")
+                return []
+            
+            results = data.get('data', [])
+            
+            if not results:
+                print(f"❌ No tokens found for query: {query}")
+                return []
+            
+            # Format results to match existing structure
+            tokens = []
+            for item in results:
                 tokens.append({
-                    'ticker': pair['baseToken']['symbol'],
-                    'name': pair['baseToken']['name'],
-                    'address': pair['baseToken']['address'],
-                    'chain': pair['chainId'],
-                    'dex': pair['dexId'],
-                    'liquidity_usd': float(pair.get('liquidity', {}).get('usd', 0)),
-                    'price_usd': float(pair.get('priceUsd', 0)),
-                    'pair_address': pair['pairAddress'],
-                    'volume_24h': float(pair.get('volume', {}).get('h24', 0)),
-                    'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0))
+                    'ticker': item.get('symbol', 'UNKNOWN'),
+                    'name': item.get('name', 'Unknown Token'),
+                    'address': item.get('mint'),
+                    'chain': 'solana',  # Hardcoded since SolanaTracker is Solana-only
+                    'liquidity_usd': item.get('liquidityUsd', 0),
+                    'price_usd': item.get('priceUsd', 0),
+                    'market_cap_usd': item.get('marketCapUsd', 0),
+                    'volume_24h': item.get('volume_24h', 0),
+                    'holders': item.get('holders', 0),
+                    'image': item.get('image', ''),
+                    'pool_address': item.get('poolAddress'),
+                    'created_at': item.get('createdAt'),
+                    'has_socials': item.get('hasSocials', False),
+                    'market': item.get('market', ''),
+                    'lp_burn': item.get('lpBurn', 0)
                 })
             
-            tokens.sort(key=lambda x: x['liquidity_usd'], reverse=True)
+            print(f"✓ Found {len(tokens)} tokens")
             
-            print(f"[TOKEN SEARCH] Found {len(tokens)} tokens")
+            # Display top 5 results
+            if len(tokens) > 0:
+                print(f"\nTop {min(5, len(tokens))} results:")
+                for idx, token in enumerate(tokens[:5], 1):
+                    print(f"  {idx}. {token['ticker']} ({token['name']})")
+                    print(f"     Address: {token['address']}")
+                    print(f"     Liquidity: ${token['liquidity_usd']:,.2f}")
+                    print(f"     Market Cap: ${token['market_cap_usd']:,.2f}")
+                    print()
             
             return tokens
             
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error searching tokens: {e}")
+            return []
         except Exception as e:
-            print(f"[TOKEN SEARCH ERROR] {str(e)}")
+            print(f"❌ Unexpected error: {e}")
             return []
     
-    def get_chain_name(self, chain_id):
-        """Map chain ID to Birdeye chain name"""
-        chain_mapping = {
-            'solana': 'solana', 'ethereum': 'ethereum', 'bsc': 'bsc',
-            'base': 'base', 'arbitrum': 'arbitrum', 'avalanche': 'avalanche',
-            'optimism': 'optimism', 'polygon': 'polygon', 'zksync': 'zksync',
-            'sui': 'sui', 'aptos': 'aptos',
-        }
-        return chain_mapping.get(chain_id.lower(), 'solana')
-    
-    def get_ohlcv_data(self, pair_address, chain, days_back=30, candle_size='5m'):
+    def get_token_data(self, token_address):
         """
-        FIXED VERSION: Fetch OHLCV data using PAIR ADDRESS
+        Fetch comprehensive token metadata from SolanaTracker
         
         Args:
-            pair_address: Trading pair address (from DexScreener)
-            chain: Blockchain name (solana, ethereum, base, etc.)
+            token_address: Solana token mint address
+        
+        Returns:
+            Dictionary with token metadata or None if error
+        """
+        print(f"\n[1/3] Fetching token metadata from SolanaTracker...")
+        print(f"Token: {token_address}")
+        
+        if not self.api_key:
+            print("❌ SolanaTracker API key is required!")
+            return None
+        
+        url = f"{self.st_base_url}/tokens/{token_address}"
+        
+        try:
+            response = self.session.get(
+                url,
+                headers=self.get_st_headers(),
+                timeout=15
+            )
+            
+            if response.status_code == 404:
+                print(f"❌ Token not found: {token_address}")
+                return None
+            elif response.status_code != 200:
+                print(f"❌ Error: HTTP {response.status_code}")
+                return None
+            
+            data = response.json()
+            
+            token_info = data.get('token', {})
+            pools = data.get('pools', [])
+            
+            if not token_info:
+                print("❌ No token information returned")
+                return None
+            
+            # Get the primary pool (highest liquidity)
+            if pools:
+                primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+            else:
+                print("❌ No pools found for this token")
+                return None
+            
+            # Extract metadata
+            symbol = token_info.get('symbol', 'UNKNOWN')
+            name = token_info.get('name', 'Unknown Token')
+            liquidity = primary_pool.get('liquidity', {}).get('usd', 0)
+            price = primary_pool.get('price', {}).get('usd', 0)
+            market_cap = primary_pool.get('marketCap', {}).get('usd', 0)
+            
+            print(f"✓ Found: {symbol} ({name})")
+            print(f"✓ Liquidity: ${liquidity:,.2f}")
+            print(f"✓ Market Cap: ${market_cap:,.2f}")
+            print(f"✓ Price: ${price:.10f}")
+            print(f"✓ Market: {primary_pool.get('market', 'unknown')}")
+            
+            return {
+                'symbol': symbol,
+                'name': name,
+                'address': token_address,
+                'chain': 'solana',
+                'decimals': token_info.get('decimals', 6),
+                'image': token_info.get('image', ''),
+                'description': token_info.get('description', ''),
+                'liquidity_usd': liquidity,
+                'price_usd': price,
+                'market_cap_usd': market_cap,
+                'pool_address': primary_pool.get('poolId'),
+                'market': primary_pool.get('market'),
+                'holders': data.get('holders', 0),
+                'buys': data.get('buys', 0),
+                'sells': data.get('sells', 0),
+                'total_txns': data.get('txns', 0),
+                'lp_burn': primary_pool.get('lpBurn', 0),
+                'freeze_authority': primary_pool.get('security', {}).get('freezeAuthority'),
+                'mint_authority': primary_pool.get('security', {}).get('mintAuthority'),
+                'created_at': primary_pool.get('createdAt'),
+                'pools': pools  # Include all pools for reference
+            }
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error fetching token data: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            return None
+    
+    def get_ohlcv_data(self, token_address, days_back=30, candle_size='5m'):
+        """
+        Fetch OHLCV data using SolanaTracker API
+        
+        Args:
+            token_address: Solana token contract address
             days_back: Number of days to look back (1-90)
             candle_size: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
         
         Returns:
             List of OHLCV candles or None if error
         """
-        print(f"\n[2/3] Fetching candlestick data from Birdeye...")
-        print(f"Pair: {pair_address[:8]}...{pair_address[-6:]}")
-        print(f"Chain: {chain}")
+        print(f"\n[2/3] Fetching candlestick data from SolanaTracker...")
+        print(f"Token: {token_address[:8]}...{token_address[-6:]}")
         print(f"Days back: {days_back}")
         print(f"Candle size: {candle_size}")
         
-        if not self.birdeye_api_key:
-            print("❌ Birdeye API key is required!")
+        if not self.api_key:
+            print("❌ SolanaTracker API key is required!")
             return None
         
-        # Map candle size to Birdeye format
-        birdeye_candle_size = self.CANDLE_SIZE_MAPPING.get(candle_size, '5m')
+        # Map candle size to SolanaTracker format
+        st_type = self.CANDLE_SIZE_MAPPING.get(candle_size, '5m')
         
-        # Simple time calculation
+        # Calculate time range
         time_to = int(time.time())
-        time_from = time_to - (days_back * 24 * 60 * 60)
+        time_from = time_to - (days_back * 86400)
         
-        # FIXED: Use pair address with correct endpoint
+        url = f"{self.st_base_url}/chart/{token_address}"
+        
         params = {
-            'address': pair_address,  # PAIR ADDRESS (not token)
-            'type': birdeye_candle_size,
+            'type': st_type,
             'time_from': time_from,
             'time_to': time_to,
-        }
-        
-        headers = {
-            'accept': 'application/json',
-            'x-chain': chain,
-            'X-API-KEY': self.birdeye_api_key
+            'currency': 'usd',
+            'dynamicPools': 'true',
+            'removeOutliers': 'true'
         }
         
         try:
-            response = requests.get(self.birdeye_url, params=params, headers=headers)
+            response = self.session.get(
+                url,
+                params=params,
+                headers=self.get_st_headers(),
+                timeout=30
+            )
             
-            # Better error handling
             if response.status_code == 400:
-                print(f"❌ 400 Bad Request - Check if pair address is correct")
-                print(f"   Address used: {pair_address}")
-                print(f"   Chain: {chain}")
+                print(f"❌ 400 Bad Request - Check if token address is correct")
                 return None
             elif response.status_code == 401:
                 print(f"❌ 401 Unauthorized - Check API key")
@@ -171,40 +309,50 @@ class PrecisionRallyDetector:
             elif response.status_code == 429:
                 print(f"❌ 429 Rate Limited - Wait and retry")
                 return None
+            elif response.status_code == 404:
+                print(f"❌ 404 Not Found - No chart data available")
+                return None
             
             response.raise_for_status()
             data = response.json()
             
-            if not data.get('success'):
-                print(f"❌ Birdeye API error: {data}")
-                return None
+            oclhv = data.get('oclhv', [])
             
-            items = data.get('data', {}).get('items', [])
-            
-            if not items:
+            if not oclhv:
                 print("❌ No candlestick data returned")
                 return None
             
-            print(f"✓ Retrieved {len(items)} {candle_size} candles")
-            print(f"✓ Time range: {datetime.fromtimestamp(items[0]['unix_time'])} to {datetime.fromtimestamp(items[-1]['unix_time'])}")
-            
-            # Normalize field names (v3 API already has correct format)
-            normalized_items = []
-            for item in items:
-                normalized_items.append({
-                    'unix_time': item.get('unix_time', 0),
-                    'o': item.get('o', 0),
-                    'h': item.get('h', 0),
-                    'l': item.get('l', 0),
-                    'c': item.get('c', 0),
-                    'v': item.get('v', 0),
-                    'v_usd': item.get('v', 0) * item.get('c', 0)  # Approximate USD volume
+            # Normalize SolanaTracker format to match existing structure
+            normalized = []
+            for c in oclhv:
+                timestamp = c['time'] // 1000  # Convert ms to seconds
+                close_price = c['close']
+                volume = c['volume']
+                
+                normalized.append({
+                    'unix_time': timestamp,
+                    'o': c['open'],
+                    'h': c['high'],
+                    'l': c['low'],
+                    'c': close_price,
+                    'v': volume,
+                    'v_usd': volume * close_price
                 })
             
-            return normalized_items
+            print(f"✓ Retrieved {len(normalized)} {candle_size} candles")
+            
+            if len(normalized) > 0:
+                first_time = datetime.fromtimestamp(normalized[0]['unix_time'])
+                last_time = datetime.fromtimestamp(normalized[-1]['unix_time'])
+                print(f"✓ Time range: {first_time} to {last_time}")
+            
+            return normalized
             
         except requests.exceptions.RequestException as e:
             print(f"❌ Error fetching OHLCV data: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
             return None
     
     def get_volume_baseline(self, ohlcv_data, current_idx, lookback=15):
@@ -550,31 +698,31 @@ class PrecisionRallyDetector:
     
     def analyze_token(self, token_address, days_back=30, candle_size='5m'):
         """
-        SIMPLIFIED: Main analysis function with simple parameters
+        Main analysis function with simple parameters
         
         Args:
-            token_address: Token contract address
+            token_address: Solana token contract address
             days_back: Number of days to analyze (1-90)
             candle_size: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
         
         Returns:
             List of detected rallies
         """
-        pair_data = self.get_token_data(token_address)
-        if not pair_data:
+        # Get token metadata first
+        token_data = self.get_token_data(token_address)
+        
+        if not token_data:
+            print("❌ Could not fetch token metadata")
             return None
         
-        # FIXED: Use pair address, not token mint
-        pair_address = pair_data['pairAddress']
-        chain_id = pair_data['chainId']
-        chain_name = self.get_chain_name(chain_id)
+        # Get OHLCV data
+        ohlcv_data = self.get_ohlcv_data(token_address, days_back, candle_size)
         
-        print(f"\nUsing pair address: {pair_address}")
-        
-        ohlcv_data = self.get_ohlcv_data(pair_address, chain_name, days_back, candle_size)
         if not ohlcv_data:
+            print("❌ Could not fetch OHLCV data")
             return None
         
+        # Detect rallies
         rallies = self.detect_all_rallies(ohlcv_data)
         self.display_rallies(rallies)
         
