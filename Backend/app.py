@@ -16,20 +16,20 @@ import statistics
 import sqlite3
 
 # Existing imports
-from twitter_api_pool import TwitterAPIKeyPool
-from tweet_extractor import TwitterTweetExtractor
-from rally_tweet_connector import RallyTweetConnector
-from pump_detector import PrecisionRallyDetector
-from nlp_disambiguator import NLPDisambiguator
+from .twitter import TwitterAPIKeyPool
+from .twitter import TwitterTweetExtractor
+from .twitter import RallyTweetConnector
+from .analyzers import PrecisionRallyDetector
+from .analyzers import NLPDisambiguator
 
 # Watchlist Database
-from watchlist_db import WatchlistDatabase
+from .db import WatchlistDatabase
 
 # CORRECTED: Wallet analyzer with 6-step analysis
-from wallet_analyzer import WalletPumpAnalyzer
+from .services import WalletPumpAnalyzer
 
 # Wallet Activity Monitor
-from wallet_monitor import (
+from .services import (
     WalletActivityMonitor,
     get_recent_wallet_activity,
     get_user_notifications,
@@ -457,8 +457,8 @@ def analyze_wallets():
     MAIN ANALYSIS ROUTE
     
     Routes to:
-    - PUMP MODE: Rally window analysis (unchanged)
-    - GENERAL MODE: Professional 6-step batch analysis
+    - Single token: analyze_token_professional
+    - Multiple tokens: batch_analyze_runners_professional
     """
     try:
         data = request.json
@@ -473,21 +473,51 @@ def analyze_wallets():
         mode = global_settings.get('mode', 'general')
         min_roi_multiplier = global_settings.get('min_roi_multiplier', 3.0)
         
-        print(f"\n{'='*100}")
-        print(f"MAIN ANALYSIS - MODE: {mode.upper()}")
-        print(f"Tokens: {len(tokens)}")
-        print(f"{'='*100}")
-        
         if wallet_analyzer is None:
             initialize_wallet_analyzer()
         
-        if mode == 'pump':
-            print("Routing to PUMP MODE (rally windows)")
-            # TODO: Implement pump mode routing
-            return jsonify({'error': 'Pump mode not yet implemented'}), 501
-        else:
-            print("Routing to PROFESSIONAL GENERAL MODE (6-step batch)")
-            return _analyze_general_mode_professional(tokens, min_roi_multiplier, user_id)
+        # Single token: use analyze_token_professional
+        if len(tokens) == 1:
+            token = tokens[0]
+            
+            print(f"\n{'='*80}")
+            print(f"SINGLE TOKEN ANALYSIS (6-STEP): {token['ticker']}")
+            print(f"{'='*80}")
+            
+            wallets = wallet_analyzer.analyze_token_professional(
+                token_address=token['address'],
+                token_symbol=token['ticker'],
+                min_roi_multiplier=min_roi_multiplier,
+                user_id=user_id
+            )
+            
+            return jsonify({
+                'success': True,
+                'summary': {
+                    'tokens_analyzed': 1,
+                    'qualified_wallets': len(wallets),
+                    'min_roi_used': min_roi_multiplier,
+                    'avg_professional_score': round(sum(w['professional_score'] for w in wallets)/len(wallets) if wallets else 0, 2),
+                    'a_plus_wallets': sum(1 for w in wallets if w.get('professional_grade') == 'A+')
+                },
+                'top_wallets': wallets[:100],
+                'settings': {
+                    'mode': 'professional_single_6step',
+                    'features': {
+                        'professional_scoring': '60% Timing, 30% Profit, 10% Overall',
+                        '30day_runner_tracking': True,
+                        'dropdown_data': True,
+                        'birdeye_depth': True
+                    }
+                }
+            }), 200
+        
+        # Multiple tokens: batch analysis
+        print(f"\n{'='*80}")
+        print(f"BATCH ANALYSIS: {len(tokens)} tokens")
+        print(f"{'='*80}")
+        
+        return _analyze_general_mode_professional(tokens, min_roi_multiplier, user_id)
         
     except Exception as e:
         print(f"\n[MAIN ANALYSIS ERROR] {str(e)}")
