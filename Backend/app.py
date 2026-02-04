@@ -16,20 +16,20 @@ import statistics
 import sqlite3
 
 # Existing imports
-from .twitter import TwitterAPIKeyPool
-from .twitter import TwitterTweetExtractor
-from .twitter import RallyTweetConnector
-from .analyzers import PrecisionRallyDetector
-from .analyzers import NLPDisambiguator
+from twitter.twitter_api_pool import TwitterAPIKeyPool
+from twitter.tweet_extractor import TwitterTweetExtractor
+from twitter.rally_tweet_connector import RallyTweetConnector
+from analyzers.pump_detector import PrecisionRallyDetector
+from analyzers.nlp_disambiguator import NLPDisambiguator
 
 # Watchlist Database
-from .db import WatchlistDatabase
+from db.watchlist_db import WatchlistDatabase
 
 # CORRECTED: Wallet analyzer with 6-step analysis
-from .services import WalletPumpAnalyzer
+from services.wallet_analyzer import WalletPumpAnalyzer
 
 # Wallet Activity Monitor
-from .services import (
+from services.wallet_monitor import (
     WalletActivityMonitor,
     get_recent_wallet_activity,
     get_user_notifications,
