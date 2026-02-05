@@ -1,5 +1,5 @@
 """Supabase client service for database operations."""
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 from config import Config
 
 
@@ -23,13 +23,8 @@ def get_supabase_client() -> Client:
                 "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY."
             )
 
-        # Import ClientOptions here to handle potential import differences
-        try:
-            from supabase.lib.client_options import ClientOptions
-            options = ClientOptions().replace(schema=SCHEMA_NAME)
-        except ImportError:
-            # Fallback for older versions - schema will be handled via API config
-            options = None
+        # Use ClientOptions with schema for database isolation
+        options = ClientOptions(schema=SCHEMA_NAME)
 
         _supabase_client = create_client(
             Config.SUPABASE_URL,
