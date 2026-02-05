@@ -1,0 +1,86 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  DEPLOY_PATH: /var/www/sifter-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create .env file
+        run: |
+          echo "${{ secrets.ENV_FILE }}" > Backend/.env
+          chmod 600 Backend/.env
+
+      - name: Deploy with rsync
+        run: |
+          rsync -avz --delete \
+            --exclude '.venv' \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude 'logs/' \
+            --exclude '*.db' \
+            --exclude '.git' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            Backend/ \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ env.DEPLOY_PATH }}/
+
+      - name: Install dependencies and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            cd ${{ env.DEPLOY_PATH }}
+
+            # Secure .env file permissions
+            chmod 600 .env
+
+            # Create venv if not exists
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
+            fi
+
+            # Install/update dependencies
+            source .venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+
+            # Create logs directory
+            mkdir -p logs
+
+            # Restart PM2 process
+            pm2 restart sifter-backend || pm2 start ecosystem.config.js
+
+            echo "Deployment complete!"
+          ENDSSH
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -f http://${{ secrets.SERVER_HOST }}:5000/health || exit 1
+          echo "Health check passed!"
+
+      - name: Cleanup sensitive files
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          rm -f Backend/.env
