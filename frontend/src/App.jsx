@@ -4,6 +4,7 @@ import { useAuth } from './contexts/AuthContext';
 import Auth from './components/Auth';
 import WalletActivityMonitor from './WalletActivityMonitor';
 import WalletAlertSettings from './WalletAlertSettings';
+import TelegramSettings from './TelegramSettings';
 import walletActivityService from './WalletActivityService';
 
 export default function SifterKYS() {
@@ -1666,6 +1667,11 @@ export default function SifterKYS() {
                 </div>
               </div>
             )}
+
+            {/* Telegram Settings Section */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <TelegramSettings userId={userId} apiUrl={API_URL} />
+            </div>
 
             {walletWatchlist.length === 0 ? (
               <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">

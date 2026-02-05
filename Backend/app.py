@@ -9,7 +9,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from config import Config
-from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp
+from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
 
 
 def get_rate_limit_key():
@@ -39,6 +39,7 @@ def create_app() -> Flask:
     app.register_blueprint(watchlist_bp)
     app.register_blueprint(wallets_bp)
     app.register_blueprint(health_bp)
+    app.register_blueprint(telegram_bp)
 
     # Apply rate limits to specific endpoints
     _apply_rate_limits(limiter)
@@ -72,6 +73,9 @@ def _apply_rate_limits(limiter: Limiter):
     # Health endpoint exempt from rate limiting
     limiter.exempt(health_bp)
 
+    # Telegram webhook exempt from rate limiting (needs to be fast)
+    limiter.exempt(telegram_bp)
+
 
 def _register_error_handlers(app: Flask):
     """Register error handlers."""
@@ -96,7 +100,7 @@ def print_startup_banner():
     """Print startup banner with configuration status."""
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
-║     SIFTER KYS API SERVER v6.0 - AUTH + WALLET MONITORING       ║
+║   SIFTER KYS API SERVER v7.0 - AUTH + WALLET + TELEGRAM         ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 Features:
@@ -105,11 +109,13 @@ Features:
   - Twitter caller analysis
   - Wallet analysis with ATH scoring
   - Real-time wallet activity monitoring
+  - Telegram alerts integration
 
 Rate Limits:
   - /api/analyze: 5/hour, 20/day
   - /api/wallets/*: 5/hour
   - /api/watchlist/*: 30-60/hour
+  - /api/telegram/*: exempt (webhook)
   - Default: 50/hour, 200/day
 
 Configuration Status:
@@ -129,6 +135,12 @@ Configuration Status:
         print("  [OK] Supabase Auth: Configured")
     else:
         print("  [!]  Supabase Auth: NOT CONFIGURED (auth middleware disabled)")
+
+    telegram_token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+    if telegram_token:
+        print(f"  [OK] Telegram Bot: Configured ({telegram_token[:10]}...)")
+    else:
+        print("  [!]  Telegram Bot: NOT CONFIGURED (alerts disabled)")
 
 
 # Create the application instance

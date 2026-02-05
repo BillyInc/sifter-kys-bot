@@ -3,5 +3,8 @@ from .analyze import analyze_bp
 from .watchlist import watchlist_bp
 from .health import health_bp
 from .wallets import wallets_bp
+from .telegram import telegram_bp  # ← ADD THIS LINE
 
-__all__ = ['analyze_bp', 'watchlist_bp', 'health_bp', 'wallets_bp']
+
+__all__ = ['analyze_bp', 'watchlist_bp', 'health_bp', 'wallets_bp','telegram_bp'  # ← ADD THIS LINE
+]
