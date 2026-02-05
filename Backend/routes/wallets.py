@@ -20,13 +20,16 @@ def get_watchlist_db():
 
 
 def get_wallet_analyzer():
-    """Get or create wallet analyzer instance."""
+    """Get or create wallet analyzer instance (enhanced with 6-step professional analysis)."""
     global _wallet_analyzer
     if _wallet_analyzer is None:
         from services.wallet_analyzer import WalletPumpAnalyzer
         _wallet_analyzer = WalletPumpAnalyzer(
-            birdeye_api_key=Config.BIRDEYE_API_KEY
+            solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
+            birdeye_api_key=Config.BIRDEYE_API_KEY,
+            debug_mode=True
         )
+        print("[WALLET ANALYZER] Initialized with 6-step professional analysis")
     return _wallet_analyzer
 
 
@@ -522,4 +525,231 @@ def force_check_wallet():
         }), 200
 
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# PROFESSIONAL 6-STEP ANALYSIS ENDPOINTS (Enhanced)
+# =============================================================================
+
+@wallets_bp.route('/analyze/single', methods=['POST'])
+@optional_auth
+def analyze_single_token():
+    """Single token with professional 6-step analysis + 30-day dropdown."""
+    try:
+        import traceback
+
+        data = request.json
+        if not data.get('token'):
+            return jsonify({'error': 'token object required'}), 400
+
+        token = data['token']
+        min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
+        user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+
+        wallet_analyzer = get_wallet_analyzer()
+
+        print(f"\n{'='*80}")
+        print(f"SINGLE TOKEN ANALYSIS (6-STEP): {token.get('ticker', 'UNKNOWN')}")
+        print(f"{'='*80}")
+
+        wallets = wallet_analyzer.analyze_token_professional(
+            token_address=token['address'],
+            token_symbol=token.get('ticker', 'UNKNOWN'),
+            min_roi_multiplier=min_roi_multiplier,
+            user_id=user_id
+        )
+
+        return jsonify({
+            'success': True,
+            'token': token,
+            'wallets': wallets[:50],
+            'total_wallets': len(wallets),
+            'mode': 'professional_general_6step',
+            'data_source': '6-Step Professional Analyzer',
+            'features': {
+                'professional_scoring': '60% Timing, 30% Profit, 10% Overall',
+                '30day_runner_tracking': True,
+                'dropdown_data': True,
+                'birdeye_depth': True
+            },
+            'professional_summary': {
+                'avg_professional_score': round(sum(w.get('professional_score', 0) for w in wallets)/len(wallets) if wallets else 0, 2),
+                'a_plus_wallets': sum(1 for w in wallets if w.get('professional_grade') == 'A+'),
+                'avg_runner_hits': round(sum(w.get('runner_hits_30d', 0) for w in wallets)/len(wallets) if wallets else 0, 1)
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"\n[SINGLE TOKEN ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/trending/runners', methods=['GET'])
+@optional_auth
+def get_trending_runners():
+    """Enhanced trending runners with professional discovery."""
+    try:
+        import traceback
+
+        timeframe = request.args.get('timeframe', '24h')
+        min_liquidity = float(request.args.get('min_liquidity', 50000))
+        min_multiplier = float(request.args.get('min_multiplier', 5))
+        min_age_days = int(request.args.get('min_age_days', 0))
+        max_age_days_raw = request.args.get('max_age_days', None)
+        max_age_days = int(max_age_days_raw) if max_age_days_raw else 30
+
+        wallet_analyzer = get_wallet_analyzer()
+
+        print(f"\n{'='*80}")
+        print(f"TRENDING RUNNERS DISCOVERY")
+        print(f"Timeframe: {timeframe} | Min: {min_multiplier}x")
+        print(f"{'='*80}")
+
+        days_map = {'24h': 1, '7d': 7, '30d': 30}
+        days_back = days_map.get(timeframe, 7)
+
+        runners = wallet_analyzer.find_trending_runners_enhanced(
+            days_back=days_back,
+            min_multiplier=min_multiplier,
+            min_liquidity=min_liquidity
+        )
+
+        filtered_runners = [
+            r for r in runners
+            if r.get('token_age_days', 0) >= min_age_days
+            and r.get('token_age_days', 0) <= max_age_days
+        ]
+
+        print(f"Found {len(filtered_runners)} trending runners")
+
+        return jsonify({
+            'success': True,
+            'runners': filtered_runners,
+            'total': len(filtered_runners),
+            'data_source': 'Professional Trending Discovery',
+            'filters_applied': {
+                'timeframe': timeframe,
+                'min_liquidity': min_liquidity,
+                'min_multiplier': min_multiplier,
+                'min_age_days': min_age_days,
+                'max_age_days': max_age_days
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"\n[TRENDING RUNNERS ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/trending/analyze', methods=['POST'])
+@optional_auth
+def analyze_trending_runner():
+    """Analyze a single trending runner using 6-step professional analysis."""
+    try:
+        import traceback
+
+        data = request.json
+        if not data.get('runner'):
+            return jsonify({'error': 'runner object required'}), 400
+
+        runner = data['runner']
+        min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
+        user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+
+        wallet_analyzer = get_wallet_analyzer()
+
+        print(f"\n{'='*80}")
+        print(f"RUNNER ANALYSIS (6-STEP): {runner.get('symbol', 'UNKNOWN')}")
+        print(f"{'='*80}")
+
+        wallets = wallet_analyzer.analyze_token_professional(
+            token_address=runner['address'],
+            token_symbol=runner.get('symbol', 'UNKNOWN'),
+            min_roi_multiplier=min_roi_multiplier,
+            user_id=user_id
+        )
+
+        return jsonify({
+            'success': True,
+            'runner': runner,
+            'wallets': wallets[:50],
+            'total_wallets': len(wallets),
+            'mode': 'professional_runner_6step',
+            'professional_summary': {
+                'avg_professional_score': round(sum(w.get('professional_score', 0) for w in wallets)/len(wallets) if wallets else 0, 2),
+                'a_plus_wallets': sum(1 for w in wallets if w.get('professional_grade') == 'A+'),
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"\n[RUNNER ANALYSIS ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/discover', methods=['POST'])
+@optional_auth
+def auto_discover_wallets():
+    """Auto-discover professional wallets using trending runners."""
+    try:
+        import traceback
+
+        data = request.json or {}
+        user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        min_runner_hits = data.get('min_runner_hits', 2)
+        days_back = data.get('days_back', 7)
+        min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
+
+        wallet_analyzer = get_wallet_analyzer()
+
+        print(f"\n{'='*80}")
+        print(f"AUTO-DISCOVER WALLETS (Professional)")
+        print(f"Days: {days_back} | Min Hits: {min_runner_hits}")
+        print(f"{'='*80}")
+
+        # Step 1: Find trending runners
+        runners = wallet_analyzer.find_trending_runners_enhanced(
+            days_back=days_back,
+            min_multiplier=5.0,
+            min_liquidity=50000
+        )
+
+        if not runners:
+            return jsonify({
+                'success': False,
+                'error': 'No trending runners found'
+            }), 200
+
+        print(f"Found {len(runners)} trending runners, analyzing...")
+
+        # Step 2: Batch analyze runners
+        smart_money = wallet_analyzer.batch_analyze_runners_professional(
+            runners_list=runners[:10],  # Limit to top 10 runners
+            min_runner_hits=min_runner_hits,
+            min_roi_multiplier=min_roi_multiplier,
+            user_id=user_id
+        )
+
+        return jsonify({
+            'success': True,
+            'runners_analyzed': min(len(runners), 10),
+            'wallets_discovered': len(smart_money),
+            'top_wallets': smart_money[:50],
+            'discovery_settings': {
+                'days_back': days_back,
+                'min_runner_hits': min_runner_hits,
+                'min_roi_multiplier': min_roi_multiplier
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"\n[DISCOVER ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500

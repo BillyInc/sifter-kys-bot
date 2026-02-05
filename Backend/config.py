@@ -11,6 +11,7 @@ class Config:
     # API Keys
     TWITTER_BEARER_TOKEN = os.environ.get('TWITTER_BEARER_TOKEN', '')
     BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', '')
+    SOLANATRACKER_API_KEY = os.environ.get('SOLANATRACKER_API_KEY', '')
 
     # Rate limiting
     RATELIMIT_STORAGE_URI = "memory://"
@@ -46,3 +47,8 @@ class Config:
     def is_birdeye_configured(cls) -> bool:
         """Check if Birdeye API is properly configured."""
         return bool(cls.BIRDEYE_API_KEY)
+
+    @classmethod
+    def is_solanatracker_configured(cls) -> bool:
+        """Check if SolanaTracker API is properly configured."""
+        return bool(cls.SOLANATRACKER_API_KEY)
