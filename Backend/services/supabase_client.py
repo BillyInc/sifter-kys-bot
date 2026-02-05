@@ -26,8 +26,8 @@ def get_supabase_client() -> Client:
         # Import ClientOptions here to handle potential import differences
         try:
             from supabase.lib.client_options import ClientOptions
-            options = ClientOptions().replace(schema=SCHEMA_NAME)
-        except ImportError:
+            options = ClientOptions(schema=SCHEMA_NAME)
+        except (ImportError, TypeError):
             # Fallback for older versions - schema will be handled via API config
             options = None
 
