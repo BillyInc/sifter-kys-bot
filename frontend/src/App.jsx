@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders } from 'lucide-react';
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
+import TelegramSettings from './TelegramSettings';
+
 
 export default function SifterKYS() {
   // ========== MODE TOGGLE ==========
@@ -53,6 +55,8 @@ export default function SifterKYS() {
   
   // ========== WALLET ALERTS ==========
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
+  const [activeSettingsTab, setActiveSettingsTab] = useState('telegram'); // NEW
+
   
   // ========== TRENDING RUNNERS ==========
   const [trendingRunners, setTrendingRunners] = useState([]);
@@ -845,10 +849,13 @@ export default function SifterKYS() {
         <div className="flex gap-3 mb-6 border-b border-white/10">
           {[
             { id: 'analyze', label: 'Analyze', icon: Search },
+            
+
             { id: 'results', label: `${mode === 'twitter' ? 'Twitter' : 'Wallet'} Results`, icon: BarChart3 },
             { id: 'trending', label: 'Trending Runners', icon: TrendingUp },
             { id: 'discover', label: 'Auto Discovery', icon: Zap },
             { id: 'watchlist', label: 'Watchlist', icon: BookmarkPlus },
+            { id: 'settings', label: 'Settings', icon: Settings },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1884,6 +1891,41 @@ export default function SifterKYS() {
                   </div>
                 )}
               </div>
+            )}
+          </div>
+        )}
+{/* ========== WATCHLIST TAB ========== */}
+        {activeTab === 'watchlist' && (
+          <div className="space-y-4">
+            <div className="bg-white/5 border border-white/10 rounded-xl p-6 text-center">
+              <BookmarkPlus className="mx-auto mb-4 text-gray-400" size={48} />
+              <h3 className="text-lg font-semibold mb-2">Watchlist</h3>
+              <p className="text-sm text-gray-400">
+                Your saved {mode === 'twitter' ? 'Twitter accounts' : 'wallets'} will appear here
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ========== SETTINGS TAB ========== */}
+        {activeTab === 'settings' && (
+          <div className="space-y-4">
+            <div className="flex gap-3 border-b border-white/10 mb-4">
+              <button
+                onClick={() => setActiveSettingsTab('telegram')}
+                className={`px-4 py-2 border-b-2 transition text-sm ${
+                  activeSettingsTab === 'telegram'
+                    ? 'border-purple-500 text-white'
+                    : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                📱 Telegram
+              </button>
+              {/* Add more setting tabs here later */}
+            </div>
+
+            {activeSettingsTab === 'telegram' && (
+              <TelegramSettings userId={userId} apiUrl={API_URL} />
             )}
           </div>
         )}

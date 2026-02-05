@@ -1,6 +1,3 @@
-# app.py - COMPLETE SIFTER KYS BACKEND v17.0
-# CORRECTED: Uses actual 6-step analysis from Document 6
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
@@ -19,17 +16,17 @@ import sqlite3
 from twitter.twitter_api_pool import TwitterAPIKeyPool
 from twitter.tweet_extractor import TwitterTweetExtractor
 from twitter.rally_tweet_connector import RallyTweetConnector
-from analyzers.pump_detector import PrecisionRallyDetector
-from analyzers.nlp_disambiguator import NLPDisambiguator
+from analyzers import PrecisionRallyDetector
+from analyzers import NLPDisambiguator
 
 # Watchlist Database
-from db.watchlist_db import WatchlistDatabase
+from db import WatchlistDatabase
 
 # CORRECTED: Wallet analyzer with 6-step analysis
 from services.wallet_analyzer import WalletPumpAnalyzer
 
 # Wallet Activity Monitor
-from services.wallet_monitor import (
+from services import (
     WalletActivityMonitor,
     get_recent_wallet_activity,
     get_user_notifications,
@@ -37,6 +34,10 @@ from services.wallet_monitor import (
     mark_all_notifications_read,
     update_alert_settings
 )
+
+# ✨ NEW: Telegram integration
+from services.telegram_notifier import TelegramNotifier
+from routes.telegram import telegram_bp
 
 app = Flask(__name__)
 CORS(app)
@@ -76,6 +77,9 @@ TWITTER_API_KEYS = [
 BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', 'a49c49de31d34574967c13bd35f3c523')
 SOLANATRACKER_API_KEY = os.environ.get('SOLANATRACKER_API_KEY', '902ebe8e-8142-49aa-a3d8-32ac792bf325')
 
+# ✨ NEW: Telegram bot token
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk')
+
 # =============================================================================
 # INITIALIZE GLOBAL OBJECTS
 # =============================================================================
@@ -84,11 +88,11 @@ twitter_api_pool = TwitterAPIKeyPool(TWITTER_API_KEYS, cooldown_minutes=15)
 watchlist_db = WatchlistDatabase(db_path='watchlists.db')
 wallet_monitor = None
 wallet_analyzer = None
+telegram_notifier = None  # ✨ NEW
 
 def initialize_wallet_analyzer():
     """Initialize the professional wallet analyzer with 6-step analysis"""
     global wallet_analyzer
-    
     if wallet_analyzer is None:
         print("\n" + "="*80)
         print("INITIALIZING WALLET ANALYZER (6-STEP PROFESSIONAL)")
@@ -104,43 +108,80 @@ def initialize_wallet_analyzer():
 ╔══════════════════════════════════════════════════════════════════╗
 ║        6-STEP PROFESSIONAL WALLET ANALYZER INITIALIZED          ║
 ╚══════════════════════════════════════════════════════════════════╝
-
 📋 THE 6 STEPS:
-  1. Fetch top traders + first buy timestamps
-  2. Fetch first buyers + entry prices
-  3. Fetch Birdeye historical trades (30 days)
-  4. Fetch recent Solana Tracker trades
-  5. Fetch PnL, filter ≥3x ROI AND ≥$100 invested
-  6. Rank by professional score (60/30/10)
+   1. Fetch top traders + first buy timestamps
+   2. Fetch first buyers + entry prices
+   3. Fetch Birdeye historical trades (30 days)
+   4. Fetch recent Solana Tracker trades
+   5. Fetch PnL, filter ≥3x ROI AND ≥$100 invested
+   6. Rank by professional score (60/30/10)
 
 ✨ FEATURES:
-  ✓ Professional scoring (60% timing, 30% profit, 10% overall)
-  ✓ 30-day runner tracking with verification
-  ✓ Cross-runner consistency grading
-  ✓ Batch analysis with variance tracking
-  ✓ Dropdown data for frontend
+   ✓ Professional scoring (60% timing, 30% profit, 10% overall)
+   ✓ 30-day runner tracking with verification
+   ✓ Cross-runner consistency grading
+   ✓ Batch analysis with variance tracking
+   ✓ Dropdown data for frontend
 
 🔗 DATA SOURCES:
-  ✓ SolanaTracker: Top traders, first buyers, recent trades, PnL
-  ✓ Birdeye: Historical trades (30-day depth)
+   ✓ SolanaTracker: Top traders, first buyers, recent trades, PnL
+   ✓ Birdeye: Historical trades (30-day depth)
+""")
+
+# ✨ NEW: Initialize Telegram notifier
+def initialize_telegram_notifier():
+    """Initialize Telegram notifier for sending alerts"""
+    global telegram_notifier
+    if telegram_notifier is None and TELEGRAM_BOT_TOKEN:
+        print("\n" + "="*80)
+        print("INITIALIZING TELEGRAM NOTIFIER")
+        print("="*80)
+        
+        telegram_notifier = TelegramNotifier(
+            bot_token=TELEGRAM_BOT_TOKEN,
+            db_path='watchlists.db'
+        )
+        
+        print(f"""
+╔══════════════════════════════════════════════════════════════════╗
+║              TELEGRAM ALERTS SYSTEM INITIALIZED                 ║
+╚══════════════════════════════════════════════════════════════════╝
+✨ FEATURES:
+   ✓ Real-time wallet activity alerts
+   ✓ Copy-trade button integration
+   ✓ User account linking via codes
+   ✓ Interactive inline buttons
+
+📱 BOT INFO:
+   Token: {TELEGRAM_BOT_TOKEN[:20]}...
+
+🔗 SETUP:
+   1. Users go to Telegram
+   2. Search for your bot
+   3. Send /start
+   4. Enter connection code from dashboard
 """)
 
 def initialize_wallet_monitor():
     """Initialize and start the wallet monitor"""
     global wallet_monitor
-    
     if wallet_monitor is None:
         print("\n" + "="*80)
         print("INITIALIZING WALLET MONITOR")
         print("="*80)
         
+        # ✨ MODIFIED: Pass telegram_notifier to wallet monitor
         wallet_monitor = WalletActivityMonitor(
             solanatracker_api_key=SOLANATRACKER_API_KEY,
             db_path='watchlists.db',
-            poll_interval=120
+            poll_interval=120,
+            telegram_notifier=telegram_notifier  # ✨ ADD THIS
         )
         
         wallet_monitor.start()
+
+# ✨ NEW: Register Telegram blueprint
+app.register_blueprint(telegram_bp)
 
 # =============================================================================
 # SINGLE TOKEN ANALYSIS - Uses 6-step professional analysis
@@ -151,7 +192,6 @@ def analyze_single_token():
     """Single token with professional 6-step analysis + 30-day dropdown"""
     try:
         data = request.json
-        
         if not data.get('token'):
             return jsonify({'error': 'token object required'}), 400
         
@@ -214,7 +254,7 @@ def _analyze_general_mode_professional(tokens, min_roi_multiplier, user_id):
     
     if wallet_analyzer is None:
         initialize_wallet_analyzer()
-    
+
     # Convert tokens to runner format
     runners_list = []
     for token in tokens:
@@ -228,7 +268,7 @@ def _analyze_general_mode_professional(tokens, min_roi_multiplier, user_id):
             'ath_price': ath_data.get('highest_price', 0) if ath_data else 0,
             'ath_time': ath_data.get('timestamp', 0) if ath_data else 0
         })
-    
+
     # Use batch 6-step analysis
     smart_money = wallet_analyzer.batch_analyze_runners_professional(
         runners_list=runners_list,
@@ -236,12 +276,12 @@ def _analyze_general_mode_professional(tokens, min_roi_multiplier, user_id):
         min_roi_multiplier=min_roi_multiplier,
         user_id=user_id
     )
-    
+
     print(f"\n{'='*80}")
     print(f"BATCH ANALYSIS COMPLETE")
     print(f"  Qualified wallets: {len(smart_money)}")
     print(f"{'='*80}")
-    
+
     return jsonify({
         'success': True,
         'summary': {
@@ -336,7 +376,6 @@ def analyze_runner():
     """
     try:
         data = request.json
-        
         if not data.get('runner'):
             return jsonify({'error': 'runner object required'}), 400
         
@@ -393,14 +432,14 @@ def _auto_discover_wallets_professional(user_id, min_runner_hits, days_back):
     
     if wallet_analyzer is None:
         initialize_wallet_analyzer()
-    
+
     print("  Discovering runners...")
     runners = wallet_analyzer.find_trending_runners_enhanced(
         days_back=days_back,
         min_multiplier=5.0,
         min_liquidity=50000
     )
-    
+
     if not runners:
         return jsonify({
             'success': True,
@@ -408,12 +447,12 @@ def _auto_discover_wallets_professional(user_id, min_runner_hits, days_back):
             'total_wallets': 0,
             'error': 'No runners found in period'
         }), 200
-    
+
     print(f"  Found {len(runners)} runners")
-    
+
     runners_to_analyze = runners[:15]
     print(f"  Analyzing top {len(runners_to_analyze)} runners with 6-step analysis")
-    
+
     # Use batch 6-step analysis
     smart_money = wallet_analyzer.batch_analyze_runners_professional(
         runners_list=runners_to_analyze,
@@ -421,9 +460,9 @@ def _auto_discover_wallets_professional(user_id, min_runner_hits, days_back):
         min_roi_multiplier=3.0,
         user_id=user_id
     )
-    
+
     print(f"\n  ✅ Found {len(smart_money)} smart money wallets")
-    
+
     return jsonify({
         'success': True,
         'smart_money_wallets': smart_money[:50],
@@ -455,7 +494,6 @@ def _auto_discover_wallets_professional(user_id, min_runner_hits, days_back):
 def analyze_wallets():
     """
     MAIN ANALYSIS ROUTE
-    
     Routes to:
     - Single token: analyze_token_professional
     - Multiple tokens: batch_analyze_runners_professional
@@ -558,6 +596,7 @@ def get_twitter_watchlist_route():
         user_id = request.args.get('user_id')
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
+        
         accounts = watchlist_db.get_watchlist(user_id)
         return jsonify({'success': True, 'accounts': accounts}), 200
     except Exception as e:
@@ -569,6 +608,7 @@ def get_wallet_watchlist_route():
         user_id = request.args.get('user_id')
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
+        
         wallets = watchlist_db.get_wallet_watchlist(user_id)
         return jsonify({'success': True, 'wallets': wallets}), 200
     except Exception as e:
@@ -613,10 +653,16 @@ def health_check():
         initialize_wallet_monitor()
     
     monitor_stats = wallet_monitor.get_monitoring_stats()
-    
+
+    # ✨ NEW: Telegram status
+    telegram_status = {
+        'enabled': telegram_notifier is not None,
+        'bot_token_set': bool(TELEGRAM_BOT_TOKEN)
+    }
+
     return jsonify({
         'status': 'healthy',
-        'version': '17.0.0 - CORRECTED 6-STEP',
+        'version': '17.0.0 - CORRECTED 6-STEP + TELEGRAM',
         'features': {
             'six_step_analysis': True,
             'professional_scoring': True,
@@ -625,13 +671,15 @@ def health_check():
             'birdeye_depth': True,
             'trending_runners': True,
             'auto_discovery': True,
-            'real_time_monitoring': True
+            'real_time_monitoring': True,
+            'telegram_alerts': telegram_status['enabled']  # ✨ ADD THIS
         },
         'wallet_monitor': {
             'running': monitor_stats['running'],
             'active_wallets': monitor_stats['active_wallets'],
             'pending_notifications': monitor_stats['pending_notifications']
         },
+        'telegram': telegram_status,  # ✨ ADD THIS
         'analysis_pipeline': {
             'step_1': 'Top traders + first buy timestamps',
             'step_2': 'First buyers + entry prices',
@@ -651,11 +699,12 @@ def health_check():
 # =============================================================================
 
 if __name__ == '__main__':
-    print("\n🚀 Starting SIFTER KYS API Server v17.0")
-    print("   CORRECTED: Using 6-step analysis from Document 6")
+    print("\n🚀 Starting SIFTER KYS API Server v17.0 + Telegram")
+    print("   Features: 6-step analysis + Real-time Telegram alerts")
     
     initialize_wallet_analyzer()
+    initialize_telegram_notifier()  # ✨ ADD THIS (before wallet monitor!)
     initialize_wallet_monitor()
-    
+
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)

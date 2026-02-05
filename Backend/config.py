@@ -11,6 +11,7 @@ class Config:
     # API Keys
     TWITTER_BEARER_TOKEN = os.environ.get('TWITTER_BEARER_TOKEN', '')
     BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', '')
+    
 
     # Rate limiting
     RATELIMIT_STORAGE_URI = "memory://"

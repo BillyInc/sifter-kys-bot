@@ -1,10 +1,9 @@
 """
-wallet_monitor.py - Real-time Wallet Activity Monitor
-
+wallet_monitor.py - Real-time Wallet Activity Monitor + TELEGRAM ALERTS
 Continuously polls SolanaTracker API for transactions from watched wallets
 Creates notifications when activity matches user alert settings
+Sends Telegram alerts to connected users
 """
-
 import sqlite3
 import requests
 import time
@@ -12,11 +11,12 @@ import json
 from datetime import datetime
 from collections import defaultdict
 import threading
+# ✨ NEW: Import TelegramNotifier
+from services.telegram_notifier import TelegramNotifier
 
 # =============================================================================
 # DATABASE SCHEMA
 # =============================================================================
-
 def init_wallet_monitor_tables(db_path):
     """Initialize tables for wallet monitoring"""
     conn = sqlite3.connect(db_path)
@@ -37,7 +37,7 @@ def init_wallet_monitor_tables(db_path):
             UNIQUE(user_id, wallet_address)
         )
     ''')
-    
+
     # Table: wallet_activity
     # Stores all detected transactions
     cursor.execute('''
@@ -60,12 +60,9 @@ def init_wallet_monitor_tables(db_path):
             UNIQUE(tx_hash)
         )
     ''')
-    
+
     # Table: wallet_notifications
     # Stores notifications generated for users
-    # FIX: uses `read INTEGER DEFAULT 0` consistently.
-    # init_database.py previously defined this table with `read_at INTEGER DEFAULT NULL`
-    # which conflicted with every query in this file. Standardised on `read` (0/1).
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS wallet_notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,7 +76,7 @@ def init_wallet_monitor_tables(db_path):
             FOREIGN KEY (activity_id) REFERENCES wallet_activity(id)
         )
     ''')
-    
+
     # Table: wallet_monitor_status
     # Tracks monitoring status per wallet
     cursor.execute('''
@@ -92,28 +89,26 @@ def init_wallet_monitor_tables(db_path):
             last_error TEXT
         )
     ''')
-    
+
     conn.commit()
     conn.close()
 
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
-
 def get_recent_wallet_activity(db_path, limit=50):
     """Get recent wallet activity across all monitored wallets"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
     cursor.execute('''
         SELECT * FROM wallet_activity
         ORDER BY block_time DESC
         LIMIT ?
     ''', (limit,))
-    
+
     columns = [desc[0] for desc in cursor.description]
     results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    
+
     conn.close()
     return results
 
@@ -121,10 +116,6 @@ def get_user_notifications(db_path, user_id, unread_only=True):
     """Get notifications for a specific user"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
-    # FIX: query uses n.read (matches the CREATE TABLE above).
-    # Previously this worked fine here but init_database.py would create the
-    # table first with `read_at` instead, so `n.read` would not exist.
     if unread_only:
         cursor.execute('''
             SELECT n.*, a.tx_hash, a.token_ticker, a.side, a.usd_value
@@ -142,10 +133,10 @@ def get_user_notifications(db_path, user_id, unread_only=True):
             ORDER BY n.created_at DESC
             LIMIT 100
         ''', (user_id,))
-    
+
     columns = [desc[0] for desc in cursor.description]
     results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    
+
     conn.close()
     return results
 
@@ -153,13 +144,12 @@ def mark_notification_read(db_path, notification_id, user_id):
     """Mark a notification as read"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
     cursor.execute('''
         UPDATE wallet_notifications
         SET read = 1
         WHERE id = ? AND user_id = ?
     ''', (notification_id, user_id))
-    
+
     conn.commit()
     conn.close()
 
@@ -167,13 +157,12 @@ def mark_all_notifications_read(db_path, user_id):
     """Mark all notifications as read for a user"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
     cursor.execute('''
         UPDATE wallet_notifications
         SET read = 1
         WHERE user_id = ?
     ''', (user_id,))
-    
+
     conn.commit()
     conn.close()
 
@@ -181,26 +170,25 @@ def update_alert_settings(db_path, user_id, wallet_address, settings):
     """Update alert settings for a watched wallet"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
     update_fields = []
     values = []
-    
+
     if 'alert_enabled' in settings:
         update_fields.append('alert_enabled = ?')
         values.append(1 if settings['alert_enabled'] else 0)
-    
+
     if 'alert_on_buy' in settings:
         update_fields.append('alert_on_buy = ?')
         values.append(1 if settings['alert_on_buy'] else 0)
-    
+
     if 'alert_on_sell' in settings:
         update_fields.append('alert_on_sell = ?')
         values.append(1 if settings['alert_on_sell'] else 0)
-    
+
     if 'min_trade_usd' in settings:
         update_fields.append('min_trade_usd = ?')
         values.append(settings['min_trade_usd'])
-    
+
     if update_fields:
         values.extend([user_id, wallet_address])
         query = f'''
@@ -210,19 +198,17 @@ def update_alert_settings(db_path, user_id, wallet_address, settings):
         '''
         cursor.execute(query, values)
         conn.commit()
-    
+
     conn.close()
 
 # =============================================================================
 # WALLET ACTIVITY MONITOR CLASS
 # =============================================================================
-
 class WalletActivityMonitor:
     """
     Monitors watched wallets for new transactions and generates notifications
     """
-    
-    def __init__(self, solanatracker_api_key, db_path='watchlists.db', poll_interval=120):
+    def __init__(self, solanatracker_api_key, db_path='watchlists.db', poll_interval=120, telegram_notifier=None):
         """
         Initialize the wallet monitor
         
@@ -230,10 +216,14 @@ class WalletActivityMonitor:
             solanatracker_api_key: API key for SolanaTracker
             db_path: Path to SQLite database
             poll_interval: Seconds between polls (default: 120 = 2 minutes)
+            telegram_notifier: TelegramNotifier instance (optional)
         """
         self.st_key = solanatracker_api_key
         self.db_path = db_path
         self.poll_interval = poll_interval
+        
+        # ✨ NEW: Store telegram notifier
+        self.telegram_notifier = telegram_notifier
         
         # Initialize database tables
         init_wallet_monitor_tables(db_path)
@@ -243,14 +233,16 @@ class WalletActivityMonitor:
         self.monitor_thread = None
         
         print(f"  ✓ WalletActivityMonitor initialized (poll every {poll_interval}s)")
-    
+        if telegram_notifier:
+            print(f"  ✓ Telegram notifications enabled")
+
     def _get_solanatracker_headers(self):
         """Get headers for SolanaTracker API requests"""
         return {
             'accept': 'application/json',
             'x-api-key': self.st_key
         }
-    
+
     def _fetch_wallet_transactions(self, wallet_address, after_time, before_time):
         """
         Fetch recent transactions using SolanaTracker trades endpoint
@@ -312,7 +304,7 @@ class WalletActivityMonitor:
             print(f"  ❌ Error fetching trades for {wallet_address[:8]}...: {e}")
         
         return transactions
-    
+
     def _save_wallet_activity(self, wallet_address, transactions):
         """Save new transactions to database"""
         if not transactions:
@@ -359,7 +351,79 @@ class WalletActivityMonitor:
         conn.close()
         
         return activity_ids
-    
+
+    # ✨ NEW: Get wallet info from watchlist
+    def _get_wallet_info(self, user_id, wallet_address):
+        """Get wallet tier and stats from watchlist"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT tier, consistency_score
+            FROM wallet_watchlist
+            WHERE user_id = ? AND wallet_address = ?
+        ''', (user_id, wallet_address))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {'tier': result[0], 'consistency_score': result[1]}
+        return {'tier': 'C', 'consistency_score': 0}
+
+    # ✨ NEW: Send Telegram alert
+    def _send_telegram_alert(self, user_id, wallet_address, trade_data, activity_id):
+        """
+        Format and send Telegram alert to user.
+        
+        Args:
+            user_id: User ID
+            wallet_address: Wallet address
+            trade_data: Trade data dictionary
+            activity_id: Activity ID
+        """
+        if not self.telegram_notifier:
+            return
+        
+        try:
+            # Get wallet tier/stats from watchlist
+            wallet_info = self._get_wallet_info(user_id, wallet_address)
+            
+            # Format alert payload
+            alert_payload = {
+                'wallet': {
+                    'address': wallet_address,
+                    'tier': wallet_info.get('tier', 'C'),
+                    'consistency_score': wallet_info.get('consistency_score', 0)
+                },
+                'action': trade_data['side'],
+                'token': {
+                    'address': trade_data['token_address'],
+                    'symbol': trade_data['token_ticker'],
+                    'name': trade_data['token_name']
+                },
+                'trade': {
+                    'amount_tokens': trade_data['token_amount'],
+                    'amount_usd': trade_data['usd_value'],
+                    'price': trade_data['price'],
+                    'tx_hash': trade_data['tx_hash'],
+                    'dex': trade_data['dex'],
+                    'timestamp': trade_data['block_time']
+                },
+                'links': {
+                    'solscan': f"https://solscan.io/tx/{trade_data['tx_hash']}",
+                    'birdeye': f"https://birdeye.so/token/{trade_data['token_address']}",
+                    'dexscreener': f"https://dexscreener.com/solana/{trade_data['token_address']}"
+                }
+            }
+            
+            # Send to Telegram (non-blocking)
+            self.telegram_notifier.send_wallet_alert(user_id, alert_payload, activity_id)
+            print(f"  [TELEGRAM] Alert sent to user {user_id}")
+        
+        except Exception as e:
+            print(f"  ❌ Error sending Telegram alert: {e}")
+
     def _create_notifications_for_wallet(self, wallet_address, activity_ids):
         """Create notifications for users watching this wallet"""
         if not activity_ids:
@@ -381,7 +445,8 @@ class WalletActivityMonitor:
             for activity_id in activity_ids:
                 # Get activity details
                 cursor.execute('''
-                    SELECT side, usd_value, token_ticker, token_amount
+                    SELECT side, usd_value, token_ticker, token_name, token_address,
+                           token_amount, price, tx_hash, dex, block_time
                     FROM wallet_activity
                     WHERE id = ?
                 ''', (activity_id,))
@@ -390,7 +455,8 @@ class WalletActivityMonitor:
                 if not activity:
                     continue
                 
-                side, usd_value, token_ticker, token_amount = activity
+                (side, usd_value, token_ticker, token_name, token_address,
+                 token_amount, price, tx_hash, dex, block_time) = activity
                 
                 # Check alert filters
                 if side == 'buy' and not alert_on_buy:
@@ -400,20 +466,34 @@ class WalletActivityMonitor:
                 if usd_value < min_trade_usd:
                     continue
                 
-                # Create notification
+                # Create in-app notification
                 message = f"Wallet {wallet_address[:8]}... {side.upper()} {token_amount:.4f} {token_ticker} (${usd_value:.2f})"
                 
-                # FIX: inserts `read = 0` matching the CREATE TABLE definition
                 cursor.execute('''
                     INSERT INTO wallet_notifications (
                         user_id, wallet_address, activity_id, notification_type,
                         message, created_at, read
                     ) VALUES (?, ?, ?, ?, ?, ?, 0)
                 ''', (user_id, wallet_address, activity_id, side, message, int(time.time())))
+                
+                # ✨ NEW: Send Telegram alert
+                if self.telegram_notifier:
+                    self._send_telegram_alert(user_id, wallet_address, {
+                        'side': side,
+                        'token_ticker': token_ticker,
+                        'token_name': token_name,
+                        'token_address': token_address,
+                        'token_amount': token_amount,
+                        'usd_value': usd_value,
+                        'price': price,
+                        'tx_hash': tx_hash,
+                        'dex': dex,
+                        'block_time': block_time
+                    }, activity_id)
         
         conn.commit()
         conn.close()
-    
+
     def _update_monitor_status(self, wallet_address, error=None):
         """Update monitoring status for a wallet"""
         conn = sqlite3.connect(self.db_path)
@@ -440,7 +520,7 @@ class WalletActivityMonitor:
         
         conn.commit()
         conn.close()
-    
+
     def _get_watched_wallets(self):
         """Get list of all watched wallets"""
         conn = sqlite3.connect(self.db_path)
@@ -456,12 +536,14 @@ class WalletActivityMonitor:
         conn.close()
         
         return wallets
-    
+
     def _monitor_loop(self):
         """Main monitoring loop - runs in separate thread"""
         print(f"\n{'='*80}")
         print(f"WALLET MONITOR STARTED")
         print(f"Poll interval: {self.poll_interval}s")
+        if self.telegram_notifier:
+            print(f"Telegram alerts: ENABLED")
         print(f"{'='*80}\n")
         
         while self.running:
@@ -489,7 +571,7 @@ class WalletActivityMonitor:
                                 # Save to database
                                 activity_ids = self._save_wallet_activity(wallet, transactions)
                                 
-                                # Create notifications
+                                # Create notifications (includes Telegram)
                                 self._create_notifications_for_wallet(wallet, activity_ids)
                             
                             # Update status
@@ -506,7 +588,7 @@ class WalletActivityMonitor:
             except Exception as e:
                 print(f"  ❌ Monitor loop error: {e}")
                 time.sleep(60)  # Wait 1 minute on error before retrying
-    
+
     def start(self):
         """Start the monitoring thread"""
         if self.running:
@@ -518,7 +600,7 @@ class WalletActivityMonitor:
         self.monitor_thread.start()
         
         print("  ✓ Wallet monitor started")
-    
+
     def stop(self):
         """Stop the monitoring thread"""
         self.running = False
@@ -526,7 +608,7 @@ class WalletActivityMonitor:
             self.monitor_thread.join(timeout=5)
         
         print("  ✓ Wallet monitor stopped")
-    
+
     def add_watched_wallet(self, user_id, wallet_address, alert_settings=None):
         """Add a wallet to the watch list"""
         conn = sqlite3.connect(self.db_path)
@@ -551,7 +633,7 @@ class WalletActivityMonitor:
         
         conn.commit()
         conn.close()
-    
+
     def remove_watched_wallet(self, user_id, wallet_address):
         """Remove a wallet from the watch list"""
         conn = sqlite3.connect(self.db_path)
@@ -564,11 +646,11 @@ class WalletActivityMonitor:
         
         conn.commit()
         conn.close()
-    
+
     def update_alert_settings(self, user_id, wallet_address, settings):
         """Update alert settings for a watched wallet"""
         update_alert_settings(self.db_path, user_id, wallet_address, settings)
-    
+
     def get_monitoring_stats(self):
         """Get monitoring statistics"""
         conn = sqlite3.connect(self.db_path)
@@ -577,7 +659,6 @@ class WalletActivityMonitor:
         cursor.execute('SELECT COUNT(DISTINCT wallet_address) FROM watched_wallets WHERE alert_enabled = 1')
         active_wallets = cursor.fetchone()[0]
         
-        # FIX: queries `read = 0` matching the CREATE TABLE definition
         cursor.execute('SELECT COUNT(*) FROM wallet_notifications WHERE read = 0')
         pending_notifications = cursor.fetchone()[0]
         
