@@ -143,7 +143,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@example.com"
-                    className="w-full bg-black/50 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-4 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}
                   />
                 </div>
@@ -162,7 +162,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={mode === 'update-password' ? 'Enter new password' : 'Enter your password'}
-                    className="w-full bg-black/50 border border-white/10 rounded-lg pl-10 pr-12 py-3 text-sm focus:outline-none focus:border-purple-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-12 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}
                   />
                   <button
@@ -186,7 +186,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm your password"
-                    className="w-full bg-black/50 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500"
+                    className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-4 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}
                   />
                 </div>
