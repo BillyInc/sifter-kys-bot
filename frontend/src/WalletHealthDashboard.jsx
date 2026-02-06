@@ -280,38 +280,66 @@ export default function WalletHealthDashboard({
 
       {/* Compact Performance */}
       {stats && (
-        <div className="mt-3 p-3 bg-white/5 border border-white/10 rounded-lg">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-gray-400">Your avg:</span>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-white">
-                {stats.avg_watchlist_roi || stats.avg_roi_30d || 0}%
-              </span>
-              {performance.trend === 'up' && (
-                <span className="text-green-400">
-                  <ArrowUpRight size={12} className="inline" /> +{performance.change.toFixed(0)}%
+        <div className="mt-3 space-y-3">
+          {/* Performance Comparison */}
+          <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="text-gray-400">Your avg:</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-white">
+                  {stats.avg_watchlist_roi || stats.avg_roi_30d || 0}%
                 </span>
-              )}
-              {performance.trend === 'down' && (
-                <span className="text-red-400">
-                  <ArrowDownRight size={12} className="inline" /> -{performance.change.toFixed(0)}%
+                {performance.trend === 'up' && (
+                  <span className="text-green-400">
+                    <ArrowUpRight size={12} className="inline" /> +{performance.change.toFixed(0)}%
+                  </span>
+                )}
+                {performance.trend === 'down' && (
+                  <span className="text-red-400">
+                    <ArrowDownRight size={12} className="inline" /> -{performance.change.toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            {stats.platform_avg_roi && (
+              <div className="flex items-center justify-between text-xs pt-2 border-t border-white/10">
+                <span className="text-gray-400">vs Platform:</span>
+                <span className={`font-bold ${
+                  (stats.avg_watchlist_roi || stats.avg_roi_30d || 0) > stats.platform_avg_roi 
+                    ? 'text-green-400' 
+                    : 'text-red-400'
+                }`}>
+                  {stats.performance_vs_platform > 0 ? '+' : ''}{stats.performance_vs_platform}% 🎯
                 </span>
-              )}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Stats Grid */}
+          <div className="p-3 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/30 rounded-lg">
+            <div className="text-xs font-semibold text-purple-300 mb-2">📊 Quick Stats</div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div className="text-lg font-bold text-green-400">
+                  {health.healthy.length}
+                </div>
+                <div className="text-xs text-gray-400">Healthy</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-yellow-400">
+                  {health.monitoring.length}
+                </div>
+                <div className="text-xs text-gray-400">Monitoring</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-red-400">
+                  {health.critical.length}
+                </div>
+                <div className="text-xs text-gray-400">Critical</div>
+              </div>
             </div>
           </div>
-          
-          {stats.platform_avg_roi && (
-            <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
-              <span className="text-gray-400">vs Platform:</span>
-              <span className={`font-bold ${
-                (stats.avg_watchlist_roi || stats.avg_roi_30d || 0) > stats.platform_avg_roi 
-                  ? 'text-green-400' 
-                  : 'text-red-400'
-              }`}>
-                {stats.performance_vs_platform > 0 ? '+' : ''}{stats.performance_vs_platform}%
-              </span>
-            </div>
-          )}
         </div>
       )}
     </div>
