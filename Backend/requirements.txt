@@ -4,7 +4,7 @@ flask-limiter==3.5.0
 tweepy==4.14.0
 requests==2.31.0
 python-dotenv==1.0.0
-supabase==2.5.1
+supabase>=2.27.0
 PyJWT==2.8.0
 
 # Social Network Analysis
