@@ -1,5 +1,5 @@
 """Watchlist database using Supabase."""
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from typing import List, Dict, Optional
 
@@ -322,6 +322,261 @@ class WatchlistDatabase:
 
         except Exception as e:
             print(f"[WATCHLIST DB] Error updating alert settings: {e}")
+            return False
+
+    # =========================================================================
+    # PREMIER LEAGUE TABLE METHODS
+    # =========================================================================
+
+    def get_premier_league_table(self, user_id: str) -> Dict:
+        """
+        Get watchlist as Premier League-style table with rankings, form, and status.
+        Returns wallets ranked by professional_score with movement tracking.
+        """
+        try:
+            # Get current watchlist
+            result = self._table('wallet_watchlist').select('*').eq('user_id', user_id).execute()
+            
+            current_wallets = result.data
+            
+            if not current_wallets:
+                return {
+                    'wallets': [],
+                    'promotion_queue': [],
+                    'stats': {}
+                }
+            
+            # Sort by avg_roi_to_peak (or professional score if you add that field)
+            current_wallets.sort(key=lambda x: x.get('avg_roi_to_peak', 0), reverse=True)
+            
+            # Get yesterday's positions for movement tracking
+            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            
+            history_result = self._table('wallet_performance_history').select(
+                'wallet_address, position, professional_score'
+            ).eq('user_id', user_id).eq('date', yesterday).execute()
+            
+            yesterday_positions = {
+                row['wallet_address']: {
+                    'position': row['position'], 
+                    'score': row['professional_score']
+                } 
+                for row in history_result.data
+            }
+            
+            # Build table data
+            table_wallets = []
+            for idx, wallet in enumerate(current_wallets, 1):
+                wallet_address = wallet['wallet_address']
+                old_data = yesterday_positions.get(wallet_address, {})
+                old_position = old_data.get('position', idx)
+                
+                # Calculate movement
+                positions_changed = old_position - idx
+                if positions_changed > 0:
+                    movement = 'up'
+                elif positions_changed < 0:
+                    movement = 'down'
+                else:
+                    movement = 'stable'
+                
+                # Determine zone based on position
+                if idx <= 3:
+                    zone = 'champions'
+                elif idx <= 6:
+                    zone = 'midtable'
+                elif idx <= 8:
+                    zone = 'monitoring'
+                else:
+                    zone = 'relegation'
+                
+                # Get form (last 5 actions)
+                form = self._calculate_wallet_form(user_id, wallet_address)
+                
+                # Check for degradation
+                degradation_alerts = self._check_degradation(wallet, old_data)
+                status = 'healthy' if not degradation_alerts else (
+                    'critical' if any(a.get('severity') == 'critical' for a in degradation_alerts) else 'warning'
+                )
+                
+                table_wallets.append({
+                    'position': idx,
+                    'wallet_address': wallet_address,
+                    'tier': wallet.get('tier', 'C'),
+                    'professional_score': wallet.get('avg_roi_to_peak', 0),  # Using ROI as proxy for now
+                    'runners_30d': wallet.get('pump_count', 0),
+                    'roi_30d': wallet.get('avg_roi_to_peak', 0),
+                    'consistency_score': wallet.get('consistency_score', 0),
+                    'movement': movement,
+                    'positions_changed': abs(positions_changed),
+                    'zone': zone,
+                    'status': status,
+                    'degradation_alerts': degradation_alerts,
+                    'form': form
+                })
+            
+            # Calculate stats
+            avg_roi = sum(w['roi_30d'] for w in table_wallets) / len(table_wallets) if table_wallets else 0
+            
+            return {
+                'wallets': table_wallets,
+                'promotion_queue': [],  # Will implement later
+                'stats': {
+                    'avg_watchlist_roi': round(avg_roi, 2),
+                    'platform_avg_roi': 234,  # Get from platform stats
+                    'performance_vs_platform': round(avg_roi - 234, 2)
+                }
+            }
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error getting Premier League table: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'wallets': [], 'promotion_queue': [], 'stats': {}}
+
+    def _calculate_wallet_form(self, user_id: str, wallet_address: str) -> List[str]:
+        """
+        Calculate form based on last 5 wallet activities.
+        Returns list like: ['win', 'win', 'neutral', 'win', 'loss']
+        
+        Uses wallet_activity table to get recent trades and determine performance.
+        """
+        try:
+            # Get last 5 activities for this wallet
+            result = self._table('wallet_activity').select(
+                'side, usd_value, block_time, token_ticker'
+            ).eq('wallet_address', wallet_address).order(
+                'block_time', desc=True
+            ).limit(5).execute()
+            
+            activities = result.data
+            
+            if not activities or len(activities) == 0:
+                # No activity - return neutral
+                return ['neutral'] * 5
+            
+            form = []
+            
+            # Simple heuristic: 
+            # - Large buys (>$1000) = win (🟢)
+            # - Small trades ($100-$1000) = neutral (⚪)
+            # - Very small or sells = loss (🔴)
+            for activity in activities:
+                usd_value = activity.get('usd_value', 0) or 0
+                side = activity.get('side', '').lower()
+                
+                if side == 'buy' and usd_value > 1000:
+                    form.append('win')
+                elif side == 'buy' and usd_value > 100:
+                    form.append('neutral')
+                elif side == 'sell':
+                    # Could enhance: check if profitable sell
+                    form.append('loss')
+                else:
+                    form.append('neutral')
+            
+            # Pad to 5 if less than 5 activities
+            while len(form) < 5:
+                form.append('neutral')
+            
+            return form[:5]
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error calculating form: {e}")
+            # Return neutral form if error
+            return ['neutral'] * 5
+
+    def _check_degradation(self, current_wallet: Dict, old_data: Dict) -> List[Dict]:
+        """
+        Check if wallet is degrading.
+        Returns list of alert objects with severity and message.
+        """
+        alerts = []
+        
+        current_score = current_wallet.get('avg_roi_to_peak', 0) or 0
+        old_score = old_data.get('score', current_score)
+        score_drop = old_score - current_score
+        
+        # Red flag: Score dropped significantly
+        if score_drop > 20:
+            alerts.append({
+                'severity': 'critical',
+                'message': f'ROI dropped from {old_score:.0f}% → {current_score:.0f}%'
+            })
+        # Orange flag: Moderate drop
+        elif score_drop > 10:
+            alerts.append({
+                'severity': 'warning',
+                'message': f'ROI declined by {score_drop:.0f}%'
+            })
+        
+        # Yellow flag: No runners
+        pump_count = current_wallet.get('pump_count', 0) or 0
+        if pump_count == 0:
+            alerts.append({
+                'severity': 'warning',
+                'message': 'No runner hits in recent period'
+            })
+        
+        # Check for dormancy (no recent activity)
+        last_updated = current_wallet.get('last_updated')
+        if last_updated:
+            try:
+                last_updated_dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                days_inactive = (datetime.utcnow().replace(tzinfo=last_updated_dt.tzinfo) - last_updated_dt).days
+                
+                if days_inactive > 60:
+                    alerts.append({
+                        'severity': 'critical',
+                        'message': f'No activity for {days_inactive} days'
+                    })
+            except:
+                pass
+        
+        return alerts
+
+    def save_position_snapshot(self, user_id: str) -> bool:
+        """
+        Save current positions to history table.
+        Called by daily cron job.
+        """
+        try:
+            table_data = self.get_premier_league_table(user_id)
+            
+            today = datetime.utcnow().date().isoformat()
+            
+            # Insert snapshots for each wallet
+            snapshots = []
+            for wallet in table_data['wallets']:
+                snapshots.append({
+                    'user_id': user_id,
+                    'wallet_address': wallet['wallet_address'],
+                    'date': today,
+                    'position': wallet['position'],
+                    'tier': wallet['tier'],
+                    'professional_score': wallet['professional_score'],
+                    'runners_30d': wallet['runners_30d'],
+                    'roi_30d': wallet['roi_30d'],
+                    'form_score': 0,  # Could calculate average form score
+                    'consistency_score': wallet['consistency_score']
+                })
+            
+            if snapshots:
+                # Upsert to handle duplicates
+                self._table('wallet_performance_history').upsert(
+                    snapshots,
+                    on_conflict='user_id,wallet_address,date'
+                ).execute()
+                
+                print(f"[WATCHLIST DB] Saved position snapshot for {len(snapshots)} wallets")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"[WATCHLIST DB] Error saving position snapshot: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     # =========================================================================

@@ -3,6 +3,10 @@ import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarCh
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
 import TelegramSettings from './TelegramSettings';
+// At the top of SifterKYS.jsx, add these imports:
+import WalletHealthDashboard from './WalletHealthDashboard';
+import WalletLeagueTable from './WalletLeagueTable';
+import WalletReplacementModal from './WalletReplacementModal';
 
 
 export default function SifterKYS() {
@@ -52,6 +56,13 @@ export default function SifterKYS() {
   const [editingTags, setEditingTags] = useState(null);
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
+
+
+  // Inside your SifterKYS component, add these state variables:
+const [showReplacementModal, setShowReplacementModal] = useState(false);
+const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
+const [replacementSuggestions, setReplacementSuggestions] = useState([]);
+const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   
   // ========== WALLET ALERTS ==========
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
@@ -117,6 +128,13 @@ export default function SifterKYS() {
       loadTrendingRunners();
     }
   }, [activeTab]);
+
+  // Load watchlist when tab opens
+useEffect(() => {
+  if (activeTab === 'watchlist' && mode === 'wallet') {
+    loadWalletWatchlist();
+  }
+}, [activeTab, mode]);
 
   // Auto-reload trending runners when filters change
   useEffect(() => {
@@ -389,16 +407,17 @@ export default function SifterKYS() {
   };
 
   const loadWalletWatchlist = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/get?user_id=${userId}`);
-      const data = await response.json();
-      if (data.success) {
-        setWalletWatchlist(data.wallets);
-      }
-    } catch (error) {
-      console.error('Error loading wallet watchlist:', error);
+  try {
+    const response = await fetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
+    const data = await response.json();
+    if (data.success) {
+      setWalletWatchlist(data.wallets || []);
+      setWalletWatchlistStats(data.stats || null);
     }
-  };
+  } catch (error) {
+    console.error('Error loading wallet watchlist:', error);
+  }
+};
 
   const loadWalletWatchlistStats = async () => {
     try {
@@ -480,6 +499,9 @@ export default function SifterKYS() {
     }
   };
 
+
+
+
   const removeFromWalletWatchlist = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
     try {
@@ -552,6 +574,73 @@ export default function SifterKYS() {
       console.error('Error updating wallet notes:', error);
     }
   };
+
+// Around line 550, after your existing watchlist functions:
+
+
+
+const findReplacements = async (walletAddress) => {
+  try {
+    setIsLoadingReplacements(true);
+    setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
+    
+    const response = await fetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${yourAuthToken}`
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        wallet_address: walletAddress,
+        min_professional_score: 85
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      setReplacementSuggestions(data.replacements || []);
+      setShowReplacementModal(true);
+    }
+  } catch (error) {
+    console.error('Error finding replacements:', error);
+  } finally {
+    setIsLoadingReplacements(false);
+  }
+};
+
+const handleReplaceWallet = async (newWallet) => {
+  try {
+    const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${yourAuthToken}`
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        old_wallet: currentDecliningWallet.wallet_address,
+        new_wallet: newWallet.wallet
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      await loadWalletWatchlist();
+      setShowReplacementModal(false);
+      setCurrentDecliningWallet(null);
+      setReplacementSuggestions([]);
+      alert('Wallet replaced successfully!');
+    }
+  } catch (error) {
+    console.error('Error replacing wallet:', error);
+    alert('Failed to replace wallet');
+  }
+};
+
+
 
   const updateWalletWatchlistTags = async (walletAddress, tags) => {
     try {
@@ -1895,17 +1984,59 @@ export default function SifterKYS() {
           </div>
         )}
 {/* ========== WATCHLIST TAB ========== */}
-        {activeTab === 'watchlist' && (
-          <div className="space-y-4">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 text-center">
-              <BookmarkPlus className="mx-auto mb-4 text-gray-400" size={48} />
-              <h3 className="text-lg font-semibold mb-2">Watchlist</h3>
-              <p className="text-sm text-gray-400">
-                Your saved {mode === 'twitter' ? 'Twitter accounts' : 'wallets'} will appear here
-              </p>
-            </div>
-          </div>
-        )}
+        {/* ========== WATCHLIST TAB ========== */}
+{activeTab === 'watchlist' && (
+  <div className="space-y-4">
+    {/* Health Dashboard */}
+    <WalletHealthDashboard
+      wallets={walletWatchlist}
+      stats={walletWatchlistStats}
+      onViewWallet={(wallet) => {
+        console.log('View wallet:', wallet);
+      }}
+      onFindReplacements={(walletAddress, autoReplace) => {
+        findReplacements(walletAddress);
+      }}
+      onRefresh={() => {
+        loadWalletWatchlist();
+      }}
+    />
+
+    {/* Premier League Table */}
+    <WalletLeagueTable
+      wallets={walletWatchlist}
+      promotionQueue={walletWatchlistStats?.promotion_queue || []}
+      onReplace={(oldWallet, newWallet) => {
+        if (oldWallet) {
+          setCurrentDecliningWallet(oldWallet);
+          findReplacements(oldWallet.wallet_address);
+        } else {
+          handleReplaceWallet(newWallet);
+        }
+      }}
+      onExpand={(wallet) => {
+        console.log('Expanded wallet:', wallet);
+      }}
+      onConfigure={(wallet) => {
+        setAlertSettingsWallet(wallet.wallet_address);
+      }}
+    />
+
+    {/* Replacement Modal */}
+    {showReplacementModal && (
+      <WalletReplacementModal
+        currentWallet={currentDecliningWallet}
+        suggestions={replacementSuggestions}
+        onReplace={handleReplaceWallet}
+        onDismiss={() => {
+          setShowReplacementModal(false);
+          setCurrentDecliningWallet(null);
+          setReplacementSuggestions([]);
+        }}
+      />
+    )}
+  </div>
+)}
 
         {/* ========== SETTINGS TAB ========== */}
         {activeTab === 'settings' && (

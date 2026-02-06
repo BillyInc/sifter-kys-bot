@@ -23,6 +23,7 @@ class WalletPumpAnalyzer:
     - Cross-runner consistency grading
     - Batch analysis with variance tracking
     - Professional scoring (60/30/10)
+    - Replacement finder for degrading wallets
     
     All data from SolanaTracker + Birdeye APIs
     """
@@ -1034,3 +1035,299 @@ class WalletPumpAnalyzer:
         self._log(f"\n  ✅ Found {len(smart_money)} consistent smart money wallets")
         
         return smart_money
+
+    # =========================================================================
+    # REPLACEMENT FINDER METHODS
+    # =========================================================================
+
+    def find_replacement_wallets(self, declining_wallet_address, user_id='default_user', 
+                                 min_professional_score=85, max_results=3):
+        """
+        Find replacement wallets for a degrading wallet using existing metrics.
+        
+        Args:
+            declining_wallet_address: Address of wallet being replaced
+            user_id: User ID for checking watchlist
+            min_professional_score: Minimum score for candidates (default 85)
+            max_results: Number of suggestions to return (default 3)
+            
+        Returns:
+            List of replacement candidates with similarity scores
+        """
+        
+        print(f"\n{'='*80}")
+        print(f"FINDING REPLACEMENTS FOR: {declining_wallet_address[:8]}...")
+        print(f"{'='*80}")
+        
+        # STEP 1: Get declining wallet's profile from watchlist
+        declining_profile = self._get_wallet_profile_from_watchlist(
+            user_id, 
+            declining_wallet_address
+        )
+        
+        if not declining_profile:
+            print(f"  ⚠️ Wallet not found in watchlist")
+            return []
+        
+        print(f"  Profile: {declining_profile['tier']} tier, "
+              f"{len(declining_profile['tokens_traded'])} tokens traded")
+        
+        # STEP 2: Get recent 30-day runners to find active wallets
+        print(f"\n  [1/3] Discovering recent runners...")
+        runners = self.find_trending_runners_enhanced(
+            days_back=30,
+            min_multiplier=5.0,
+            min_liquidity=50000
+        )
+        
+        if not runners:
+            print(f"  ⚠️ No runners found")
+            return []
+        
+        print(f"  ✓ Found {len(runners)} runners")
+        
+        # STEP 3: Analyze top runners to get fresh wallets
+        print(f"\n  [2/3] Analyzing top runners for candidates...")
+        
+        all_candidates = []
+        tokens_to_check = runners[:10]  # Top 10 hottest runners
+        
+        for runner in tokens_to_check:
+            # Run 6-step analysis on this runner
+            wallets = self.analyze_token_professional(
+                token_address=runner['address'],
+                token_symbol=runner['symbol'],
+                min_roi_multiplier=3.0,
+                user_id=user_id
+            )
+            
+            # Filter for high performers only
+            qualified = [
+                w for w in wallets 
+                if w['professional_score'] >= min_professional_score
+                and w.get('is_fresh', True)  # Not already in watchlist
+            ]
+            
+            all_candidates.extend(qualified)
+        
+        print(f"  ✓ Found {len(all_candidates)} candidate wallets")
+        
+        # STEP 4: Score candidates by similarity to declining wallet
+        print(f"\n  [3/3] Scoring candidates by similarity...")
+        
+        scored_candidates = []
+        
+        for candidate in all_candidates:
+            # Calculate similarity score
+            similarity = self._calculate_similarity_score(
+                declining_profile,
+                candidate
+            )
+            
+            # Add to results if similarity is decent
+            if similarity['total_score'] > 0.3:  # 30% minimum similarity
+                scored_candidates.append({
+                    **candidate,
+                    'similarity_score': similarity['total_score'],
+                    'similarity_breakdown': similarity['breakdown'],
+                    'why_better': self._explain_why_better(declining_profile, candidate)
+                })
+        
+        # STEP 5: Rank by combination of similarity + performance
+        scored_candidates.sort(
+            key=lambda x: (
+                x['similarity_score'] * 0.6 +  # 60% similarity weight
+                (x['professional_score'] / 100) * 0.4  # 40% performance weight
+            ),
+            reverse=True
+        )
+        
+        top_matches = scored_candidates[:max_results]
+        
+        print(f"\n  ✅ Top {len(top_matches)} replacements found:")
+        for i, match in enumerate(top_matches, 1):
+            print(f"    {i}. {match['wallet'][:8]}... "
+                  f"(Score: {match['professional_score']}, "
+                  f"Similarity: {match['similarity_score']:.1%})")
+        
+        return top_matches
+
+    def _get_wallet_profile_from_watchlist(self, user_id, wallet_address):
+        """Get wallet's historical profile from watchlist database"""
+        try:
+            from db.watchlist_db import WatchlistDatabase
+            
+            db = WatchlistDatabase()
+            watchlist = db.get_wallet_watchlist(user_id)
+            
+            # Find this specific wallet
+            wallet_data = next(
+                (w for w in watchlist if w['wallet_address'] == wallet_address),
+                None
+            )
+            
+            if not wallet_data:
+                return None
+            
+            # Extract token list
+            tokens_traded = []
+            if wallet_data.get('tokens_hit'):
+                if isinstance(wallet_data['tokens_hit'], list):
+                    tokens_traded = wallet_data['tokens_hit']
+                else:
+                    tokens_traded = [
+                        t.strip() 
+                        for t in str(wallet_data['tokens_hit']).split(',')
+                    ]
+            
+            return {
+                'wallet_address': wallet_address,
+                'tier': wallet_data.get('tier', 'C'),
+                'professional_score': wallet_data.get('avg_professional_score', 0),
+                'tokens_traded': tokens_traded,
+                'avg_roi': wallet_data.get('avg_roi_to_peak', 0),
+                'pump_count': wallet_data.get('pump_count', 0),
+                'consistency_score': wallet_data.get('consistency_score', 0)
+            }
+            
+        except Exception as e:
+            print(f"  ⚠️ Error loading wallet profile: {e}")
+            return None
+
+    def _calculate_similarity_score(self, declining_profile, candidate):
+        """
+        Calculate how similar a candidate is to the declining wallet.
+        Uses YOUR existing metrics.
+        """
+        
+        # 1. TOKEN OVERLAP (40% weight)
+        declining_tokens = set(declining_profile['tokens_traded'])
+        
+        # Get candidate's token preferences from 'other_runners'
+        candidate_tokens = set()
+        if candidate.get('other_runners'):
+            candidate_tokens = {
+                r['symbol'] 
+                for r in candidate['other_runners']
+            }
+        
+        if declining_tokens and candidate_tokens:
+            overlap = len(declining_tokens & candidate_tokens)
+            total = len(declining_tokens | candidate_tokens)
+            token_score = overlap / total if total > 0 else 0
+        else:
+            token_score = 0.5  # Neutral if no data
+        
+        # 2. TIER MATCH (30% weight)
+        tier_values = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
+        
+        declining_tier_value = tier_values.get(declining_profile['tier'], 1)
+        
+        # Get candidate tier from professional_grade if no tier field
+        candidate_tier = candidate.get('tier')
+        if not candidate_tier:
+            grade = candidate.get('professional_grade', 'C')
+            if grade in ['A+', 'A', 'A-']:
+                candidate_tier = 'S'
+            elif grade in ['B+', 'B', 'B-']:
+                candidate_tier = 'A'
+            elif grade in ['C+', 'C']:
+                candidate_tier = 'B'
+            else:
+                candidate_tier = 'C'
+        
+        candidate_tier_value = tier_values.get(candidate_tier, 1)
+        
+        # Prefer same tier or better
+        if candidate_tier_value >= declining_tier_value:
+            tier_score = 1.0
+        elif candidate_tier_value == declining_tier_value - 1:
+            tier_score = 0.7
+        else:
+            tier_score = 0.3
+        
+        # 3. ACTIVITY LEVEL (20% weight)
+        # Compare runner hit counts
+        declining_activity = declining_profile.get('pump_count', 0)
+        candidate_activity = candidate.get('runner_hits_30d', 0)
+        
+        if declining_activity > 0:
+            activity_ratio = min(candidate_activity / declining_activity, 2.0)
+            activity_score = activity_ratio / 2.0  # Normalize to 0-1
+        else:
+            activity_score = 1.0 if candidate_activity > 0 else 0.5
+        
+        # 4. CONSISTENCY (10% weight)
+        # Use your consistency_grade or variance
+        candidate_consistency = candidate.get('consistency_grade', 'C')
+        
+        consistency_values = {
+            'A+': 1.0, 'A': 0.9, 'B': 0.7, 'C': 0.5, 'D': 0.3
+        }
+        consistency_score = consistency_values.get(candidate_consistency, 0.5)
+        
+        # CALCULATE WEIGHTED TOTAL
+        total_score = (
+            token_score * 0.40 +
+            tier_score * 0.30 +
+            activity_score * 0.20 +
+            consistency_score * 0.10
+        )
+        
+        return {
+            'total_score': total_score,
+            'breakdown': {
+                'token_overlap': token_score,
+                'tier_match': tier_score,
+                'activity_level': activity_score,
+                'consistency': consistency_score
+            }
+        }
+
+    def _explain_why_better(self, declining_profile, candidate):
+        """
+        Generate human-readable reasons why candidate is better.
+        Returns list of improvement points.
+        """
+        reasons = []
+        
+        # Compare professional scores
+        declining_score = declining_profile.get('professional_score', 0)
+        candidate_score = candidate.get('professional_score', 0)
+        
+        if candidate_score > declining_score:
+            diff = candidate_score - declining_score
+            reasons.append(f"Professional score +{diff:.0f} points higher")
+        
+        # Compare runner hits
+        declining_runners = declining_profile.get('pump_count', 0)
+        candidate_runners = candidate.get('runner_hits_30d', 0)
+        
+        if candidate_runners > declining_runners:
+            reasons.append(
+                f"{candidate_runners} runners last 30d "
+                f"(vs {declining_runners} for old wallet)"
+            )
+        
+        # Compare ROI
+        declining_roi = declining_profile.get('avg_roi', 0)
+        candidate_roi = candidate.get('roi_multiplier', 0) * 100
+        
+        if candidate_roi > declining_roi:
+            diff = candidate_roi - declining_roi
+            reasons.append(f"+{diff:.0f}% better ROI")
+        
+        # Check if actively trading
+        if candidate.get('runner_hits_30d', 0) > 0:
+            reasons.append("Currently active (recent runner hits)")
+        
+        # Check tier upgrade
+        candidate_grade = candidate.get('professional_grade', 'C')
+        if candidate_grade in ['A+', 'A', 'A-'] and declining_profile['tier'] not in ['S', 'A']:
+            reasons.append("Tier upgrade to S/A-tier")
+        
+        # Consistency grade
+        if candidate.get('consistency_grade') in ['A+', 'A']:
+            reasons.append(f"High consistency ({candidate['consistency_grade']})")
+        
+        return reasons
