@@ -10,12 +10,14 @@ import {
   Copy,
   CheckCircle,
   Bell,
-  BellOff
+  BellOff,
+  Filter
 } from 'lucide-react';
 
 export default function WalletLeagueTable({ 
   wallets = [], 
   promotionQueue = [],
+  stats = {},
   onReplace,
   onExpand,
   onConfigure,
@@ -23,6 +25,10 @@ export default function WalletLeagueTable({
 }) {
   const [expandedWallets, setExpandedWallets] = useState({});
   const [copied, setCopied] = useState(null);
+  const [filterTier, setFilterTier] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [sortBy, setSortBy] = useState('position');
+  const [timeRange, setTimeRange] = useState('30d');
 
   const toggleExpand = (walletAddress) => {
     setExpandedWallets(prev => ({
@@ -85,12 +91,46 @@ export default function WalletLeagueTable({
     );
   };
 
+  // Filter and sort wallets
+  const getFilteredWallets = () => {
+    let filtered = [...wallets];
+
+    // Apply tier filter
+    if (filterTier !== 'all') {
+      filtered = filtered.filter(w => w.tier === filterTier);
+    }
+
+    // Apply status filter
+    if (filterStatus !== 'all') {
+      filtered = filtered.filter(w => {
+        if (filterStatus === 'healthy') return w.status === 'healthy' || !w.degradation_alerts || w.degradation_alerts.length === 0;
+        if (filterStatus === 'warning') return w.status === 'warning';
+        if (filterStatus === 'critical') return w.status === 'critical';
+        return true;
+      });
+    }
+
+    // Apply sorting
+    if (sortBy === 'roi') {
+      filtered.sort((a, b) => (b.roi_30d || 0) - (a.roi_30d || 0));
+    } else if (sortBy === 'score') {
+      filtered.sort((a, b) => (b.professional_score || b.score || 0) - (a.professional_score || a.score || 0));
+    } else if (sortBy === 'runners') {
+      filtered.sort((a, b) => (b.runners_30d || 0) - (a.runners_30d || 0));
+    }
+    // Default is position (already sorted)
+
+    return filtered;
+  };
+
+  const filteredWallets = getFilteredWallets();
+
   // Group wallets by zone
   const groupedWallets = {
-    champions: wallets.filter(w => w.position <= 3),
-    midtable: wallets.filter(w => w.position > 3 && w.position <= 6),
-    monitoring: wallets.filter(w => w.position > 6 && w.position <= 8),
-    relegation: wallets.filter(w => w.position > 8)
+    champions: filteredWallets.filter(w => w.position <= 3),
+    midtable: filteredWallets.filter(w => w.position > 3 && w.position <= 6),
+    monitoring: filteredWallets.filter(w => w.position > 6 && w.position <= 8),
+    relegation: filteredWallets.filter(w => w.position > 8)
   };
 
   const renderWalletRow = (wallet) => {
@@ -423,6 +463,61 @@ export default function WalletLeagueTable({
           <div className="text-sm text-gray-400">
             Last Updated: {new Date().toLocaleTimeString()}
           </div>
+        </div>
+      </div>
+
+      {/* Filter & Sort Bar */}
+      <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border-b border-white/10 p-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-purple-400" />
+            <span className="text-sm font-semibold text-purple-300">Filter & Sort:</span>
+          </div>
+          
+          <select 
+            value={filterTier}
+            onChange={(e) => setFilterTier(e.target.value)}
+            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+          >
+            <option value="all" className="bg-gray-900">All Tiers</option>
+            <option value="S" className="bg-gray-900">S-Tier</option>
+            <option value="A" className="bg-gray-900">A-Tier</option>
+            <option value="B" className="bg-gray-900">B-Tier</option>
+            <option value="C" className="bg-gray-900">C-Tier</option>
+          </select>
+
+          <select 
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+          >
+            <option value="all" className="bg-gray-900">All Status</option>
+            <option value="healthy" className="bg-gray-900">Healthy</option>
+            <option value="warning" className="bg-gray-900">Warning</option>
+            <option value="critical" className="bg-gray-900">Critical</option>
+          </select>
+
+          <select 
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+          >
+            <option value="position" className="bg-gray-900">Sort: Position</option>
+            <option value="roi" className="bg-gray-900">Sort: ROI</option>
+            <option value="score" className="bg-gray-900">Sort: Score</option>
+            <option value="runners" className="bg-gray-900">Sort: Runners</option>
+          </select>
+
+          <select 
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value)}
+            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+          >
+            <option value="7d" className="bg-gray-900">Last 7 Days</option>
+            <option value="30d" className="bg-gray-900">Last 30 Days</option>
+            <option value="60d" className="bg-gray-900">Last 60 Days</option>
+            <option value="90d" className="bg-gray-900">Last 90 Days</option>
+          </select>
         </div>
       </div>
 
