@@ -229,3 +229,85 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sifter_kys_dev TO authenticated;
 
 -- Grant select to anon for public data (if any)
 GRANT SELECT ON ALL TABLES IN SCHEMA sifter_kys_dev TO anon;
+
+-- Add to sifter_kys_dev schema in Supabase SQL Editor
+
+CREATE TABLE IF NOT EXISTS sifter_kys_dev.wallet_performance_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_kys_dev.users(user_id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    date DATE NOT NULL,
+    position INTEGER,
+    tier TEXT,
+    professional_score REAL,
+    runners_30d INTEGER DEFAULT 0,
+    roi_30d REAL DEFAULT 0,
+    form_score REAL,
+    consistency_score REAL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, wallet_address, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_perf_history_user 
+ON sifter_kys_dev.wallet_performance_history(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_perf_history_wallet 
+ON sifter_kys_dev.wallet_performance_history(wallet_address);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_perf_history_date 
+ON sifter_kys_dev.wallet_performance_history(date DESC);
+
+-- RLS Policy
+ALTER TABLE sifter_kys_dev.wallet_performance_history ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own performance history"
+    ON sifter_kys_dev.wallet_performance_history FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "System can insert performance history"
+    ON sifter_kys_dev.wallet_performance_history FOR INSERT
+    WITH CHECK (true);
+
+
+-- Run this in Supabase Dashboard → SQL Editor
+
+CREATE TABLE IF NOT EXISTS sifter_kys_dev.telegram_users (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_kys_dev.users(user_id) ON DELETE CASCADE,
+    telegram_chat_id TEXT UNIQUE,
+    telegram_username TEXT,
+    telegram_first_name TEXT,
+    telegram_last_name TEXT,
+    connection_code TEXT UNIQUE,
+    code_expires_at TIMESTAMPTZ,
+    connected_at TIMESTAMPTZ,
+    last_active TIMESTAMPTZ DEFAULT NOW(),
+    alerts_enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_users_user_id 
+ON sifter_kys_dev.telegram_users(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_users_chat_id 
+ON sifter_kys_dev.telegram_users(telegram_chat_id);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_users_code 
+ON sifter_kys_dev.telegram_users(connection_code) 
+WHERE connection_code IS NOT NULL;
+
+-- RLS Policies
+ALTER TABLE sifter_kys_dev.telegram_users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own telegram connection"
+    ON sifter_kys_dev.telegram_users FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own telegram connection"
+    ON sifter_kys_dev.telegram_users FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "System can insert telegram connections"
+    ON sifter_kys_dev.telegram_users FOR INSERT
+    WITH CHECK (true);

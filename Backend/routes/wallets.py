@@ -527,6 +527,68 @@ def force_check_wallet():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ==========================================
+# NEW ENDPOINTS - ADD TO routes/wallets.py
+# ==========================================
+
+@wallets_bp.route('/watchlist/table', methods=['GET'])
+@optional_auth
+def get_watchlist_table():
+    """Get Premier League-style watchlist table"""
+    try:
+        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from db.watchlist_db import WatchlistDatabase
+        db = WatchlistDatabase(db_path='watchlists.db')
+        
+        table_data = db.get_premier_league_table(user_id)
+        
+        return jsonify({
+            'success': True,
+            'table': table_data['wallets'],
+            'promotion_queue': table_data['promotion_queue'],
+            'stats': table_data['stats']
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting watchlist table: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/watchlist/suggest-replacement', methods=['POST'])
+@optional_auth
+def suggest_replacement():
+    """Find replacement wallets for degrading wallet"""
+    try:
+        data = request.json
+        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        wallet_address = data.get('wallet_address')
+        min_score = data.get('min_professional_score', 85)
+        
+        if not user_id or not wallet_address:
+            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        
+        from services.wallet_analyzer import WalletPumpAnalyzer
+        analyzer = WalletPumpAnalyzer()
+        
+        replacements = analyzer.find_replacement_wallets(
+            declining_wallet_address=wallet_address,
+            user_id=user_id,
+            min_professional_score=min_score,
+            max_results=3
+        )
+        
+        return jsonify({
+            'success': True,
+            'replacements': replacements,
+            'count': len(replacements)
+        }), 200
+        
+    except Exception as e:
+        print(f"[REPLACEMENT FINDER ERROR] {str(e)}")
 
 # =============================================================================
 # PROFESSIONAL 6-STEP ANALYSIS ENDPOINTS (Enhanced)
@@ -646,6 +708,46 @@ def get_trending_runners():
         return jsonify({'error': str(e)}), 500
 
 
+@wallets_bp.route('/watchlist/replace', methods=['POST'])
+@optional_auth
+def replace_wallet():
+    """Replace degrading wallet with new one"""
+    try:
+        data = request.json
+        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        old_wallet = data.get('old_wallet')
+        new_wallet_data = data.get('new_wallet')
+        
+        if not all([user_id, old_wallet, new_wallet_data]):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        from db.watchlist_db import WatchlistDatabase
+        db = WatchlistDatabase(db_path='watchlists.db')
+        
+        # Remove old wallet
+        db.remove_wallet_from_watchlist(user_id, old_wallet)
+        
+        # Add new wallet
+        db.add_wallet_to_watchlist(
+            user_id=user_id,
+            wallet_address=new_wallet_data['wallet'],
+            tier=new_wallet_data.get('tier', 'C'),
+            avg_professional_score=new_wallet_data.get('professional_score', 0),
+            avg_roi_to_peak=new_wallet_data.get('roi_multiplier', 0) * 100,
+            pump_count=new_wallet_data.get('runner_hits_30d', 0),
+            consistency_score=new_wallet_data.get('consistency_score', 0)
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Wallet replaced successfully',
+            'old_wallet': old_wallet,
+            'new_wallet': new_wallet_data['wallet']
+        }), 200
+        
+    except Exception as e:
+        print(f"Error replacing wallet: {e}")
+        return jsonify({'error': str(e)}), 500
 @wallets_bp.route('/trending/analyze', methods=['POST'])
 @optional_auth
 def analyze_trending_runner():

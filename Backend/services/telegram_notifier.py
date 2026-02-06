@@ -6,11 +6,12 @@ Handles bot commands, user linking, and message formatting.
 """
 
 import requests
-import sqlite3
 import time
 import secrets
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+
+from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
 
 class TelegramNotifier:
@@ -19,19 +20,23 @@ class TelegramNotifier:
     Handles user linking and alert delivery.
     """
     
-    def __init__(self, bot_token: str, db_path: str = 'watchlists.db'):
+    def __init__(self, bot_token: str):
         """
         Initialize Telegram notifier.
         
         Args:
             bot_token: Telegram Bot API token
-            db_path: Path to SQLite database
         """
         self.bot_token = bot_token
-        self.db_path = db_path
+        self.supabase = get_supabase_client()
+        self.schema = SCHEMA_NAME
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         
         print(f"[TELEGRAM] Notifier initialized")
+    
+    def _table(self, name: str):
+        """Get table reference with schema."""
+        return self.supabase.schema(self.schema).table(name)
     
     def _make_request(self, method: str, data: dict = None) -> dict:
         """Make request to Telegram Bot API"""
@@ -84,22 +89,19 @@ class TelegramNotifier:
             6-character connection code
         """
         code = secrets.token_hex(3).upper()  # 6 chars
-        expires_at = int(time.time()) + 600  # 10 minutes
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
         
         # Delete old codes for this user
-        cursor.execute('DELETE FROM telegram_users WHERE user_id = ? AND telegram_chat_id IS NULL', (user_id,))
+        self._table('telegram_users').delete().eq(
+            'user_id', user_id
+        ).is_('telegram_chat_id', 'null').execute()
         
         # Insert new code
-        cursor.execute('''
-            INSERT INTO telegram_users (user_id, connection_code, code_expires_at)
-            VALUES (?, ?, ?)
-        ''', (user_id, code, expires_at))
-        
-        conn.commit()
-        conn.close()
+        self._table('telegram_users').insert({
+            'user_id': user_id,
+            'connection_code': code,
+            'code_expires_at': expires_at.isoformat()
+        }).execute()
         
         print(f"[TELEGRAM] Generated code {code} for user {user_id}")
         return code
@@ -121,66 +123,44 @@ class TelegramNotifier:
         Returns:
             user_id if successful, None if failed
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         # Find valid code
-        cursor.execute('''
-            SELECT user_id, code_expires_at 
-            FROM telegram_users 
-            WHERE connection_code = ? AND telegram_chat_id IS NULL
-        ''', (code,))
+        result = self._table('telegram_users').select('*').eq(
+            'connection_code', code
+        ).is_('telegram_chat_id', 'null').execute()
         
-        result = cursor.fetchone()
-        
-        if not result:
-            conn.close()
+        if not result.data:
             return None
         
-        user_id, expires_at = result
+        user_data = result.data[0]
+        user_id = user_data['user_id']
+        expires_at = datetime.fromisoformat(user_data['code_expires_at'].replace('Z', '+00:00'))
         
         # Check if expired
-        if expires_at < int(time.time()):
-            cursor.execute('DELETE FROM telegram_users WHERE connection_code = ?', (code,))
-            conn.commit()
-            conn.close()
+        if expires_at < datetime.utcnow().replace(tzinfo=expires_at.tzinfo):
+            self._table('telegram_users').delete().eq('connection_code', code).execute()
             return None
         
         # Link account
-        cursor.execute('''
-            UPDATE telegram_users
-            SET telegram_chat_id = ?,
-                telegram_username = ?,
-                telegram_first_name = ?,
-                telegram_last_name = ?,
-                connection_code = NULL,
-                code_expires_at = NULL,
-                connected_at = ?
-            WHERE user_id = ?
-        ''', (telegram_chat_id, telegram_username, telegram_first_name, 
-              telegram_last_name, int(time.time()), user_id))
-        
-        conn.commit()
-        conn.close()
+        self._table('telegram_users').update({
+            'telegram_chat_id': telegram_chat_id,
+            'telegram_username': telegram_username,
+            'telegram_first_name': telegram_first_name,
+            'telegram_last_name': telegram_last_name,
+            'connection_code': None,
+            'code_expires_at': None,
+            'connected_at': datetime.utcnow().isoformat()
+        }).eq('user_id', user_id).execute()
         
         print(f"[TELEGRAM] Linked user {user_id} to chat {telegram_chat_id}")
         return user_id
     
     def get_user_chat_id(self, user_id: str) -> Optional[str]:
         """Get Telegram chat ID for a user"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        result = self._table('telegram_users').select(
+            'telegram_chat_id'
+        ).eq('user_id', user_id).eq('alerts_enabled', True).execute()
         
-        cursor.execute('''
-            SELECT telegram_chat_id 
-            FROM telegram_users 
-            WHERE user_id = ? AND alerts_enabled = TRUE
-        ''', (user_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        return result[0] if result else None
+        return result.data[0]['telegram_chat_id'] if result.data else None
     
     def is_user_connected(self, user_id: str) -> bool:
         """Check if user has Telegram connected"""
@@ -188,15 +168,9 @@ class TelegramNotifier:
     
     def disconnect_user(self, user_id: str) -> bool:
         """Disconnect user's Telegram"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        result = self._table('telegram_users').delete().eq('user_id', user_id).execute()
         
-        cursor.execute('DELETE FROM telegram_users WHERE user_id = ?', (user_id,))
-        
-        conn.commit()
-        deleted = cursor.rowcount > 0
-        conn.close()
-        
+        deleted = len(result.data) > 0
         if deleted:
             print(f"[TELEGRAM] Disconnected user {user_id}")
         
@@ -204,148 +178,228 @@ class TelegramNotifier:
     
     def toggle_alerts(self, user_id: str, enabled: bool) -> bool:
         """Enable/disable alerts for user"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        result = self._table('telegram_users').update({
+            'alerts_enabled': enabled
+        }).eq('user_id', user_id).execute()
         
-        cursor.execute('''
-            UPDATE telegram_users 
-            SET alerts_enabled = ?
-            WHERE user_id = ?
-        ''', (enabled, user_id))
-        
-        conn.commit()
-        updated = cursor.rowcount > 0
-        conn.close()
-        
-        return updated
+        return len(result.data) > 0
     
-    def format_alert_message(self, alert_data: Dict) -> str:
-        """
-        Format wallet activity into Telegram message.
+    # =========================================================================
+    # WATCHLIST-SPECIFIC ALERT METHODS
+    # =========================================================================
+    
+    def send_trade_alert(self, user_id: str, alert_data: Dict) -> bool:
+        """Send wallet trade alert"""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
         
-        Args:
-            alert_data: Wallet activity data
-            
-        Returns:
-            Formatted HTML message
-        """
         wallet = alert_data['wallet']
         action = alert_data['action']
         token = alert_data['token']
         trade = alert_data['trade']
-        links = alert_data.get('links', {})
         
-        # Emoji based on action
         emoji = "🟢" if action == 'buy' else "🔴"
-        action_text = action.upper()
         
-        # Format message
         message = f"""
-{emoji} <b>WALLET ALERT</b>
+{emoji} <b>WALLET ALERT - Position #{wallet.get('position', '?')}</b>
 
 <b>Wallet:</b> <code>{wallet['address'][:8]}...{wallet['address'][-6:]}</code>
-<b>Tier:</b> {wallet.get('tier', 'C')} | Score: {wallet.get('consistency_score', 0):.1f}
+<b>Tier:</b> {wallet.get('tier', 'C')} | Score: {wallet.get('professional_score', 0)}
 
-<b>Action:</b> {action_text}
-<b>Token:</b> ${token['symbol']}
-<b>Name:</b> {token.get('name', 'Unknown')}
+<b>ACTION: {action.upper()} ${token['symbol']}</b>
+<b>Amount:</b> ${trade['amount_usd']:,.2f}
+<b>Price:</b> ${trade['price']:.8f}
 
-<b>💰 Value:</b> ${trade['amount_usd']:,.2f}
-<b>📊 Price:</b> ${trade['price']:.8f}
-<b>🕐 Time:</b> {datetime.fromtimestamp(trade['timestamp']).strftime('%H:%M:%S')}
-
-<b>📎 Links:</b>
-• <a href="{links.get('solscan', '')}">Solscan</a>
-• <a href="{links.get('birdeye', '')}">Birdeye</a>
-• <a href="{links.get('dexscreener', '')}">DexScreener</a>
+📊 This wallet has {wallet.get('roi_30d', 0)}% avg ROI ({wallet.get('runners_30d', 0)} runners this month)
 """.strip()
         
-        return message
-    
-    def create_trade_buttons(self, alert_data: Dict) -> dict:
-        """
-        Create inline keyboard with copy-trade buttons.
-        
-        Args:
-            alert_data: Alert data
-            
-        Returns:
-            Telegram inline keyboard markup
-        """
-        token_address = alert_data['token']['address']
-        amount_usd = alert_data['trade']['amount_usd']
-        
-        # Format commands for different bots
-        photon_cmd = f"/buy {token_address} {int(amount_usd)}"
-        bonkbot_cmd = f".buy {token_address} {amount_usd / 100:.2f}sol"  # Rough conversion
-        
-        return {
+        buttons = {
             'inline_keyboard': [
                 [
-                    {'text': '📋 Copy Photon', 'callback_data': f'copy_photon:{token_address}'},
-                    {'text': '📋 Copy Bonkbot', 'callback_data': f'copy_bonkbot:{token_address}'}
+                    {'text': '📋 Copy to Photon', 'callback_data': f'copy_photon:{token["address"]}'},
+                    {'text': '📋 Copy to Bonkbot', 'callback_data': f'copy_bonkbot:{token["address"]}'}
                 ],
                 [
-                    {'text': '📊 View Chart', 'url': alert_data['links'].get('dexscreener', '')},
+                    {'text': '📊 View Chart', 'url': alert_data.get('chart_url', '')},
                     {'text': '❌ Dismiss', 'callback_data': 'dismiss'}
                 ]
             ]
         }
+        
+        return self.send_message(chat_id, message, buttons)
     
-    def send_wallet_alert(self, user_id: str, alert_data: Dict, activity_id: int) -> bool:
-        """
-        Send wallet activity alert to user.
-        
-        Args:
-            user_id: User ID
-            alert_data: Alert data dictionary
-            activity_id: Wallet activity ID
-            
-        Returns:
-            True if sent successfully
-        """
+    def send_position_change_alert(self, user_id: str, wallet_data: Dict) -> bool:
+        """Alert when wallet moves in Premier League table"""
         chat_id = self.get_user_chat_id(user_id)
-        
         if not chat_id:
-            print(f"[TELEGRAM] User {user_id} not connected")
             return False
         
-        # Format message
-        message = self.format_alert_message(alert_data)
-        buttons = self.create_trade_buttons(alert_data)
+        old_pos = wallet_data['old_position']
+        new_pos = wallet_data['new_position']
+        movement = old_pos - new_pos  # Positive = moved up
         
-        # Send message
-        success = self.send_message(chat_id, message, buttons)
+        if movement > 0:
+            emoji = "📈"
+            text = f"climbed from #{old_pos} → #{new_pos}"
+        else:
+            emoji = "📉"
+            text = f"dropped from #{old_pos} → #{new_pos}"
         
-        # Log notification
-        self._log_notification(user_id, chat_id, activity_id, success)
+        message = f"""
+{emoji} <b>WATCHLIST UPDATE</b>
+
+Position Change!
+
+Wallet {wallet_data['wallet_address'][:8]}... {text}
+
+Reason:
+- {wallet_data.get('reason', 'Performance change')}
+- Current ROI: {wallet_data.get('roi_30d', 0)}%
+- Runners: {wallet_data.get('runners_30d', 0)}
+
+Your watchlist avg ROI: {wallet_data.get('watchlist_avg_roi', 0)}%
+""".strip()
         
-        return success
+        buttons = {
+            'inline_keyboard': [[
+                {'text': 'View Watchlist', 'callback_data': 'view_watchlist'}
+            ]]
+        }
+        
+        return self.send_message(chat_id, message, buttons)
     
-    def _log_notification(self, user_id: str, chat_id: str, activity_id: int, success: bool):
-        """Log notification to database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def send_degradation_warning(self, user_id: str, wallet_data: Dict) -> bool:
+        """Warning when wallet enters monitoring/relegation zone"""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
         
-        cursor.execute('''
-            INSERT INTO telegram_notification_log 
-            (user_id, telegram_chat_id, activity_id, success)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, chat_id, activity_id, success))
+        severity = wallet_data.get('severity', 'warning')
         
-        conn.commit()
-        conn.close()
+        if severity == 'critical':
+            emoji = "🔴"
+            title = "CRITICAL WATCHLIST ALERT"
+        else:
+            emoji = "⚠️"
+            title = "WATCHLIST WARNING"
+        
+        issues = wallet_data.get('issues', [])
+        issues_text = '\n'.join([f'• {issue}' for issue in issues])
+        
+        message = f"""
+{emoji} <b>{title}</b>
+
+Wallet Performance Declining
+
+<b>Wallet:</b> {wallet_data['wallet_address'][:8]}...
+<b>Was:</b> Position #{wallet_data['old_position']} ({wallet_data['old_tier']}-Tier)
+<b>Now:</b> Position #{wallet_data['new_position']} ({wallet_data['tier']}-Tier)
+
+<b>Issues:</b>
+{issues_text}
+
+<b>Status:</b> {wallet_data['zone'].upper()} ZONE
+
+We found {wallet_data.get('replacement_count', 0)} replacement wallets performing better.
+""".strip()
+        
+        buttons = {
+            'inline_keyboard': [
+                [
+                    {'text': 'View Replacements', 'callback_data': f'replacements:{wallet_data["wallet_address"]}'},
+                    {'text': 'Keep & Monitor', 'callback_data': 'keep'}
+                ]
+            ]
+        }
+        
+        return self.send_message(chat_id, message, buttons)
+    
+    def send_replacement_complete_alert(self, user_id: str, replacement_data: Dict) -> bool:
+        """Confirmation when wallet is replaced"""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
+        
+        message = f"""
+✅ <b>WATCHLIST AUTO-UPDATED</b>
+
+Replacement Complete
+
+<b>REMOVED:</b> {replacement_data['old_wallet'][:8]}... ({replacement_data['old_tier']}-Tier, {replacement_data['old_roi']}% ROI)
+<b>ADDED:</b> {replacement_data['new_wallet'][:8]}... ({replacement_data['new_tier']}-Tier, {replacement_data['new_roi']}% ROI)
+
+<b>Your watchlist health improved:</b>
+- Position #{replacement_data['position']}: {replacement_data['old_roi']}% → {replacement_data['new_roi']}%
+- Avg watchlist ROI: {replacement_data['old_avg']}% → {replacement_data['new_avg']}%
+- You're now +{replacement_data['vs_platform']}% above platform avg 🚀
+
+New wallet is already being tracked.
+First alert should arrive within hours.
+""".strip()
+        
+        buttons = {
+            'inline_keyboard': [[
+                {'text': 'View New Wallet', 'callback_data': f'view_wallet:{replacement_data["new_wallet"]}'},
+                {'text': 'See Updated Table', 'callback_data': 'view_watchlist'}
+            ]]
+        }
+        
+        return self.send_message(chat_id, message, buttons)
+    
+    def send_weekly_digest(self, user_id: str, digest_data: Dict) -> bool:
+        """Weekly performance summary"""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
+        
+        message = f"""
+🏆 <b>WEEKLY WATCHLIST REPORT</b>
+
+Week {digest_data['week_number']} Summary
+
+📊 <b>LEAGUE TABLE STANDINGS:</b>
+
+<b>Top Performer:</b>
+🥇 #{digest_data['top_performer']['position']}: {digest_data['top_performer']['wallet'][:8]}... ({digest_data['top_performer']['roi']}% ROI, {digest_data['top_performer']['runners']} runners)
+
+<b>Biggest Riser:</b>
+📈 #{digest_data['biggest_riser']['position']}: {digest_data['biggest_riser']['wallet'][:8]}... (↑ {digest_data['biggest_riser']['moved']} positions)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 <b>YOUR PERFORMANCE:</b>
+
+Watchlist Avg ROI: {digest_data['avg_roi']}% (+{digest_data['roi_change']}% vs last week)
+Platform Avg: {digest_data['platform_avg']}%
+You're beating {digest_data['percentile']}% of users 🎯
+
+Runners Hit This Week: {digest_data['runners_hit']}
+Total Alerts Sent: {digest_data['alerts_sent']}
+Best Trade: +{digest_data['best_trade']['roi']}% (${digest_data['best_trade']['token']})
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ <b>ACTION ITEMS:</b>
+
+- {digest_data['monitoring_count']} wallet(s) in monitoring zone
+- {digest_data['relegation_count']} wallet(s) in relegation zone
+- {digest_data['replacement_count']} replacement suggestions ready
+
+Next update: {digest_data['next_update']}
+""".strip()
+        
+        buttons = {
+            'inline_keyboard': [[
+                {'text': 'View Full Watchlist', 'callback_data': 'view_watchlist'},
+                {'text': 'Make Changes', 'callback_data': 'manage_watchlist'}
+            ]]
+        }
+        
+        return self.send_message(chat_id, message, buttons)
     
     def handle_callback_query(self, callback_query: dict) -> bool:
-        """
-        Handle inline button callbacks.
-        
-        Args:
-            callback_query: Telegram callback query data
-            
-        Returns:
-            True if handled successfully
-        """
+        """Handle inline button callbacks"""
         callback_id = callback_query['id']
         data = callback_query['data']
         chat_id = callback_query['from']['id']
@@ -355,13 +409,11 @@ class TelegramNotifier:
             token_address = data.split(':')[1]
             command = f"/buy {token_address} 1000"
             
-            # Send command as new message
             self.send_message(
                 str(chat_id),
                 f"📋 <b>Photon Command:</b>\n\n<code>{command}</code>\n\nCopy and paste in @PhotonSol_Bot"
             )
             
-            # Answer callback
             self._make_request('answerCallbackQuery', {
                 'callback_query_id': callback_id,
                 'text': '✅ Command copied!'
@@ -384,7 +436,6 @@ class TelegramNotifier:
             return True
         
         elif data == 'dismiss':
-            # Delete message
             self._make_request('deleteMessage', {
                 'chat_id': chat_id,
                 'message_id': message_id
@@ -399,12 +450,7 @@ class TelegramNotifier:
         return False
     
     def process_bot_updates(self, updates: List[dict]):
-        """
-        Process incoming bot updates (messages, callbacks).
-        
-        Args:
-            updates: List of Telegram updates
-        """
+        """Process incoming bot updates"""
         for update in updates:
             if 'message' in update:
                 self._handle_message(update['message'])
@@ -420,7 +466,6 @@ class TelegramNotifier:
         last_name = message['from'].get('last_name')
         
         if text == '/start':
-            # Welcome message
             self.send_message(
                 chat_id,
                 "👋 <b>Welcome to Sifter KYS Alerts!</b>\n\n"
