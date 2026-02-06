@@ -1,15 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders } from 'lucide-react';
+import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders, LogOut, Loader2 } from 'lucide-react';
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
 import TelegramSettings from './TelegramSettings';
-// At the top of SifterKYS.jsx, add these imports:
 import WalletHealthDashboard from './WalletHealthDashboard';
 import WalletLeagueTable from './WalletLeagueTable';
 import WalletReplacementModal from './WalletReplacementModal';
+import Auth from './components/Auth';
+import { useAuth } from './contexts/AuthContext';
 
 
 export default function SifterKYS() {
+  // ========== AUTHENTICATION ==========
+  const {
+    user,
+    loading: authLoading,
+    isAuthenticated,
+    isPasswordRecovery,
+    signIn,
+    signUp,
+    signOut,
+    resetPassword,
+    updatePassword,
+    getAccessToken,
+  } = useAuth();
+
   // ========== MODE TOGGLE ==========
   const [mode, setMode] = useState('twitter'); // 'twitter' or 'wallet'
   const [isSwitchingMode, setIsSwitchingMode] = useState(false);
@@ -92,7 +107,17 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
 
   const API_URL = 'http://localhost:5000';
-  const userId = 'demo_user';
+  const userId = user?.id;
+
+  // Helper for authenticated API calls
+  const authFetch = async (url, options = {}) => {
+    const token = getAccessToken();
+    const headers = {
+      ...options.headers,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    };
+    return fetch(url, { ...options, headers });
+  };
 
   // ========== EFFECTS ==========
   useEffect(() => {
@@ -323,7 +348,7 @@ useEffect(() => {
 
       if (mode === 'twitter') {
         const endpoint = '/api/wallets/analyze';
-        const response = await fetch(`${API_URL}${endpoint}`, {
+        const response = await authFetch(`${API_URL}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tokens: tokensToAnalyze })
@@ -344,7 +369,7 @@ useEffect(() => {
       } else {
         const endpoint = '/api/wallets/analyze';
 
-        const response = await fetch(`${API_URL}${endpoint}`, {
+        const response = await authFetch(`${API_URL}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -384,7 +409,7 @@ useEffect(() => {
   // ========== WATCHLIST FUNCTIONS ==========
   const loadTwitterWatchlist = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setTwitterWatchlist(data.accounts);
@@ -396,7 +421,7 @@ useEffect(() => {
 
   const loadTwitterWatchlistStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setTwitterWatchlistStats(data.stats);
@@ -408,7 +433,7 @@ useEffect(() => {
 
   const loadWalletWatchlist = async () => {
   try {
-    const response = await fetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
+    const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
     const data = await response.json();
     if (data.success) {
       setWalletWatchlist(data.wallets || []);
@@ -421,7 +446,7 @@ useEffect(() => {
 
   const loadWalletWatchlistStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setWalletWatchlistStats(data.stats);
@@ -433,7 +458,7 @@ useEffect(() => {
 
   const addToTwitterWatchlist = async (account) => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/add`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, account })
@@ -449,7 +474,7 @@ useEffect(() => {
 
   const addToWalletWatchlist = async (wallet) => {
     try {
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/add`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -484,7 +509,7 @@ useEffect(() => {
   const removeFromTwitterWatchlist = async (authorId) => {
     if (!confirm('Remove this account from watchlist?')) return;
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/remove`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId })
@@ -505,7 +530,7 @@ useEffect(() => {
   const removeFromWalletWatchlist = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
     try {
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/remove`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress })
@@ -522,7 +547,7 @@ useEffect(() => {
 
   const updateTwitterWatchlistNotes = async (authorId, notes) => {
     try {
-      const response = await fetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, notes })
@@ -541,7 +566,7 @@ useEffect(() => {
   const updateTwitterWatchlistTags = async (authorId, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
-      const response = await fetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, tags: tagsArray })
@@ -559,7 +584,7 @@ useEffect(() => {
 
   const updateWalletWatchlistNotes = async (walletAddress, notes) => {
     try {
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, notes })
@@ -584,7 +609,7 @@ const findReplacements = async (walletAddress) => {
     setIsLoadingReplacements(true);
     setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
     
-    const response = await fetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
+    const response = await authFetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -612,7 +637,7 @@ const findReplacements = async (walletAddress) => {
 
 const handleReplaceWallet = async (newWallet) => {
   try {
-    const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
+    const response = await authFetch(`${API_URL}/api/wallets/watchlist/replace`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -645,7 +670,7 @@ const handleReplaceWallet = async (newWallet) => {
   const updateWalletWatchlistTags = async (walletAddress, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
-      const response = await fetch(`${API_URL}/api/wallets/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, tags: tagsArray })
@@ -677,7 +702,7 @@ const handleReplaceWallet = async (newWallet) => {
         max_age_days: runnerFilters.maxTokenAge
       });
 
-      const response = await fetch(`${API_URL}/api/trending/runners?${params}`);
+      const response = await authFetch(`${API_URL}/api/trending/runners?${params}`);
       const data = await response.json();
       
       if (data.success) {
@@ -699,7 +724,7 @@ const handleReplaceWallet = async (newWallet) => {
 
     try {
       if (mode === 'twitter') {
-        const response = await fetch(`${API_URL}/api/analyze/runner`, {
+        const response = await authFetch(`${API_URL}/api/analyze/runner`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -722,7 +747,7 @@ const handleReplaceWallet = async (newWallet) => {
           }
         }));
       } else {
-        const response = await fetch(`${API_URL}/api/trending/analyze`, {
+        const response = await authFetch(`${API_URL}/api/trending/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -769,7 +794,7 @@ const handleReplaceWallet = async (newWallet) => {
         ? '/api/discover/twitter'
         : '/api/discover/wallets';
 
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const response = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -833,6 +858,31 @@ const handleReplaceWallet = async (newWallet) => {
   };
 
   const hasResults = isAnalyzing || twitterResults || walletResults;
+
+  // Show loading spinner while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 size={48} className="animate-spin text-purple-500" />
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth screen if not authenticated
+  if (!isAuthenticated || isPasswordRecovery) {
+    return (
+      <Auth
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onResetPassword={resetPassword}
+        onUpdatePassword={updatePassword}
+        isPasswordRecovery={isPasswordRecovery}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-gray-100">
@@ -916,6 +966,15 @@ const handleReplaceWallet = async (newWallet) => {
               >
                 Upgrade
               </a>
+
+              <button
+                onClick={() => signOut()}
+                className="px-3 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition text-sm flex items-center gap-2"
+                title={user?.email}
+              >
+                <LogOut size={16} />
+                <span className="hidden sm:inline">Sign Out</span>
+              </button>
             </div>
           </div>
         </div>
