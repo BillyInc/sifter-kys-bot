@@ -15,10 +15,13 @@ def _get_user_id() -> str | None:
     return getattr(request, 'user_id', None)
 
 
-@watchlist_bp.route('/add', methods=['POST'])
+@watchlist_bp.route('/add', methods=['POST', 'OPTIONS'])
 @require_auth
 def add_to_watchlist():
     """Add account to watchlist."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     data = request.json
     user_id = _get_user_id() or data.get('user_id')
     account = data.get('account')
@@ -33,10 +36,13 @@ def add_to_watchlist():
     return jsonify({'success': False, 'error': 'Failed to add account'}), 500
 
 
-@watchlist_bp.route('/get', methods=['GET'])
+@watchlist_bp.route('/get', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_watchlist():
     """Get user's watchlist."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     user_id = _get_user_id() or request.args.get('user_id')
 
     if not user_id:
@@ -46,10 +52,13 @@ def get_watchlist():
     return jsonify({'success': True, 'accounts': accounts}), 200
 
 
-@watchlist_bp.route('/remove', methods=['POST'])
+@watchlist_bp.route('/remove', methods=['POST', 'OPTIONS'])
 @require_auth
 def remove_from_watchlist():
     """Remove account from watchlist."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     data = request.json
     user_id = _get_user_id() or data.get('user_id')
     author_id = data.get('author_id')
@@ -64,10 +73,13 @@ def remove_from_watchlist():
     return jsonify({'success': False, 'error': 'Failed to remove account'}), 500
 
 
-@watchlist_bp.route('/update', methods=['POST'])
+@watchlist_bp.route('/update', methods=['POST', 'OPTIONS'])
 @require_auth
 def update_watchlist_account():
     """Update account notes and tags."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     data = request.json
     user_id = _get_user_id() or data.get('user_id')
     author_id = data.get('author_id')
@@ -84,10 +96,13 @@ def update_watchlist_account():
     return jsonify({'success': False, 'error': 'Failed to update account'}), 500
 
 
-@watchlist_bp.route('/groups', methods=['GET'])
+@watchlist_bp.route('/groups', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_watchlist_groups():
     """Get user's watchlist groups."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     user_id = _get_user_id() or request.args.get('user_id')
 
     if not user_id:
@@ -97,10 +112,13 @@ def get_watchlist_groups():
     return jsonify({'success': True, 'groups': groups}), 200
 
 
-@watchlist_bp.route('/groups/create', methods=['POST'])
+@watchlist_bp.route('/groups/create', methods=['POST', 'OPTIONS'])
 @require_auth
 def create_watchlist_group():
     """Create a new watchlist group."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     data = request.json
     user_id = _get_user_id() or data.get('user_id')
     group_name = data.get('group_name')
@@ -120,10 +138,13 @@ def create_watchlist_group():
     return jsonify({'success': False, 'error': 'Failed to create group'}), 500
 
 
-@watchlist_bp.route('/stats', methods=['GET'])
+@watchlist_bp.route('/stats', methods=['GET', 'OPTIONS'])
 @require_auth
 def get_watchlist_stats():
     """Get watchlist statistics."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     user_id = _get_user_id() or request.args.get('user_id')
 
     if not user_id:

@@ -1,6 +1,9 @@
 """Telegram integration routes."""
 from flask import Blueprint, request, jsonify
 import os
+import threading
+import time
+import requests
 
 from auth import require_auth
 from services.telegram_notifier import TelegramNotifier
@@ -231,3 +234,41 @@ def get_bot_info():
             'success': False,
             'error': 'Failed to fetch bot info'
         }), 500
+        
+@telegram_bp.route('/start-polling', methods=['POST'])
+def start_polling():
+    """Start polling for Telegram updates (local dev without ngrok)"""
+    def poll_updates():
+        last_update_id = 0
+        TELEGRAM_API_BASE = f"https://api.telegram.org/bot8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk"
+        
+        print("[TELEGRAM POLLING] Started")
+        
+        while True:
+            try:
+                response = requests.get(
+                    f"{TELEGRAM_API_BASE}/getUpdates",
+                    params={'offset': last_update_id + 1, 'timeout': 10},
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok') and data.get('result'):
+                        updates = data['result']
+                        
+                        if updates and telegram_notifier:
+                            telegram_notifier.process_bot_updates(updates)
+                            last_update_id = max(u['update_id'] for u in updates)
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"[TELEGRAM POLLING] Error: {e}")
+                time.sleep(5)
+    
+    # Start polling thread
+    thread = threading.Thread(target=poll_updates, daemon=True)
+    thread.start()
+    
+    return jsonify({'success': True, 'message': 'Polling started'})

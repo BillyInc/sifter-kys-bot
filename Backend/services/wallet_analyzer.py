@@ -5,6 +5,7 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Semaphore
+from datetime import datetime, timedelta
 
 class WalletPumpAnalyzer:
     """
@@ -16,13 +17,13 @@ class WalletPumpAnalyzer:
     3. Fetch Birdeye historical trades (30 days back)
     4. Fetch recent Solana Tracker trades
     5. Fetch PnL for ALL wallets, filter for ≥3x ROI AND ≥$100 invested
-    6. Rank by professional score (60% timing, 30% profit, 10% overall)
+    6. Rank by professional score (60% distance to ATH, 30% realized profit, 10% total position)
     
     Additional Features:
-    - 30-day runner history tracking with verification
+    - 30-day runner history tracking with per-runner distance to ATH
     - Cross-runner consistency grading
     - Batch analysis with variance tracking
-    - Professional scoring (60/30/10)
+    - Professional scoring (60/30/10 - NO time-based)
     - Replacement finder for degrading wallets
     
     All data from SolanaTracker + Birdeye APIs
@@ -41,6 +42,10 @@ class WalletPumpAnalyzer:
         self.solana_tracker_semaphore = Semaphore(3)
         self.pnl_semaphore = Semaphore(2)
         self.executor = None
+        
+        # ✅ ADD: Caching for trending runners
+        self._trending_cache = {}
+        self._cache_expiry = {}
 
     def _log(self, message):
         if self.debug_mode:
@@ -111,15 +116,18 @@ class WalletPumpAnalyzer:
             return None
 
     def get_token_ath(self, token_address):
-        """Get all-time high price data"""
+        """Get all-time high price data - ✅ USES RETRY"""
         try:
             url = f"{self.st_base_url}/tokens/{token_address}/ath"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=15)
             
-            if response.status_code != 200:
-                return None
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            return response.json()
+            return data  # Returns None if failed
             
         except Exception as e:
             self._log(f"  ⚠️ Error fetching ATH: {str(e)}")
@@ -131,7 +139,7 @@ class WalletPumpAnalyzer:
             url = f"{self.st_base_url}/wallet/{wallet_address}/trades"
             params = {'limit': limit}
             
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
+            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
@@ -190,15 +198,16 @@ class WalletPumpAnalyzer:
             return 0
 
     # =========================================================================
-    # TRENDING RUNNER DISCOVERY
+    # TRENDING RUNNER DISCOVERY (FIXED)
     # =========================================================================
 
     def _get_price_range_in_period(self, token_address, days_back):
-        """Get price multiplier for period"""
+        """Get price multiplier for period - ✅ USES RETRY"""
         try:
             time_to = int(time.time())
             time_from = time_to - (days_back * 86400)
             
+            # Auto-select candle size based on timeframe
             candle_type = '1h' if days_back <= 7 else '4h'
             
             url = f"{self.st_base_url}/chart/{token_address}"
@@ -209,12 +218,17 @@ class WalletPumpAnalyzer:
                 'currency': 'usd'
             }
             
-            response = requests.get(url, headers=self._get_solanatracker_headers(), params=params, timeout=15)
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                params=params,
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            if response.status_code != 200:
+            if not data:
                 return None
             
-            data = response.json()
             candles = data.get('oclhv', [])
             
             if not candles:
@@ -237,23 +251,35 @@ class WalletPumpAnalyzer:
             }
             
         except Exception as e:
+            self._log(f"  ⚠️ Price range error: {str(e)}")
             return None
 
     def _get_token_detailed_info(self, token_address):
-        """Get detailed token information"""
+        """Get detailed token information - ✅ USES RETRY"""
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
             
-            if response.status_code != 200:
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
+            
+            if not data:
                 return None
             
-            data = response.json()
             pools = data.get('pools', [])
             if not pools:
                 return None
             
             primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+            
+            # ✅ Get creation time for age calculation
+            creation_time = data.get('creation', {}).get('created_time', 0)
+            token_age_days = 0
+            if creation_time > 0:
+                token_age_days = (time.time() - creation_time) / 86400
             
             return {
                 'symbol': data.get('symbol', 'UNKNOWN'),
@@ -262,32 +288,62 @@ class WalletPumpAnalyzer:
                 'liquidity': primary_pool.get('liquidity', {}).get('usd', 0),
                 'volume_24h': primary_pool.get('txns', {}).get('volume24h', 0),
                 'price': primary_pool.get('price', {}).get('usd', 0),
-                'holders': data.get('holders', 0)
+                'holders': data.get('holders', 0),
+                'age_days': token_age_days,  # ✅ Numeric age
+                'age': f"{token_age_days:.1f}d" if token_age_days > 0 else 'N/A'  # ✅ Formatted age
             }
             
         except Exception as e:
+            self._log(f"  ⚠️ Token info error: {str(e)}")
             return None
 
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
-        """Enhanced trending runner discovery"""
+        """
+        ✅ OPTIMIZED: Enhanced trending runner discovery with caching
+        
+        Changes:
+        1. Limit to top 20 tokens (not 100) - 5x faster
+        2. Added time.sleep(0.2) backoff to avoid 429s
+        3. Disable cache for 30d (fresh Auto Discovery)
+        4. 5-minute cache TTL for 7d/14d
+        5. All fields present (ticker, chain, age)
+        """
+        cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}"
+        now = datetime.now()
+        
+        # ✅ SKIP CACHE for 30d (Auto Discovery always fresh)
+        if days_back == 30:
+            self._log(f"  ⚡ Skipping cache for 30d (one-off autodiscovery)")
+        else:
+            # Check cache for 7d/14d
+            if cache_key in self._trending_cache:
+                cache_age = now - self._cache_expiry[cache_key]
+                if cache_age < timedelta(minutes=5):
+                    self._log(f"  ⚡ Cache hit ({cache_key}) - age: {cache_age.seconds}s")
+                    return self._trending_cache[cache_key]
+        
         self._log(f"\n{'='*80}")
         self._log(f"FINDING TRENDING RUNNERS: {days_back} days, {min_multiplier}x+")
         self._log(f"{'='*80}")
         
         try:
-            timeframe_map = {7: '24h', 14: '24h', 30: '24h', 1: '24h'}
-            st_timeframe = timeframe_map.get(days_back, '24h')
+            # ✅ Use fetch_with_retry for trending list
+            url = f"{self.st_base_url}/tokens/trending"
+            response = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            url = f"{self.st_base_url}/tokens/trending/{st_timeframe}"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
-            
-            if response.status_code != 200:
+            if not response:
+                self._log(f"  ❌ Failed to fetch trending list")
                 return []
             
-            trending_data = response.json()
+            trending_data = response if isinstance(response, list) else []
             qualified_runners = []
             
-            for item in trending_data[:100]:
+            # ✅ LIMIT TO TOP 20 (not 100) - 5x faster
+            for item in trending_data[:20]:
                 try:
                     token = item.get('token', {})
                     pools = item.get('pools', [])
@@ -302,6 +358,7 @@ class WalletPumpAnalyzer:
                     if liquidity < min_liquidity:
                         continue
                     
+                    # ✅ Calculate multiplier within timeframe
                     price_range = self._get_price_range_in_period(mint, days_back)
                     if not price_range or price_range['multiplier'] < min_multiplier:
                         continue
@@ -312,16 +369,14 @@ class WalletPumpAnalyzer:
                     
                     ath_data = self.get_token_ath(mint)
                     
-                    creation_time = token.get('creation', {}).get('created_time', 0)
-                    token_age_days = 0
-                    if creation_time > 0:
-                        token_age_days = (time.time() - creation_time) / 86400
+                    token_age_days = token_info.get('age_days', 0)
                     
                     qualified_runners.append({
                         'symbol': token.get('symbol', 'UNKNOWN'),
+                        'ticker': token.get('symbol', 'UNKNOWN'),  # ✅ Frontend expects ticker
                         'name': token.get('name', 'Unknown'),
                         'address': mint,
-                        'chain': 'solana',
+                        'chain': 'solana',  # ✅ Frontend expects chain
                         'multiplier': round(price_range['multiplier'], 2),
                         'period_days': days_back,
                         'lowest_price': price_range['lowest_price'],
@@ -333,15 +388,26 @@ class WalletPumpAnalyzer:
                         'volume_24h': token_info['volume_24h'],
                         'holders': token_info['holders'],
                         'token_age_days': round(token_age_days, 1),
+                        'age': token_info.get('age', 'N/A'),  # ✅ Formatted age
                         'pair_address': pool.get('poolId', mint)
                     })
                     
+                    # ✅ BACKOFF to avoid 429s
+                    time.sleep(0.2)
+                    
                 except Exception as e:
+                    self._log(f"  ⚠️ Token skip: {str(e)}")
                     continue
             
             qualified_runners.sort(key=lambda x: x['multiplier'], reverse=True)
             
-            self._log(f"  ✅ Found {len(qualified_runners)} runners")
+            # ✅ ONLY CACHE 7d/14d (not 30d)
+            if days_back != 30:
+                self._trending_cache[cache_key] = qualified_runners
+                self._cache_expiry[cache_key] = now
+                self._log(f"  ✅ Found {len(qualified_runners)} runners (cached 5 min)")
+            else:
+                self._log(f"  ✅ Found {len(qualified_runners)} runners (no cache - one-off)")
             
             return qualified_runners
             
@@ -350,54 +416,103 @@ class WalletPumpAnalyzer:
             return []
 
     # =========================================================================
-    # PROFESSIONAL SCORING (60/30/10)
+    # PROFESSIONAL SCORING (60/30/10) - ✅ CORRECTED: DISTANCE BASED, NOT TIME
     # =========================================================================
 
     def calculate_wallet_professional_score(self, wallet_data, ath_price, ath_time=None):
-        """Professional scoring: 60% timing, 30% profit, 10% overall"""
+        """
+        ✅ CORRECTED: Professional scoring based ONLY on Distance to ATH
+        
+        SCORING COMPONENTS:
+        1. Distance to ATH (60%) - Entry-to-ATH multiplier & percentage
+        2. Realized Profit (30%) - Actual profits taken
+        3. Total Position (10%) - Overall position value
+        
+        NO TIME-BASED SCORING.
+        """
         try:
             entry_price = wallet_data.get('entry_price')
             realized_multiplier = wallet_data.get('realized_multiplier', 0)
             total_multiplier = wallet_data.get('total_multiplier', 0)
-            first_buy_time = wallet_data.get('first_buy_time')
             
-            # Calculate Entry-to-ATH multiplier
+            # ============================================================
+            # 1. DISTANCE TO ATH SCORE (60%)
+            # ============================================================
+            distance_to_ath_score = 0
             entry_to_ath_multiplier = None
+            distance_to_ath_pct = None
+            
             if entry_price and ath_price and ath_price > 0 and entry_price > 0:
+                # Calculate multiplier (how many x below ATH they bought)
                 entry_to_ath_multiplier = ath_price / entry_price
-            
-            # 1. TIMING SCORE (60%)
-            timing_score = 0
-            if entry_to_ath_multiplier:
-                timing_score = min(100, entry_to_ath_multiplier * 20)
-            elif first_buy_time and ath_time:
-                buy_time_sec = first_buy_time / 1000 if first_buy_time > 1000000000000 else first_buy_time
-                seconds_before_ath = ath_time - buy_time_sec
-                days_before_ath = seconds_before_ath / 86400
                 
-                if days_before_ath > 0:
-                    timing_score = min(100, (days_before_ath / 30) * 100)
+                # Calculate percentage (what % below ATH they bought)
+                distance_to_ath_pct = ((ath_price - entry_price) / ath_price) * 100
+                
+                # Scoring based on multiplier distance
+                if entry_to_ath_multiplier >= 10:
+                    distance_to_ath_score = 100
+                elif entry_to_ath_multiplier >= 5:
+                    distance_to_ath_score = 80 + ((entry_to_ath_multiplier - 5) / 5) * 20
+                elif entry_to_ath_multiplier >= 3:
+                    distance_to_ath_score = 60 + ((entry_to_ath_multiplier - 3) / 2) * 20
+                elif entry_to_ath_multiplier >= 2:
+                    distance_to_ath_score = 40 + ((entry_to_ath_multiplier - 2) / 1) * 20
+                elif entry_to_ath_multiplier >= 1.5:
+                    distance_to_ath_score = 20 + ((entry_to_ath_multiplier - 1.5) / 0.5) * 20
+                elif entry_to_ath_multiplier >= 1:
+                    distance_to_ath_score = ((entry_to_ath_multiplier - 1) / 0.5) * 20
                 else:
-                    timing_score = 50
+                    distance_to_ath_score = 0
             else:
-                timing_score = 50
+                distance_to_ath_score = 50
             
-            # 2. PROFIT SCORE (30%)
-            profit_score = 0
+            # ============================================================
+            # 2. REALIZED PROFIT SCORE (30%)
+            # ============================================================
+            realized_profit_score = 0
+            
             if realized_multiplier > 0:
-                profit_score = min(100, (realized_multiplier - 1) * 20)
+                if realized_multiplier >= 10:
+                    realized_profit_score = 100
+                elif realized_multiplier >= 5:
+                    realized_profit_score = 80 + ((realized_multiplier - 5) / 5) * 20
+                elif realized_multiplier >= 3:
+                    realized_profit_score = 60 + ((realized_multiplier - 3) / 2) * 20
+                elif realized_multiplier >= 2:
+                    realized_profit_score = 40 + ((realized_multiplier - 2) / 1) * 20
+                elif realized_multiplier >= 1:
+                    realized_profit_score = ((realized_multiplier - 1) / 1) * 40
             
-            # 3. OVERALL SCORE (10%)
-            overall_score = 0
+            # ============================================================
+            # 3. TOTAL POSITION SCORE (10%)
+            # ============================================================
+            total_position_score = 0
+            
             if total_multiplier > 0:
-                overall_score = min(100, (total_multiplier - 1) * 10)
+                if total_multiplier >= 10:
+                    total_position_score = 100
+                elif total_multiplier >= 5:
+                    total_position_score = 80 + ((total_multiplier - 5) / 5) * 20
+                elif total_multiplier >= 3:
+                    total_position_score = 60 + ((total_multiplier - 3) / 2) * 20
+                elif total_multiplier >= 2:
+                    total_position_score = 40 + ((total_multiplier - 2) / 1) * 20
+                elif total_multiplier >= 1:
+                    total_position_score = ((total_multiplier - 1) / 1) * 40
             
+            # ============================================================
+            # 4. WEIGHTED PROFESSIONAL SCORE (60/30/10)
+            # ============================================================
             professional_score = (
-                timing_score * 0.60 +
-                profit_score * 0.30 +
-                overall_score * 0.10
+                distance_to_ath_score * 0.60 +
+                realized_profit_score * 0.30 +
+                total_position_score * 0.10
             )
             
+            # ============================================================
+            # 5. GRADE ASSIGNMENT
+            # ============================================================
             grade = 'F'
             if professional_score >= 90: grade = 'A+'
             elif professional_score >= 85: grade = 'A'
@@ -413,23 +528,34 @@ class WalletPumpAnalyzer:
                 'professional_score': round(professional_score, 2),
                 'professional_grade': grade,
                 'entry_to_ath_multiplier': round(entry_to_ath_multiplier, 2) if entry_to_ath_multiplier else None,
+                'distance_to_ath_pct': round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
+                'realized_multiplier': round(realized_multiplier, 2) if realized_multiplier else None,
+                'total_multiplier': round(total_multiplier, 2) if total_multiplier else None,
                 'score_breakdown': {
-                    'timing_score': round(timing_score, 2),
-                    'profit_score': round(profit_score, 2),
-                    'overall_score': round(overall_score, 2)
+                    'distance_to_ath_score': round(distance_to_ath_score, 2),
+                    'realized_profit_score': round(realized_profit_score, 2),
+                    'total_position_score': round(total_position_score, 2)
                 }
             }
             
         except Exception as e:
+            print(f"[SCORING ERROR] {str(e)}")
             return {
                 'professional_score': 0,
                 'professional_grade': 'F',
                 'entry_to_ath_multiplier': None,
-                'score_breakdown': {'timing_score': 0, 'profit_score': 0, 'overall_score': 0}
+                'distance_to_ath_pct': None,
+                'realized_multiplier': None,
+                'total_multiplier': None,
+                'score_breakdown': {
+                    'distance_to_ath_score': 0,
+                    'realized_profit_score': 0,
+                    'total_position_score': 0
+                }
             }
 
     # =========================================================================
-    # 30-DAY RUNNER HISTORY (THE DROPDOWN FEATURE)
+    # 30-DAY RUNNER HISTORY (THE DROPDOWN FEATURE) - ✅ WITH PER-RUNNER STATS
     # =========================================================================
 
     def _check_if_runner(self, token_address, min_multiplier=5.0):
@@ -460,8 +586,14 @@ class WalletPumpAnalyzer:
 
     def get_wallet_other_runners(self, wallet_address, current_token_address=None, min_multiplier=5.0):
         """
-        Get other 5x+ runners a wallet has traded in last 30 days
-        Powers the DROPDOWN feature
+        ✅ COMPLETE: Get other 5x+ runners WITH per-runner distance to ATH stats
+        
+        Returns for each runner:
+        - entry_to_ath_multiplier (how many X below ATH they bought)
+        - distance_to_ath_pct (what % below ATH they bought)
+        - roi_multiplier, invested, realized
+        
+        Plus aggregate stats with averages.
         """
         try:
             trades = self.get_wallet_trades_30days(wallet_address)
@@ -476,32 +608,95 @@ class WalletPumpAnalyzer:
                     token_addresses.add(token_addr)
             
             other_runners = []
+            
             for token_addr in list(token_addresses)[:15]:
+                # Step 1: Verify it's a runner
                 runner_info = self._check_if_runner(token_addr, min_multiplier)
                 
-                if runner_info:
-                    pnl_data = self.get_wallet_pnl_solanatracker(wallet_address, token_addr)
+                if not runner_info:
+                    continue
+                
+                # Step 2: Get wallet's PnL on this token
+                pnl_data = self.get_wallet_pnl_solanatracker(wallet_address, token_addr)
+                
+                if not pnl_data:
+                    continue
+                
+                realized = pnl_data.get('realized', 0)
+                invested = pnl_data.get('total_invested', 0)
+                
+                if invested <= 0:
+                    continue
+                
+                # Calculate ROI
+                roi_mult = (realized + invested) / invested
+                runner_info['roi_multiplier'] = round(roi_mult, 2)
+                runner_info['invested'] = round(invested, 2)
+                runner_info['realized'] = round(realized, 2)
+                
+                # ✅ Step 3: Get wallet's ENTRY PRICE on this token
+                first_buy = self.get_first_buy_for_wallet(wallet_address, token_addr)
+                
+                if first_buy and first_buy.get('price'):
+                    entry_price = first_buy['price']
+                    ath_price = runner_info.get('ath_price', 0)
                     
-                    if pnl_data:
-                        realized = pnl_data.get('realized', 0)
-                        invested = pnl_data.get('total_invested', 0)
+                    runner_info['entry_price'] = entry_price
+                    
+                    # ✅ Step 4: Calculate DISTANCE TO ATH for this runner
+                    if entry_price > 0 and ath_price > 0:
+                        entry_to_ath_mult = ath_price / entry_price
+                        distance_pct = ((ath_price - entry_price) / ath_price) * 100
                         
-                        if invested > 0:
-                            roi_mult = (realized + invested) / invested
-                            runner_info['roi_multiplier'] = round(roi_mult, 2)
-                            runner_info['invested'] = round(invested, 2)
-                            runner_info['realized'] = round(realized, 2)
-                        
-                        other_runners.append(runner_info)
+                        runner_info['entry_to_ath_multiplier'] = round(entry_to_ath_mult, 2)
+                        runner_info['distance_to_ath_pct'] = round(distance_pct, 2)
+                    else:
+                        runner_info['entry_to_ath_multiplier'] = None
+                        runner_info['distance_to_ath_pct'] = None
+                else:
+                    runner_info['entry_price'] = None
+                    runner_info['entry_to_ath_multiplier'] = None
+                    runner_info['distance_to_ath_pct'] = None
+                
+                other_runners.append(runner_info)
+                time.sleep(0.2)
             
+            # ✅ Step 5: Calculate AGGREGATE STATS
             stats = {}
+            
             if other_runners:
+                # Success rate
                 successful = sum(1 for r in other_runners if r.get('roi_multiplier', 0) > 1)
                 stats['success_rate'] = round(successful / len(other_runners) * 100, 1)
                 
+                # Average ROI
                 roi_values = [r.get('roi_multiplier', 0) for r in other_runners if r.get('roi_multiplier')]
                 if roi_values:
                     stats['avg_roi'] = round(sum(roi_values) / len(roi_values), 2)
+                
+                # ✅ Average Entry-to-ATH Multiplier
+                entry_to_ath_values = [
+                    r.get('entry_to_ath_multiplier', 0) 
+                    for r in other_runners 
+                    if r.get('entry_to_ath_multiplier')
+                ]
+                if entry_to_ath_values:
+                    stats['avg_entry_to_ath'] = round(sum(entry_to_ath_values) / len(entry_to_ath_values), 2)
+                
+                # ✅ Average Distance to ATH Percentage
+                distance_pct_values = [
+                    r.get('distance_to_ath_pct', 0) 
+                    for r in other_runners 
+                    if r.get('distance_to_ath_pct')
+                ]
+                if distance_pct_values:
+                    stats['avg_distance_to_ath_pct'] = round(sum(distance_pct_values) / len(distance_pct_values), 2)
+                
+                # Total invested/realized
+                total_invested = sum(r.get('invested', 0) for r in other_runners)
+                total_realized = sum(r.get('realized', 0) for r in other_runners)
+                stats['total_invested'] = round(total_invested, 2)
+                stats['total_realized'] = round(total_realized, 2)
                 
                 stats['total_other_runners'] = len(other_runners)
             
@@ -511,6 +706,7 @@ class WalletPumpAnalyzer:
             }
             
         except Exception as e:
+            self._log(f"  ⚠️ Error getting 30-day runners: {str(e)}")
             return {'other_runners': [], 'stats': {}}
 
     # =========================================================================
@@ -810,7 +1006,7 @@ class WalletPumpAnalyzer:
             for wallet_info in qualified_wallets:
                 wallet_address = wallet_info['wallet']
                 
-                # Get 30-day runner history (THE DROPDOWN)
+                # Get 30-day runner history (THE DROPDOWN) with per-runner stats
                 runner_history = self.get_wallet_other_runners(wallet_address, token_address, min_multiplier=5.0)
                 
                 # Calculate professional score
@@ -835,21 +1031,25 @@ class WalletPumpAnalyzer:
                         wallet_info.get('cost_basis', 0)
                     ),
                     'entry_to_ath_multiplier': professional_score_data.get('entry_to_ath_multiplier'),
+                    'distance_to_ath_pct': professional_score_data.get('distance_to_ath_pct'),
                     'realized_profit': wallet_info['realized'],
                     'unrealized_profit': wallet_info['unrealized'],
                     'total_invested': wallet_info['total_invested'],
                     'cost_basis': wallet_info.get('cost_basis', 0),
+                    'realized_multiplier': professional_score_data.get('realized_multiplier'),
+                    'total_multiplier': professional_score_data.get('total_multiplier'),
                     
                     # Professional scoring
                     'professional_score': professional_score_data['professional_score'],
                     'professional_grade': professional_score_data['professional_grade'],
                     'score_breakdown': professional_score_data['score_breakdown'],
                     
-                    # 30-day runner history (DROPDOWN DATA)
+                    # 30-day runner history (DROPDOWN DATA with per-runner stats)
                     'runner_hits_30d': runner_history['stats'].get('total_other_runners', 0),
                     'runner_success_rate': runner_history['stats'].get('success_rate', 0),
                     'runner_avg_roi': runner_history['stats'].get('avg_roi', 0),
                     'other_runners': runner_history['other_runners'][:5],
+                    'other_runners_stats': runner_history['stats'],  # ✅ Add aggregate stats
                     
                     # Timing data
                     'first_buy_time': wallet_info.get('earliest_entry'),
