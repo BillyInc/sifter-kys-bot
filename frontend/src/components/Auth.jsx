@@ -115,7 +115,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
     <div className="min-h-screen bg-black flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold">
+          <h1 className="text-3xl font-bold text-white">
             SIFTER <span className="text-purple-500">KYS</span>
           </h1>
           <p className="text-gray-400 mt-2">{getTitle()}</p>
@@ -135,7 +135,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
           <form onSubmit={handleSubmit} className="space-y-4">
             {showEmailField && (
               <div>
-                <label className="block text-sm font-medium mb-2">Email</label>
+                <label className="block text-sm font-medium mb-2 text-white">Email</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                   <input
@@ -152,7 +152,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
 
             {showPasswordField && (
               <div>
-                <label className="block text-sm font-medium mb-2">
+                <label className="block text-sm font-medium mb-2 text-white">
                   {mode === 'update-password' ? 'New Password' : 'Password'}
                 </label>
                 <div className="relative">
@@ -178,7 +178,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
 
             {showConfirmPassword && (
               <div>
-                <label className="block text-sm font-medium mb-2">Confirm Password</label>
+                <label className="block text-sm font-medium mb-2 text-white">Confirm Password</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                   <input

@@ -8,6 +8,7 @@ import WalletLeagueTable from './WalletLeagueTable';
 import WalletReplacementModal from './WalletReplacementModal';
 import Auth from './components/Auth';
 import { useAuth } from './contexts/AuthContext';
+import AnalysisSettings from './Analysis_Setting.jsx';
 
 
 export default function SifterKYS() {
@@ -45,7 +46,7 @@ export default function SifterKYS() {
   const searchRef = useRef(null);
   
   // ========== ANALYSIS SETTINGS ==========
-  const [analysisType, setAnalysisType] = useState('pump_window'); // 'pump_window' or 'general'
+  const [analysisType, setAnalysisType] = useState('general'); // 'pump_window' or 'general'
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
   
@@ -72,24 +73,22 @@ export default function SifterKYS() {
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
 
+  // ========== BATCH ANALYSIS ==========
+  const [selectedRunners, setSelectedRunners] = useState([]);
+  const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
+  const [batchResults, setBatchResults] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefreshTime, setLastRefreshTime] = useState(null);
 
-  // Inside your SifterKYS component, add these state variables:
-const [showReplacementModal, setShowReplacementModal] = useState(false);
-const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
-const [replacementSuggestions, setReplacementSuggestions] = useState([]);
-const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
-  
   // ========== WALLET ALERTS ==========
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
-  const [activeSettingsTab, setActiveSettingsTab] = useState('telegram'); // NEW
+  const [activeSettingsTab, setActiveSettingsTab] = useState('telegram');
 
-  
   // ========== TRENDING RUNNERS ==========
   const [trendingRunners, setTrendingRunners] = useState([]);
   const [isLoadingRunners, setIsLoadingRunners] = useState(false);
   const [runnerFilters, setRunnerFilters] = useState({
-    timeframe: '24h',
-    candleTimeframe: '5m',
+    timeframe: '7d',
     minLiquidity: 50000,
     maxLiquidity: 10000000,
     minVolume: 0,
@@ -105,6 +104,12 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   // ========== AUTO DISCOVERY ==========
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
+
+  // ========== WALLET REPLACEMENT ==========
+  const [showReplacementModal, setShowReplacementModal] = useState(false);
+  const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
+  const [replacementSuggestions, setReplacementSuggestions] = useState([]);
+  const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
 
   const API_URL = 'http://localhost:5000';
   const userId = user?.id;
@@ -155,18 +160,33 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   }, [activeTab]);
 
   // Load watchlist when tab opens
-useEffect(() => {
-  if (activeTab === 'watchlist' && mode === 'wallet') {
-    loadWalletWatchlist();
-  }
-}, [activeTab, mode]);
+  useEffect(() => {
+    if (activeTab === 'watchlist' && mode === 'wallet') {
+      loadWalletWatchlist();
+    }
+  }, [activeTab, mode]);
 
   // Auto-reload trending runners when filters change
   useEffect(() => {
     if (activeTab === 'trending') {
       loadTrendingRunners();
     }
-  }, [runnerFilters.timeframe, runnerFilters.candleTimeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity, runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier, runnerFilters.minTokenAge, runnerFilters.maxTokenAge]);
+  }, [runnerFilters.timeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity, 
+      runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier, 
+      runnerFilters.minTokenAge, runnerFilters.maxTokenAge]);
+
+  // Auto-refresh trending runners every 60 seconds
+  useEffect(() => {
+    if (!autoRefresh || activeTab !== 'trending') return;
+    
+    const interval = setInterval(() => {
+      console.log('Auto-refreshing trending runners...');
+      loadTrendingRunners();
+      setLastRefreshTime(new Date());
+    }, 60000); // 60 seconds
+    
+    return () => clearInterval(interval);
+  }, [autoRefresh, activeTab]);
 
   // ========== MODE SWITCHING WITH TRANSITION ==========
   const handleModeSwitch = async (newMode) => {
@@ -406,6 +426,61 @@ useEffect(() => {
     setIsAnalyzing(false);
   };
 
+  // ========== BATCH ANALYSIS FUNCTIONS ==========
+  const analyzeBatchRunners = async () => {
+    if (selectedRunners.length === 0) {
+      alert('Please select at least one runner');
+      return;
+    }
+
+    setIsBatchAnalyzing(true);
+
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/trending/analyze-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runners: selectedRunners,
+          user_id: userId,
+          min_roi_multiplier: 3.0,
+          min_runner_hits: 2
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setBatchResults(data);
+        setActiveTab('results'); // Switch to results tab
+      } else {
+        alert('Batch analysis failed');
+      }
+    } catch (error) {
+      console.error('Batch analysis error:', error);
+      alert('Batch analysis failed');
+    }
+
+    setIsBatchAnalyzing(false);
+  };
+
+  const toggleRunnerSelection = (runner) => {
+    const isSelected = selectedRunners.some(r => r.address === runner.address);
+    
+    if (isSelected) {
+      setSelectedRunners(selectedRunners.filter(r => r.address !== runner.address));
+    } else {
+      setSelectedRunners([...selectedRunners, runner]);
+    }
+  };
+
+  const selectAllRunners = () => {
+    setSelectedRunners([...trendingRunners]);
+  };
+
+  const clearRunnerSelection = () => {
+    setSelectedRunners([]);
+  };
+
   // ========== WATCHLIST FUNCTIONS ==========
   const loadTwitterWatchlist = async () => {
     try {
@@ -432,17 +507,17 @@ useEffect(() => {
   };
 
   const loadWalletWatchlist = async () => {
-  try {
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
-    const data = await response.json();
-    if (data.success) {
-      setWalletWatchlist(data.wallets || []);
-      setWalletWatchlistStats(data.stats || null);
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlist(data.wallets || []);
+        setWalletWatchlistStats(data.stats || null);
+      }
+    } catch (error) {
+      console.error('Error loading wallet watchlist:', error);
     }
-  } catch (error) {
-    console.error('Error loading wallet watchlist:', error);
-  }
-};
+  };
 
   const loadWalletWatchlistStats = async () => {
     try {
@@ -524,9 +599,6 @@ useEffect(() => {
     }
   };
 
-
-
-
   const removeFromWalletWatchlist = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
     try {
@@ -600,73 +672,6 @@ useEffect(() => {
     }
   };
 
-// Around line 550, after your existing watchlist functions:
-
-
-
-const findReplacements = async (walletAddress) => {
-  try {
-    setIsLoadingReplacements(true);
-    setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
-    
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${yourAuthToken}`
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        wallet_address: walletAddress,
-        min_professional_score: 85
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      setReplacementSuggestions(data.replacements || []);
-      setShowReplacementModal(true);
-    }
-  } catch (error) {
-    console.error('Error finding replacements:', error);
-  } finally {
-    setIsLoadingReplacements(false);
-  }
-};
-
-const handleReplaceWallet = async (newWallet) => {
-  try {
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/replace`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${yourAuthToken}`
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        old_wallet: currentDecliningWallet.wallet_address,
-        new_wallet: newWallet.wallet
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      await loadWalletWatchlist();
-      setShowReplacementModal(false);
-      setCurrentDecliningWallet(null);
-      setReplacementSuggestions([]);
-      alert('Wallet replaced successfully!');
-    }
-  } catch (error) {
-    console.error('Error replacing wallet:', error);
-    alert('Failed to replace wallet');
-  }
-};
-
-
-
   const updateWalletWatchlistTags = async (walletAddress, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
@@ -686,13 +691,76 @@ const handleReplaceWallet = async (newWallet) => {
     }
   };
 
+  // ========== WALLET REPLACEMENT FUNCTIONS ==========
+  const findReplacements = async (walletAddress) => {
+    try {
+      setIsLoadingReplacements(true);
+      setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
+      
+      const token = getAccessToken();
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          wallet_address: walletAddress,
+          min_professional_score: 85
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setReplacementSuggestions(data.replacements || []);
+        setShowReplacementModal(true);
+      }
+    } catch (error) {
+      console.error('Error finding replacements:', error);
+    } finally {
+      setIsLoadingReplacements(false);
+    }
+  };
+
+  const handleReplaceWallet = async (newWallet) => {
+    try {
+      const token = getAccessToken();
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          old_wallet: currentDecliningWallet.wallet_address,
+          new_wallet: newWallet.wallet
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        await loadWalletWatchlist();
+        setShowReplacementModal(false);
+        setCurrentDecliningWallet(null);
+        setReplacementSuggestions([]);
+        alert('Wallet replaced successfully!');
+      }
+    } catch (error) {
+      console.error('Error replacing wallet:', error);
+      alert('Failed to replace wallet');
+    }
+  };
+
   // ========== TRENDING RUNNERS ==========
   const loadTrendingRunners = async () => {
     setIsLoadingRunners(true);
     try {
       const params = new URLSearchParams({
         timeframe: runnerFilters.timeframe,
-        candle_timeframe: runnerFilters.candleTimeframe,
         min_liquidity: runnerFilters.minLiquidity,
         max_liquidity: runnerFilters.maxLiquidity,
         min_volume: runnerFilters.minVolume,
@@ -702,7 +770,7 @@ const handleReplaceWallet = async (newWallet) => {
         max_age_days: runnerFilters.maxTokenAge
       });
 
-      const response = await authFetch(`${API_URL}/api/trending/runners?${params}`);
+      const response = await authFetch(`${API_URL}/api/wallets/trending/runners?${params}`);
       const data = await response.json();
       
       if (data.success) {
@@ -792,7 +860,7 @@ const handleReplaceWallet = async (newWallet) => {
     try {
       const endpoint = mode === 'twitter' 
         ? '/api/discover/twitter'
-        : '/api/discover/wallets';
+        : '/api/wallets/discover';
 
       const response = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -852,12 +920,13 @@ const handleReplaceWallet = async (newWallet) => {
     if (confirm('Clear analysis results?')) {
       setTwitterResults(null);
       setWalletResults(null);
+      setBatchResults(null);
       setExpandedTokens({});
       setExpandedWallets({});
     }
   };
 
-  const hasResults = isAnalyzing || twitterResults || walletResults;
+  const hasResults = isAnalyzing || twitterResults || walletResults || batchResults;
 
   // Show loading spinner while checking auth
   if (authLoading) {
@@ -997,8 +1066,6 @@ const handleReplaceWallet = async (newWallet) => {
         <div className="flex gap-3 mb-6 border-b border-white/10">
           {[
             { id: 'analyze', label: 'Analyze', icon: Search },
-            
-
             { id: 'results', label: `${mode === 'twitter' ? 'Twitter' : 'Wallet'} Results`, icon: BarChart3 },
             { id: 'trending', label: 'Trending Runners', icon: TrendingUp },
             { id: 'discover', label: 'Auto Discovery', icon: Zap },
@@ -1016,7 +1083,7 @@ const handleReplaceWallet = async (newWallet) => {
             >
               <tab.icon size={16} />
               {tab.label}
-              {tab.id === 'results' && isAnalyzing && (
+              {tab.id === 'results' && (isAnalyzing || isBatchAnalyzing) && (
                 <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
               )}
             </button>
@@ -1041,8 +1108,9 @@ const handleReplaceWallet = async (newWallet) => {
                       backgroundImage: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)'
                     }}
                   >
+                  <option value="general" className="bg-gray-900 text-white py-2">📊 General Analysis</option>
                     <option value="pump_window" className="bg-gray-900 text-white py-2">🎯 Pump Window</option>
-                    <option value="general" className="bg-gray-900 text-white py-2">📊 General Analysis</option>
+                    
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" size={16} />
                 </div>
@@ -1129,138 +1197,47 @@ const handleReplaceWallet = async (newWallet) => {
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {selectedTokens.map((token) => {
-                    const key = `${token.chain}-${token.address}`;
-                    const settings = tokenSettings[key] || {
-                      days_back: daysBack,
-                      candle_size: candleSize,
-                      t_minus: tMinusWindow,
-                      t_plus: tPlusWindow
-                    };
-
-                    return (
-                      <div key={key} className="bg-black/30 rounded-lg p-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <div className="font-semibold text-sm">{token.ticker}</div>
-                            <div className="text-xs text-gray-400">{token.chain.toUpperCase()}</div>
-                          </div>
-                          <button
-                            onClick={() => removeToken(token.address, token.chain)}
-                            className="p-1 hover:bg-white/10 rounded transition"
-                          >
-                            <X size={14} />
-                          </button>
+                {/* Token List */}
+                <div className="space-y-2 mb-4">
+                  {selectedTokens.map((token) => (
+                    <div key={`${token.chain}-${token.address}`} className="bg-black/30 rounded-lg p-3">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">{token.ticker}</div>
+                          <div className="text-xs text-gray-400">{token.chain.toUpperCase()}</div>
                         </div>
-
-                        {!useGlobalSettings && (
-                          <div className="mt-3 pt-3 border-t border-white/10">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-xs font-medium mb-1">Days Back</label>
-                                <input
-                                  type="number"
-                                  value={settings.days_back}
-                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'days_back', parseInt(e.target.value))}
-                                  className="w-full bg-black/50 border border-white/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500 transition"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium mb-1">Candle</label>
-                                <select
-                                  value={settings.candle_size}
-                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'candle_size', e.target.value)}
-                                  className="w-full bg-black/50 border border-white/10 rounded px-2 py-1 text-xs appearance-none cursor-pointer focus:outline-none focus:border-purple-500 transition"
-                                >
-                                  <option value="1m">1m</option>
-                                  <option value="5m">5m</option>
-                                  <option value="15m">15m</option>
-                                  <option value="1h">1h</option>
-                                  <option value="4h">4h</option>
-                                  <option value="1d">1d</option>
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                        <button
+                          onClick={() => removeToken(token.address, token.chain)}
+                          className="p-1 hover:bg-white/10 rounded transition"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
-                    );
-                  })}
-                </div>
-
-                {/* Global Settings Toggle */}
-                <div className="mt-4 pt-4 border-t border-white/10">
-                  <div className="flex items-center gap-2 mb-3">
-                    <button
-                      onClick={() => setUseGlobalSettings(!useGlobalSettings)}
-                      className={`w-12 h-6 rounded-full transition-all duration-300 ${
-                        useGlobalSettings ? 'bg-purple-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-all duration-300 transform ${
-                        useGlobalSettings ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                    <span className="font-semibold text-sm">
-                      {useGlobalSettings ? 'Global Settings' : 'Per-Token Customization'}
-                    </span>
-                  </div>
-
-                  {useGlobalSettings && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Days Back</label>
-                        <input
-                          type="number"
-                          value={daysBack}
-                          onChange={(e) => setDaysBack(parseInt(e.target.value))}
-                          className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Candle Size</label>
-                        <div className="relative">
-                          <select
-                            value={candleSize}
-                            onChange={(e) => setCandleSize(e.target.value)}
-                            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm appearance-none cursor-pointer focus:outline-none focus:border-purple-500 transition"
-                          >
-                            <option value="1m">1m</option>
-                            <option value="5m">5m</option>
-                            <option value="15m">15m</option>
-                            <option value="1h">1h</option>
-                            <option value="4h">4h</option>
-                            <option value="1d">1d</option>
-                          </select>
-                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" size={14} />
-                        </div>
-                      </div>
-                      {analysisType === 'pump_window' && (
-                        <>
-                          <div>
-                            <label className="block text-xs font-medium mb-1">T-Minus (min)</label>
-                            <input
-                              type="number"
-                              value={tMinusWindow}
-                              onChange={(e) => setTMinusWindow(parseInt(e.target.value))}
-                              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium mb-1">T-Plus (min)</label>
-                            <input
-                              type="number"
-                              value={tPlusWindow}
-                              onChange={(e) => setTPlusWindow(parseInt(e.target.value))}
-                              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                            />
-                          </div>
-                        </>
-                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
+
+                {/* ✅ USE THE AnalysisSettings COMPONENT */}
+                <AnalysisSettings
+                  analysisType={analysisType}
+                  selectedTokens={selectedTokens}
+                  useGlobalSettings={useGlobalSettings}
+                  setUseGlobalSettings={setUseGlobalSettings}
+                  tokenSettings={tokenSettings}
+                  updateTokenSetting={updateTokenSetting}
+                  globalSettings={{
+                    daysBack,
+                    candleSize,
+                    tMinusWindow,
+                    tPlusWindow
+                  }}
+                  onGlobalSettingsChange={(settings) => {
+                    if (settings.daysBack !== undefined) setDaysBack(settings.daysBack);
+                    if (settings.candleSize !== undefined) setCandleSize(settings.candleSize);
+                    if (settings.tMinusWindow !== undefined) setTMinusWindow(settings.tMinusWindow);
+                    if (settings.tPlusWindow !== undefined) setTPlusWindow(settings.tPlusWindow);
+                  }}
+                />
 
                 {/* Run Analysis Button */}
                 <button
@@ -1298,11 +1275,12 @@ const handleReplaceWallet = async (newWallet) => {
               </div>
             )}
 
-            {(mode === 'twitter' ? twitterResults : walletResults) && (
+            {(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">
-                    {mode === 'twitter' ? 'Twitter' : 'Wallet'} Analysis Results
+                    {batchResults ? '🔥 Batch Analysis Results' : 
+                     mode === 'twitter' ? 'Twitter Analysis Results' : 'Wallet Analysis Results'}
                   </h3>
                   <button
                     onClick={clearResults}
@@ -1337,37 +1315,72 @@ const handleReplaceWallet = async (newWallet) => {
                   </div>
                 )}
 
-                {mode === 'wallet' && walletResults && (
+                {mode === 'wallet' && (walletResults || batchResults) && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
-                      <div>
-                        <div className="text-2xl font-bold text-green-400">
-                          {walletResults.summary?.qualified_wallets || walletResults.top_wallets?.length || 0}
+                    {/* Batch Results Summary */}
+                    {batchResults && (
+                      <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg p-4">
+                        <div className="grid grid-cols-4 gap-4">
+                          <div>
+                            <div className="text-2xl font-bold text-green-400">
+                              {batchResults.wallets_discovered}
+                            </div>
+                            <div className="text-xs text-gray-400">Smart Money Wallets</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-yellow-400">
+                              {batchResults.runners_analyzed}
+                            </div>
+                            <div className="text-xs text-gray-400">Runners Analyzed</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-blue-400">
+                              {batchResults.consistency_summary?.avg_runner_hits || 0}
+                            </div>
+                            <div className="text-xs text-gray-400">Avg Runner Hits</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-purple-400">
+                              {batchResults.consistency_summary?.a_plus_consistency || 0}
+                            </div>
+                            <div className="text-xs text-gray-400">A+ Consistency</div>
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-400">Qualified Wallets</div>
                       </div>
-                      <div>
-                        <div className="text-2xl font-bold text-yellow-400">
-                          {walletResults.summary?.real_winners || 0}
+                    )}
+
+                    {/* Wallet Results Summary */}
+                    {walletResults && !batchResults && (
+                      <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
+                        <div>
+                          <div className="text-2xl font-bold text-green-400">
+                            {walletResults.summary?.qualified_wallets || walletResults.top_wallets?.length || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Qualified Wallets</div>
                         </div>
-                        <div className="text-xs text-gray-400">S-Tier Wallets</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-blue-400">
-                          {walletResults.summary?.total_rallies || 0}
+                        <div>
+                          <div className="text-2xl font-bold text-yellow-400">
+                            {walletResults.summary?.real_winners || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">S-Tier Wallets</div>
                         </div>
-                        <div className="text-xs text-gray-400">Total Rallies</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-purple-400">
-                          {walletResults.summary?.tokens_analyzed || 0}
+                        <div>
+                          <div className="text-2xl font-bold text-blue-400">
+                            {walletResults.summary?.total_rallies || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Total Rallies</div>
                         </div>
-                        <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                        <div>
+                          <div className="text-2xl font-bold text-purple-400">
+                            {walletResults.summary?.tokens_analyzed || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="space-y-3">
-                      {walletResults.top_wallets?.map((wallet, idx) => {
+                      {(batchResults?.smart_money_wallets || walletResults?.top_wallets || []).map((wallet, idx) => {
                         const isExpanded = expandedWallets[idx];
 
                         return (
@@ -1563,7 +1576,7 @@ const handleReplaceWallet = async (newWallet) => {
               </div>
             )}
 
-            {!isAnalyzing && !(mode === 'twitter' ? twitterResults : walletResults) && (
+            {!isAnalyzing && !isBatchAnalyzing && !(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-12 text-center">
                 <BarChart3 className="mx-auto mb-4 text-gray-600" size={48} />
                 <h3 className="text-lg font-semibold mb-2">No Results Yet</h3>
@@ -1584,16 +1597,18 @@ const handleReplaceWallet = async (newWallet) => {
         {/* ========== TRENDING RUNNERS TAB ========== */}
         {activeTab === 'trending' && (
           <div className="space-y-4">
+            {/* ✅ UPDATED FILTER BAR - REMOVED CANDLE BUTTONS */}
             <div className="bg-gradient-to-r from-gray-900/50 to-gray-800/50 border border-white/10 rounded-xl p-3">
               <div className="flex items-center gap-3 flex-wrap">
+                {/* Timeframe Selector - 7d/14d/30d only */}
                 <div className="relative">
                   <select
                     value={runnerFilters.timeframe}
                     onChange={(e) => setRunnerFilters({...runnerFilters, timeframe: e.target.value})}
                     className="appearance-none flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 rounded-lg font-semibold text-sm transition-all duration-300 shadow-lg shadow-blue-500/30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/40 pr-8"
                   >
-                    <option value="24h" className="bg-gray-900">24 Hours</option>
                     <option value="7d" className="bg-gray-900">7 Days</option>
+                    <option value="14d" className="bg-gray-900">14 Days</option>
                     <option value="30d" className="bg-gray-900">30 Days</option>
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white" size={14} />
@@ -1601,6 +1616,7 @@ const handleReplaceWallet = async (newWallet) => {
 
                 <div className="h-8 w-px bg-white/10" />
 
+                {/* Multiplier Buttons */}
                 <div className="flex items-center gap-2">
                   {[5, 10, 20, 50].map(mult => (
                     <button
@@ -1619,24 +1635,7 @@ const handleReplaceWallet = async (newWallet) => {
 
                 <div className="h-8 w-px bg-white/10" />
 
-                <div className="flex items-center gap-2">
-                  {['5m', '15m', '1h', '4h', '1d'].map(candle => (
-                    <button
-                      key={candle}
-                      onClick={() => setRunnerFilters({...runnerFilters, candleTimeframe: candle})}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        runnerFilters.candleTimeframe === candle
-                          ? 'bg-green-600 text-white shadow-lg shadow-green-500/30'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {candle}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="h-8 w-px bg-white/10" />
-
+                {/* Advanced Filters Button */}
                 <button
                   onClick={() => {
                     setTempFilters(runnerFilters);
@@ -1645,7 +1644,18 @@ const handleReplaceWallet = async (newWallet) => {
                   className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-lg text-sm font-medium transition-all duration-200"
                 >
                   <Sliders size={14} />
-                  Filters
+                  Advanced Filters
+                </button>
+
+                {/* Manual Refresh Button */}
+                <button
+                  onClick={loadTrendingRunners}
+                  disabled={isLoadingRunners}
+                  className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm transition-all duration-200"
+                  title="Refresh now"
+                >
+                  <RotateCcw size={14} className={isLoadingRunners ? 'animate-spin' : ''} />
+                  {isLoadingRunners ? 'Loading...' : 'Refresh'}
                 </button>
               </div>
             </div>
@@ -1660,117 +1670,218 @@ const handleReplaceWallet = async (newWallet) => {
             )}
 
             {!isLoadingRunners && trendingRunners.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-white/10">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">#</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Token</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Price</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Multiplier</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Liquidity</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Age</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trendingRunners.map((runner, idx) => {
-                        const runnerKey = `${runner.chain}-${runner.address}`;
-                        const runnerState = expandedRunners[runnerKey] || {};
+              <div className="space-y-3">
+                {/* Batch Selection Controls */}
+                {mode === 'wallet' && (
+                  <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="text-sm font-semibold">
+                          {selectedRunners.length} selected
+                        </div>
+                        {selectedRunners.length > 0 && (
+                          <button
+                            onClick={clearRunnerSelection}
+                            className="text-xs text-gray-400 hover:text-white"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          onClick={selectAllRunners}
+                          className="text-xs text-purple-400 hover:text-purple-300"
+                        >
+                          Select All ({trendingRunners.length})
+                        </button>
+                      </div>
 
-                        return (
-                          <React.Fragment key={runnerKey}>
-                            <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                              <td className="px-4 py-3 text-sm text-gray-400">#{idx + 1}</td>
-                              <td className="px-4 py-3">
-                                <div>
-                                  <div className="font-semibold text-sm">{runner.ticker}</div>
-                                  <div className="text-xs text-gray-400">{runner.chain?.toUpperCase()}</div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-right text-sm font-mono">{formatPrice(runner.price)}</td>
-                              <td className="px-4 py-3 text-right">
-                                <span className="inline-flex items-center px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm font-bold">
-                                  {runner.multiplier}x
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-right text-sm">{formatNumber(runner.liquidity)}</td>
-                              <td className="px-4 py-3 text-right text-xs text-gray-400">{runner.age || 'N/A'}</td>
-                              <td className="px-4 py-3 text-right">
-                                <button
-                                  onClick={() => analyzeRunner(runner)}
-                                  disabled={runnerState.loading}
-                                  className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-xs font-medium transition-all duration-200"
-                                >
-                                  {runnerState.loading ? 'Analyzing...' : 'Analyze'}
-                                </button>
-                              </td>
-                            </tr>
+                      <div className="flex items-center gap-3">
+                        {/* Auto-refresh toggle */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setAutoRefresh(!autoRefresh)}
+                            className={`w-10 h-5 rounded-full transition-all duration-300 ${
+                              autoRefresh ? 'bg-green-600' : 'bg-gray-600'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 bg-white rounded-full transition-all duration-300 transform ${
+                              autoRefresh ? 'translate-x-5' : 'translate-x-1'
+                            }`} />
+                          </button>
+                          <span className="text-xs text-gray-400">
+                            Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
+                          </span>
+                        </div>
 
-                            {runnerState.expanded && (
-                              <tr className="bg-black/30 border-b border-white/5">
-                                <td colSpan="7" className="px-4 py-3">
-                                  <div className="text-sm">
-                                    <div className="font-semibold mb-2 text-purple-400">
-                                      {mode === 'twitter' ? 'Twitter Accounts:' : 'Smart Money Wallets:'}
-                                    </div>
-                                    {runnerState.data && runnerState.data.length === 0 ? (
-                                      <div className="text-xs text-gray-500">No data found</div>
-                                    ) : (
-                                      <div className="grid grid-cols-1 gap-2">
-                                        {runnerState.data?.slice(0, 5).map((item, i) => (
-                                          <div key={i} className="p-3 bg-white/5 rounded">
-                                            {mode === 'twitter' ? (
-                                              <div className="text-xs flex justify-between items-center">
-                                                <span>@{item.username}</span>
-                                                <span className="text-gray-400">Influence: {item.influence_score}</span>
-                                              </div>
-                                            ) : (
-                                              <>
-                                                <div className="flex justify-between items-center mb-2">
-                                                  <span className="font-mono text-sm">{item.wallet?.slice(0, 16)}...</span>
-                                                  <div className="flex items-center gap-2">
-                                                    {item.professional_grade && item.professional_score && (
-                                                      <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                                                        {item.professional_grade} • {item.professional_score}
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                                
-                                                <div className="text-xs text-gray-400 mb-2">
-                                                  {item.roi_percent}% ROI • {item.runner_hits_30d} runners (30d)
-                                                </div>
-                                                
-                                                {item.other_runners && item.other_runners.length > 0 && (
-                                                  <div className="mt-3 space-y-2">
-                                                    <div className="text-xs font-semibold text-gray-400">
-                                                      Other 5x+ Runners (Last 30 Days):
-                                                    </div>
-                                                    {item.other_runners.map((r, ri) => (
-                                                      <div key={ri} className="text-xs bg-black/40 rounded p-2">
-                                                        <span className="font-semibold">{r.symbol}</span>
-                                                        <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
-                                                      </div>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
+                        {lastRefreshTime && (
+                          <div className="text-xs text-gray-500">
+                            Last: {lastRefreshTime.toLocaleTimeString()}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={analyzeBatchRunners}
+                          disabled={selectedRunners.length === 0 || isBatchAnalyzing}
+                          className="px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold text-sm transition-all duration-300 flex items-center gap-2 shadow-lg shadow-purple-500/30"
+                        >
+                          {isBatchAnalyzing ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Analyzing {selectedRunners.length}...
+                            </>
+                          ) : (
+                            <>
+                              <BarChart3 size={16} />
+                              Batch Analyze ({selectedRunners.length})
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-white/10">
+                        <tr>
+                          {mode === 'wallet' && (
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                              <input
+                                type="checkbox"
+                                checked={selectedRunners.length === trendingRunners.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    selectAllRunners();
+                                  } else {
+                                    clearRunnerSelection();
+                                  }
+                                }}
+                                className="w-4 h-4 rounded bg-white/10 border-white/20 cursor-pointer"
+                              />
+                            </th>
+                          )}
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">#</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Token</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Price</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Multiplier</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Liquidity</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Age</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trendingRunners.map((runner, idx) => {
+                          const runnerKey = `${runner.chain}-${runner.address}`;
+                          const runnerState = expandedRunners[runnerKey] || {};
+                          const isSelected = selectedRunners.some(r => r.address === runner.address);
+
+                          return (
+                            <React.Fragment key={runnerKey}>
+                              <tr className={`border-b border-white/5 hover:bg-white/5 transition-colors ${
+                                isSelected ? 'bg-purple-500/10' : ''
+                              }`}>
+                                {mode === 'wallet' && (
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleRunnerSelection(runner)}
+                                      className="w-4 h-4 rounded bg-white/10 border-white/20 cursor-pointer"
+                                    />
+                                  </td>
+                                )}
+                                <td className="px-4 py-3 text-sm text-gray-400">#{idx + 1}</td>
+                                <td className="px-4 py-3">
+                                  <div>
+                                    <div className="font-semibold text-sm">{runner.ticker}</div>
+                                    <div className="text-xs text-gray-400">{runner.chain?.toUpperCase()}</div>
                                   </div>
                                 </td>
+                                <td className="px-4 py-3 text-right text-sm font-mono">{formatPrice(runner.current_price)}</td>
+                                <td className="px-4 py-3 text-right">
+                                  <span className="inline-flex items-center px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm font-bold">
+                                    {runner.multiplier}x
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right text-sm">{formatNumber(runner.liquidity)}</td>
+                                <td className="px-4 py-3 text-right text-xs text-gray-400">{runner.age || 'N/A'}</td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    onClick={() => analyzeRunner(runner)}
+                                    disabled={runnerState.loading}
+                                    className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-xs font-medium transition-all duration-200"
+                                  >
+                                    {runnerState.loading ? 'Analyzing...' : 'Analyze'}
+                                  </button>
+                                </td>
                               </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+
+                              {runnerState.expanded && (
+                                <tr className="bg-black/30 border-b border-white/5">
+                                  <td colSpan={mode === 'wallet' ? 8 : 7} className="px-4 py-3">
+                                    <div className="text-sm">
+                                      <div className="font-semibold mb-2 text-purple-400">
+                                        {mode === 'twitter' ? 'Twitter Accounts:' : 'Smart Money Wallets:'}
+                                      </div>
+                                      {runnerState.data && runnerState.data.length === 0 ? (
+                                        <div className="text-xs text-gray-500">No data found</div>
+                                      ) : (
+                                        <div className="grid grid-cols-1 gap-2">
+                                          {runnerState.data?.slice(0, 5).map((item, i) => (
+                                            <div key={i} className="p-3 bg-white/5 rounded">
+                                              {mode === 'twitter' ? (
+                                                <div className="text-xs flex justify-between items-center">
+                                                  <span>@{item.username}</span>
+                                                  <span className="text-gray-400">Influence: {item.influence_score}</span>
+                                                </div>
+                                              ) : (
+                                                <>
+                                                  <div className="flex justify-between items-center mb-2">
+                                                    <span className="font-mono text-sm">{item.wallet?.slice(0, 16)}...</span>
+                                                    <div className="flex items-center gap-2">
+                                                      {item.professional_grade && item.professional_score && (
+                                                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
+                                                          {item.professional_grade} • {item.professional_score}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                  
+                                                  <div className="text-xs text-gray-400 mb-2">
+                                                    {item.roi_percent}% ROI • {item.runner_hits_30d} runners (30d)
+                                                  </div>
+                                                  
+                                                  {item.other_runners && item.other_runners.length > 0 && (
+                                                    <div className="mt-3 space-y-2">
+                                                      <div className="text-xs font-semibold text-gray-400">
+                                                        Other 5x+ Runners (Last 30 Days):
+                                                      </div>
+                                                      {item.other_runners.map((r, ri) => (
+                                                        <div key={ri} className="text-xs bg-black/40 rounded p-2">
+                                                          <span className="font-semibold">{r.symbol}</span>
+                                                          <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -2042,60 +2153,60 @@ const handleReplaceWallet = async (newWallet) => {
             )}
           </div>
         )}
-{/* ========== WATCHLIST TAB ========== */}
+
         {/* ========== WATCHLIST TAB ========== */}
-{activeTab === 'watchlist' && (
-  <div className="space-y-4">
-    {/* Health Dashboard */}
-    <WalletHealthDashboard
-      wallets={walletWatchlist}
-      stats={walletWatchlistStats}
-      onViewWallet={(wallet) => {
-        console.log('View wallet:', wallet);
-      }}
-      onFindReplacements={(walletAddress, autoReplace) => {
-        findReplacements(walletAddress);
-      }}
-      onRefresh={() => {
-        loadWalletWatchlist();
-      }}
-    />
+        {activeTab === 'watchlist' && (
+          <div className="space-y-4">
+            {/* Health Dashboard */}
+            <WalletHealthDashboard
+              wallets={walletWatchlist}
+              stats={walletWatchlistStats}
+              onViewWallet={(wallet) => {
+                console.log('View wallet:', wallet);
+              }}
+              onFindReplacements={(walletAddress, autoReplace) => {
+                findReplacements(walletAddress);
+              }}
+              onRefresh={() => {
+                loadWalletWatchlist();
+              }}
+            />
 
-    {/* Premier League Table */}
-    <WalletLeagueTable
-      wallets={walletWatchlist}
-      promotionQueue={walletWatchlistStats?.promotion_queue || []}
-      onReplace={(oldWallet, newWallet) => {
-        if (oldWallet) {
-          setCurrentDecliningWallet(oldWallet);
-          findReplacements(oldWallet.wallet_address);
-        } else {
-          handleReplaceWallet(newWallet);
-        }
-      }}
-      onExpand={(wallet) => {
-        console.log('Expanded wallet:', wallet);
-      }}
-      onConfigure={(wallet) => {
-        setAlertSettingsWallet(wallet.wallet_address);
-      }}
-    />
+            {/* Premier League Table */}
+            <WalletLeagueTable
+              wallets={walletWatchlist}
+              promotionQueue={walletWatchlistStats?.promotion_queue || []}
+              onReplace={(oldWallet, newWallet) => {
+                if (oldWallet) {
+                  setCurrentDecliningWallet(oldWallet);
+                  findReplacements(oldWallet.wallet_address);
+                } else {
+                  handleReplaceWallet(newWallet);
+                }
+              }}
+              onExpand={(wallet) => {
+                console.log('Expanded wallet:', wallet);
+              }}
+              onConfigure={(wallet) => {
+                setAlertSettingsWallet(wallet.wallet_address);
+              }}
+            />
 
-    {/* Replacement Modal */}
-    {showReplacementModal && (
-      <WalletReplacementModal
-        currentWallet={currentDecliningWallet}
-        suggestions={replacementSuggestions}
-        onReplace={handleReplaceWallet}
-        onDismiss={() => {
-          setShowReplacementModal(false);
-          setCurrentDecliningWallet(null);
-          setReplacementSuggestions([]);
-        }}
-      />
-    )}
-  </div>
-)}
+            {/* Replacement Modal */}
+            {showReplacementModal && (
+              <WalletReplacementModal
+                currentWallet={currentDecliningWallet}
+                suggestions={replacementSuggestions}
+                onReplace={handleReplaceWallet}
+                onDismiss={() => {
+                  setShowReplacementModal(false);
+                  setCurrentDecliningWallet(null);
+                  setReplacementSuggestions([]);
+                }}
+              />
+            )}
+          </div>
+        )}
 
         {/* ========== SETTINGS TAB ========== */}
         {activeTab === 'settings' && (

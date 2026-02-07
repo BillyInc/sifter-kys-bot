@@ -241,7 +241,7 @@ export default function TelegramSettings({ userId, apiUrl }) {
                   <h5 className="font-semibold mb-3">📱 Setup Instructions:</h5>
                   <ol className="text-sm text-gray-300 space-y-2">
                     <li>1. Open Telegram app</li>
-                    <li>2. Search for your bot (check bot info below)</li>
+                    <li>2. Search for <strong>@SifterDueDiligenceBot</strong></li>
                     <li>3. Send <code className="bg-white/10 px-2 py-0.5 rounded">/start</code></li>
                     <li>4. Send the code: <code className="bg-white/10 px-2 py-0.5 rounded">{connectionCode}</code></li>
                   </ol>

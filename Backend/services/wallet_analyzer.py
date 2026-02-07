@@ -5,6 +5,7 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Semaphore
+from datetime import datetime, timedelta
 
 class WalletPumpAnalyzer:
     """
@@ -41,6 +42,10 @@ class WalletPumpAnalyzer:
         self.solana_tracker_semaphore = Semaphore(3)
         self.pnl_semaphore = Semaphore(2)
         self.executor = None
+        
+        # ✅ ADD: Caching for trending runners
+        self._trending_cache = {}
+        self._cache_expiry = {}
 
     def _log(self, message):
         if self.debug_mode:
@@ -111,15 +116,18 @@ class WalletPumpAnalyzer:
             return None
 
     def get_token_ath(self, token_address):
-        """Get all-time high price data"""
+        """Get all-time high price data - ✅ USES RETRY"""
         try:
             url = f"{self.st_base_url}/tokens/{token_address}/ath"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=15)
             
-            if response.status_code != 200:
-                return None
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            return response.json()
+            return data  # Returns None if failed
             
         except Exception as e:
             self._log(f"  ⚠️ Error fetching ATH: {str(e)}")
@@ -131,7 +139,7 @@ class WalletPumpAnalyzer:
             url = f"{self.st_base_url}/wallet/{wallet_address}/trades"
             params = {'limit': limit}
             
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
+            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
@@ -190,15 +198,16 @@ class WalletPumpAnalyzer:
             return 0
 
     # =========================================================================
-    # TRENDING RUNNER DISCOVERY
+    # TRENDING RUNNER DISCOVERY (FIXED)
     # =========================================================================
 
     def _get_price_range_in_period(self, token_address, days_back):
-        """Get price multiplier for period"""
+        """Get price multiplier for period - ✅ USES RETRY"""
         try:
             time_to = int(time.time())
             time_from = time_to - (days_back * 86400)
             
+            # Auto-select candle size based on timeframe
             candle_type = '1h' if days_back <= 7 else '4h'
             
             url = f"{self.st_base_url}/chart/{token_address}"
@@ -209,12 +218,17 @@ class WalletPumpAnalyzer:
                 'currency': 'usd'
             }
             
-            response = requests.get(url, headers=self._get_solanatracker_headers(), params=params, timeout=15)
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                params=params,
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            if response.status_code != 200:
+            if not data:
                 return None
             
-            data = response.json()
             candles = data.get('oclhv', [])
             
             if not candles:
@@ -237,23 +251,35 @@ class WalletPumpAnalyzer:
             }
             
         except Exception as e:
+            self._log(f"  ⚠️ Price range error: {str(e)}")
             return None
 
     def _get_token_detailed_info(self, token_address):
-        """Get detailed token information"""
+        """Get detailed token information - ✅ USES RETRY"""
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
             
-            if response.status_code != 200:
+            # ✅ USE RETRY instead of direct requests.get
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
+            
+            if not data:
                 return None
             
-            data = response.json()
             pools = data.get('pools', [])
             if not pools:
                 return None
             
             primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+            
+            # ✅ Get creation time for age calculation
+            creation_time = data.get('creation', {}).get('created_time', 0)
+            token_age_days = 0
+            if creation_time > 0:
+                token_age_days = (time.time() - creation_time) / 86400
             
             return {
                 'symbol': data.get('symbol', 'UNKNOWN'),
@@ -262,32 +288,62 @@ class WalletPumpAnalyzer:
                 'liquidity': primary_pool.get('liquidity', {}).get('usd', 0),
                 'volume_24h': primary_pool.get('txns', {}).get('volume24h', 0),
                 'price': primary_pool.get('price', {}).get('usd', 0),
-                'holders': data.get('holders', 0)
+                'holders': data.get('holders', 0),
+                'age_days': token_age_days,  # ✅ Numeric age
+                'age': f"{token_age_days:.1f}d" if token_age_days > 0 else 'N/A'  # ✅ Formatted age
             }
             
         except Exception as e:
+            self._log(f"  ⚠️ Token info error: {str(e)}")
             return None
 
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
-        """Enhanced trending runner discovery"""
+        """
+        ✅ OPTIMIZED: Enhanced trending runner discovery with caching
+        
+        Changes:
+        1. Limit to top 20 tokens (not 100) - 5x faster
+        2. Added time.sleep(0.2) backoff to avoid 429s
+        3. Disable cache for 30d (fresh Auto Discovery)
+        4. 5-minute cache TTL for 7d/14d
+        5. All fields present (ticker, chain, age)
+        """
+        cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}"
+        now = datetime.now()
+        
+        # ✅ SKIP CACHE for 30d (Auto Discovery always fresh)
+        if days_back == 30:
+            self._log(f"  ⚡ Skipping cache for 30d (one-off autodiscovery)")
+        else:
+            # Check cache for 7d/14d
+            if cache_key in self._trending_cache:
+                cache_age = now - self._cache_expiry[cache_key]
+                if cache_age < timedelta(minutes=5):
+                    self._log(f"  ⚡ Cache hit ({cache_key}) - age: {cache_age.seconds}s")
+                    return self._trending_cache[cache_key]
+        
         self._log(f"\n{'='*80}")
         self._log(f"FINDING TRENDING RUNNERS: {days_back} days, {min_multiplier}x+")
         self._log(f"{'='*80}")
         
         try:
-            timeframe_map = {7: '24h', 14: '24h', 30: '24h', 1: '24h'}
-            st_timeframe = timeframe_map.get(days_back, '24h')
+            # ✅ Use fetch_with_retry for trending list
+            url = f"{self.st_base_url}/tokens/trending"
+            response = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
             
-            url = f"{self.st_base_url}/tokens/trending/{st_timeframe}"
-            response = requests.get(url, headers=self._get_solanatracker_headers(), timeout=10)
-            
-            if response.status_code != 200:
+            if not response:
+                self._log(f"  ❌ Failed to fetch trending list")
                 return []
             
-            trending_data = response.json()
+            trending_data = response if isinstance(response, list) else []
             qualified_runners = []
             
-            for item in trending_data[:100]:
+            # ✅ LIMIT TO TOP 20 (not 100) - 5x faster
+            for item in trending_data[:20]:
                 try:
                     token = item.get('token', {})
                     pools = item.get('pools', [])
@@ -302,6 +358,7 @@ class WalletPumpAnalyzer:
                     if liquidity < min_liquidity:
                         continue
                     
+                    # ✅ Calculate multiplier within timeframe
                     price_range = self._get_price_range_in_period(mint, days_back)
                     if not price_range or price_range['multiplier'] < min_multiplier:
                         continue
@@ -312,16 +369,14 @@ class WalletPumpAnalyzer:
                     
                     ath_data = self.get_token_ath(mint)
                     
-                    creation_time = token.get('creation', {}).get('created_time', 0)
-                    token_age_days = 0
-                    if creation_time > 0:
-                        token_age_days = (time.time() - creation_time) / 86400
+                    token_age_days = token_info.get('age_days', 0)
                     
                     qualified_runners.append({
                         'symbol': token.get('symbol', 'UNKNOWN'),
+                        'ticker': token.get('symbol', 'UNKNOWN'),  # ✅ Frontend expects ticker
                         'name': token.get('name', 'Unknown'),
                         'address': mint,
-                        'chain': 'solana',
+                        'chain': 'solana',  # ✅ Frontend expects chain
                         'multiplier': round(price_range['multiplier'], 2),
                         'period_days': days_back,
                         'lowest_price': price_range['lowest_price'],
@@ -333,15 +388,26 @@ class WalletPumpAnalyzer:
                         'volume_24h': token_info['volume_24h'],
                         'holders': token_info['holders'],
                         'token_age_days': round(token_age_days, 1),
+                        'age': token_info.get('age', 'N/A'),  # ✅ Formatted age
                         'pair_address': pool.get('poolId', mint)
                     })
                     
+                    # ✅ BACKOFF to avoid 429s
+                    time.sleep(0.2)
+                    
                 except Exception as e:
+                    self._log(f"  ⚠️ Token skip: {str(e)}")
                     continue
             
             qualified_runners.sort(key=lambda x: x['multiplier'], reverse=True)
             
-            self._log(f"  ✅ Found {len(qualified_runners)} runners")
+            # ✅ ONLY CACHE 7d/14d (not 30d)
+            if days_back != 30:
+                self._trending_cache[cache_key] = qualified_runners
+                self._cache_expiry[cache_key] = now
+                self._log(f"  ✅ Found {len(qualified_runners)} runners (cached 5 min)")
+            else:
+                self._log(f"  ✅ Found {len(qualified_runners)} runners (no cache - one-off)")
             
             return qualified_runners
             
