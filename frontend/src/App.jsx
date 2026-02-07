@@ -10,6 +10,325 @@ import Auth from './components/Auth';
 import { useAuth } from './contexts/AuthContext';
 import AnalysisSettings from './Analysis_Setting.jsx';
 
+// ========== WALLET RESULT CARD COMPONENT ==========
+const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
+  const [showRunners, setShowRunners] = useState(false);
+  
+  // ✅ Determine token display
+  const getTokenDisplay = () => {
+    const analyzedTokens = wallet.analyzed_tokens || [];
+    const otherTokens = wallet.other_runners?.map(r => r.symbol) || [];
+    const allTokens = [...new Set([...analyzedTokens, ...otherTokens])];
+    
+    if (allTokens.length === 0) return 'Unknown';
+    if (allTokens.length === 1) return allTokens[0];
+    if (allTokens.length <= 3) return allTokens.join(', ');
+    return `${allTokens.slice(0, 3).join(', ')} +${allTokens.length - 3} more`;
+  };
+  
+  const tokenDisplay = getTokenDisplay();
+  const isSingleToken = (wallet.analyzed_tokens?.length || 0) === 1;
+  
+  return (
+    <div className="bg-black/30 border border-white/10 rounded-xl overflow-hidden">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-purple-400 font-bold text-sm">#{idx + 1}</span>
+              <span className="font-mono text-sm">
+                {wallet.wallet?.slice(0, 8)}...{wallet.wallet?.slice(-4)}
+              </span>
+              {wallet.is_fresh && (
+                <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
+                  ✨ Fresh
+                </span>
+              )}
+              {wallet.professional_grade && wallet.professional_score && (
+                <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
+                  {wallet.professional_grade} • {wallet.professional_score}
+                </span>
+              )}
+            </div>
+            
+            {/* ✅ Token/Tokens display (NO "main token") */}
+            <div className="text-xs text-gray-400">
+              {isSingleToken ? 'Token: ' : 'Tokens: '}
+              {tokenDisplay}
+            </div>
+          </div>
+          
+          <button
+            onClick={() => onAddToWatchlist(wallet)}
+            className="p-2 hover:bg-purple-500/20 rounded-lg text-purple-400 transition"
+            title="Add to Watchlist"
+          >
+            <BookmarkPlus size={16} />
+          </button>
+        </div>
+
+        {/* ✅ Professional Score Breakdown with CORRECT LABELS */}
+        {wallet.score_breakdown && (
+          <div className="mb-3 border-t border-white/10 pt-3">
+            <div className="text-xs font-semibold text-gray-400 mb-2">
+              Professional Score Breakdown (60/30/10):
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              
+              {/* Distance to ATH (60%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-blue-400 mb-1">
+                  {wallet.score_breakdown.distance_to_ath_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Distance to ATH (60%)</div>
+                
+                {wallet.entry_to_ath_multiplier && (
+                  <div className="text-xs">
+                    <div className="text-blue-300">{wallet.entry_to_ath_multiplier}x below</div>
+                    {wallet.distance_to_ath_pct && (
+                      <div className="text-blue-300">{wallet.distance_to_ath_pct.toFixed(1)}% below</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Realized Profit (30%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-green-400 mb-1">
+                  {wallet.score_breakdown.realized_profit_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Realized Profit (30%)</div>
+                
+                {wallet.realized_multiplier && (
+                  <div className="text-xs text-green-300">
+                    {wallet.realized_multiplier}x realized
+                  </div>
+                )}
+              </div>
+              
+              {/* Total Position (10%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-purple-400 mb-1">
+                  {wallet.score_breakdown.total_position_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Total Position (10%)</div>
+                
+                {wallet.total_multiplier && (
+                  <div className="text-xs text-purple-300">
+                    {wallet.total_multiplier}x total
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Stats */}
+        <div className="grid grid-cols-4 gap-3 mb-3">
+          {wallet.entry_to_ath_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-blue-400">
+                {wallet.entry_to_ath_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Entry→ATH</div>
+            </div>
+          )}
+          
+          {wallet.distance_to_ath_pct && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-cyan-400">
+                {wallet.distance_to_ath_pct.toFixed(1)}%
+              </div>
+              <div className="text-xs text-gray-400">Below ATH</div>
+            </div>
+          )}
+          
+          {wallet.realized_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-green-400">
+                {wallet.realized_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Realized</div>
+            </div>
+          )}
+          
+          {wallet.total_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-purple-400">
+                {wallet.total_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Total</div>
+            </div>
+          )}
+        </div>
+
+        {/* ✅ 30-Day Runner Dropdown with Per-Runner Stats */}
+        {wallet.other_runners && wallet.other_runners.length > 0 && (
+          <div className="border-t border-white/10 pt-3">
+            <button
+              onClick={() => setShowRunners(!showRunners)}
+              className="w-full flex items-center justify-between p-2 hover:bg-white/5 rounded transition"
+            >
+              <div className="flex items-center gap-2">
+                <TrendingUp size={14} className="text-purple-400" />
+                <span className="text-sm font-semibold text-purple-400">
+                  Other 5x+ Runners (Last 30 Days)
+                </span>
+                <span className="text-xs bg-purple-500/20 px-2 py-0.5 rounded">
+                  {wallet.runner_hits_30d || wallet.other_runners.length}
+                </span>
+              </div>
+              <ChevronDown 
+                size={16} 
+                className={`text-gray-400 transition-transform ${showRunners ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {showRunners && (
+              <div className="mt-3 space-y-3">
+                
+                {/* Summary Stats */}
+                {(wallet.other_runners_stats || wallet.runner_success_rate) && (
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-purple-400 mb-2">
+                      Summary Stats:
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      {(wallet.other_runners_stats?.avg_entry_to_ath || wallet.runner_avg_roi) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Avg Distance to ATH:</div>
+                          <div className="flex items-center gap-2">
+                            {wallet.other_runners_stats?.avg_entry_to_ath && (
+                              <span className="text-blue-400 font-bold">
+                                {wallet.other_runners_stats.avg_entry_to_ath}x
+                              </span>
+                            )}
+                            {wallet.other_runners_stats?.avg_distance_to_ath_pct && (
+                              <span className="text-cyan-400 font-bold">
+                                ({wallet.other_runners_stats.avg_distance_to_ath_pct.toFixed(1)}%)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {(wallet.other_runners_stats?.avg_roi || wallet.runner_avg_roi) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Avg ROI:</div>
+                          <div className="text-green-400 font-bold">
+                            {(wallet.other_runners_stats?.avg_roi || wallet.runner_avg_roi).toFixed(1)}x
+                          </div>
+                        </div>
+                      )}
+                      
+                      {(wallet.other_runners_stats?.success_rate || wallet.runner_success_rate) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Success Rate:</div>
+                          <div className="text-green-400 font-bold">
+                            {(wallet.other_runners_stats?.success_rate || wallet.runner_success_rate).toFixed(0)}%
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Individual Runner Cards */}
+                <div className="space-y-2">
+                  {wallet.other_runners.map((runner, ri) => (
+                    <div key={ri} className="bg-black/40 rounded-lg border border-white/5 overflow-hidden">
+                      
+                      {/* Runner Header */}
+                      <div className="p-3 bg-gradient-to-r from-white/5 to-transparent border-b border-white/5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-bold text-white">
+                                {runner.symbol}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
+                                {runner.multiplier}x pump
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-500">{runner.name}</div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Distance to ATH Section */}
+                      {runner.entry_to_ath_multiplier && (
+                        <div className="p-3 border-b border-white/5">
+                          <div className="flex items-center gap-2 mb-2">
+                            <TrendingUp size={12} className="text-blue-400" />
+                            <span className="text-xs font-semibold text-gray-400">
+                              Entry Distance to ATH
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
+                              <div className="text-base font-bold text-blue-400">
+                                {runner.entry_to_ath_multiplier}x
+                              </div>
+                              <div className="text-xs text-gray-500">below ATH</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-cyan-500/20">
+                              <div className="text-base font-bold text-cyan-400">
+                                {runner.distance_to_ath_pct?.toFixed(1)}%
+                              </div>
+                              <div className="text-xs text-gray-500">below ATH</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Profit Performance Section */}
+                      {runner.roi_multiplier && (
+                        <div className="p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <BarChart3 size={12} className="text-green-400" />
+                            <span className="text-xs font-semibold text-gray-400">
+                              Profit Performance
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-green-500/20">
+                              <div className="text-base font-bold text-green-400">
+                                {runner.roi_multiplier}x
+                              </div>
+                              <div className="text-xs text-gray-500">ROI</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
+                              <div className="text-sm font-bold text-blue-400">
+                                ${runner.invested}
+                              </div>
+                              <div className="text-xs text-gray-500">Invested</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-purple-500/20">
+                              <div className="text-sm font-bold text-purple-400">
+                                ${runner.realized}
+                              </div>
+                              <div className="text-xs text-gray-500">Realized</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default function SifterKYS() {
   // ========== AUTHENTICATION ==========
@@ -549,19 +868,22 @@ export default function SifterKYS() {
 
   const addToWalletWatchlist = async (wallet) => {
     try {
+      // ✅ FIX: Map fields correctly to match backend schema
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           user_id: userId, 
           wallet: {
-            wallet_address: wallet.wallet,
-            tier: wallet.tier,
-            pump_count: wallet.pump_count,
-            avg_distance_to_peak: wallet.avg_distance_to_ath_pct,
-            avg_roi_to_peak: wallet.avg_roi_to_peak_pct,
-            consistency_score: wallet.consistency_score,
-            tokens_hit: wallet.token_list?.join(', ')
+            wallet: wallet.wallet,  // ✅ Backend maps to wallet_address
+            tier: wallet.professional_grade === 'A+' ? 'S' : 
+                  wallet.professional_grade?.startsWith('A') ? 'A' :
+                  wallet.professional_grade?.startsWith('B') ? 'B' : 'C',
+            pump_count: wallet.runner_hits_30d || 0,
+            avg_distance_to_ath_pct: wallet.ath_distance || 0,
+            avg_roi_to_peak_pct: wallet.roi_percent || 0,
+            consistency_score: wallet.professional_score || 0,
+            token_list: wallet.other_runners?.map(r => r.symbol) || []  // ✅ Mapped to tokens_hit
           },
           alert_settings: {
             alert_enabled: true,
@@ -573,11 +895,15 @@ export default function SifterKYS() {
       });
       
       const data = await response.json();
+      
       if (data.success) {
         alert('✅ Added to wallet watchlist with alerts enabled!');
+      } else {
+        alert(`❌ Failed: ${data.error}`);
       }
     } catch (error) {
       console.error('Error adding wallet to watchlist:', error);
+      alert('❌ Error adding to watchlist');
     }
   };
 
@@ -1380,196 +1706,25 @@ export default function SifterKYS() {
                     )}
 
                     <div className="space-y-3">
-                      {(batchResults?.smart_money_wallets || walletResults?.top_wallets || []).map((wallet, idx) => {
-                        const isExpanded = expandedWallets[idx];
-
-                        return (
-                          <div key={idx} className="bg-black/30 border border-white/10 rounded-xl overflow-hidden">
-                            <div
-                              className="p-4 cursor-pointer hover:bg-white/5 transition"
-                              onClick={() => toggleWalletExpansion(idx)}
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-3 mb-1">
-                                    <span className="text-purple-400 font-bold text-sm">#{idx + 1}</span>
-                                    <span className="font-mono text-sm">
-                                      {wallet.wallet?.slice(0, 8)}...{wallet.wallet?.slice(-4)}
-                                    </span>
-                                    {wallet.is_fresh && (
-                                      <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
-                                        ✨ Fresh
-                                      </span>
-                                    )}
-                                    {wallet.professional_grade && wallet.professional_score && (
-                                      <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                                        {wallet.professional_grade} • {wallet.professional_score}
-                                      </span>
-                                    )}
-                                    {wallet.entry_to_ath_multiplier && (
-                                      <span className="text-xs text-gray-400">
-                                        {wallet.entry_to_ath_multiplier}x to ATH
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-gray-400">
-                                    {(wallet.avg_roi_to_peak_pct || wallet.avg_realized_roi_pct || 0).toLocaleString()}% ROI • {wallet.pump_count || 0} pumps
-                                    {wallet.runner_hits_30d > 0 && ` • 🎯 ${wallet.runner_hits_30d} runner hits`}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      addToWalletWatchlist(wallet);
-                                    }}
-                                    className="p-2 hover:bg-purple-500/20 rounded-lg text-purple-400 transition"
-                                    title="Add to Watchlist"
-                                  >
-                                    <BookmarkPlus size={16} />
-                                  </button>
-                                  <div className="text-gray-500">
-                                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {isExpanded && (
-                              <div className="border-t border-white/10 bg-black/20">
-                                <div className="px-4 pt-3 pb-2">
-                                  <div className="font-mono text-xs text-gray-300 break-all">
-                                    {wallet.wallet}
-                                  </div>
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    Tokens: {wallet.token_list?.join(', ') || 'N/A'}
-                                  </div>
-                                </div>
-
-                                {wallet.score_breakdown && (
-                                  <div className="px-4 pb-3 border-b border-white/10">
-                                    <div className="text-xs font-semibold text-gray-400 mb-2">Professional Score Breakdown:</div>
-                                    <div className="grid grid-cols-3 gap-2">
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-blue-400">
-                                          {wallet.score_breakdown.timing_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Timing (60%)</div>
-                                      </div>
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-green-400">
-                                          {wallet.score_breakdown.profit_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Profit (30%)</div>
-                                      </div>
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-purple-400">
-                                          {wallet.score_breakdown.overall_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Overall (10%)</div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div className="px-4 pb-3 grid grid-cols-4 gap-3">
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-white">
-                                      {wallet.pump_count || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-400">Pumps Hit</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-green-400">
-                                      {(wallet.avg_roi_to_peak_pct || wallet.avg_realized_roi_pct || 0).toLocaleString()}%
-                                    </div>
-                                    <div className="text-xs text-gray-400">Avg ROI</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-blue-400">
-                                      {(wallet.avg_distance_to_ath_pct || 0).toFixed(2)}%
-                                    </div>
-                                    <div className="text-xs text-gray-400">Dist to ATH</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-purple-400">
-                                      {wallet.in_window_count || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-400">In Window</div>
-                                  </div>
-                                </div>
-
-                                {wallet.rally_history && wallet.rally_history.length > 0 && (
-                                  <div className="px-4 pb-4">
-                                    <div className="text-xs font-semibold text-gray-400 mb-2">Rally History:</div>
-                                    <div className="space-y-2">
-                                      {wallet.rally_history.slice(0, 5).map((rally, ri) => (
-                                        <div key={ri} className="bg-black/40 rounded-lg p-3">
-                                          <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-semibold">{rally.token}</span>
-                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                                              rally.in_pump_window
-                                                ? 'bg-green-500/20 text-green-400'
-                                                : 'bg-gray-600/30 text-gray-400'
-                                            }`}>
-                                              {rally.in_pump_window ? '✓ IN WINDOW' : 'OUT WINDOW'}
-                                            </span>
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            {rally.rally_date && <span>{rally.rally_date}</span>}
-                                            {rally.rally_date && rally.buy_time && <span> • </span>}
-                                            {rally.buy_time && <span>Buy: {rally.buy_time}</span>}
-                                            {(rally.roi !== undefined || rally.realized_roi_pct !== undefined) && (
-                                              <span className="ml-2 text-green-400 font-semibold">
-                                                ROI: {(rally.roi ?? rally.realized_roi_pct ?? 0).toLocaleString()}%
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {wallet.other_runners && wallet.other_runners.length > 0 && (
-                                  <div className="px-4 pb-4 border-t border-white/10 pt-3">
-                                    <div className="flex items-center justify-between mb-2">
-                                      <div className="text-xs font-semibold text-gray-400">
-                                        Other 5x+ Runners (Last 30 Days): {wallet.runner_hits_30d}
-                                      </div>
-                                      {wallet.runner_success_rate > 0 && (
-                                        <span className="text-xs text-green-400">
-                                          {wallet.runner_success_rate}% success rate
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="space-y-2">
-                                      {wallet.other_runners.map((runner, ri) => (
-                                        <div key={ri} className="bg-black/40 rounded-lg p-2">
-                                          <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-semibold">{runner.symbol}</span>
-                                            <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
-                                              {runner.multiplier}x
-                                            </span>
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            {runner.roi_multiplier && (
-                                              <span className="text-green-400 font-semibold">
-                                                ROI: {runner.roi_multiplier}x • 
-                                              </span>
-                                            )}
-                                            <span> Invested: ${runner.invested} • Realized: ${runner.realized}</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {/* ✅ UPDATED: Use WalletResultCard component */}
+                      {walletResults && !batchResults && walletResults.top_wallets?.map((wallet, idx) => (
+                        <WalletResultCard
+                          key={wallet.wallet}
+                          wallet={wallet}
+                          idx={idx}
+                          onAddToWatchlist={addToWalletWatchlist}
+                        />
+                      ))}
+                      
+                      {/* Batch results display */}
+                      {batchResults?.smart_money_wallets?.map((wallet, idx) => (
+                        <WalletResultCard
+                          key={wallet.wallet}
+                          wallet={wallet}
+                          idx={idx}
+                          onAddToWatchlist={addToWalletWatchlist}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}

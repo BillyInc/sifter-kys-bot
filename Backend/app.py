@@ -7,6 +7,8 @@ from flask_limiter.util import get_remote_address
 from config import Config
 from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
 
+telegram_polling_started = False
+
 
 def get_rate_limit_key():
     """Get rate limit key - prefer user ID from auth, fallback to IP."""
@@ -38,6 +40,18 @@ def create_app() -> Flask:
         storage_uri=Config.RATELIMIT_STORAGE_URI,
         strategy=Config.RATELIMIT_STRATEGY
     )
+    
+    
+    from services.telegram_notifier import TelegramNotifier
+    TELEGRAM_BOT_TOKEN = "8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk"
+    telegram_notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
+    app.config['TELEGRAM_NOTIFIER'] = telegram_notifier
+    
+    if telegram_notifier:
+        print("\n[TELEGRAM] ✅ Notifier initialized")
+        print("[TELEGRAM] Bot: @SifterDueDiligenceBot")
+    else:
+        print("\n[TELEGRAM] ⚠️ Notifier disabled (no token)")
 
     # Register blueprints
     app.register_blueprint(analyze_bp)
@@ -120,6 +134,14 @@ def print_startup_banner():
 app = create_app()
 
 
+@app.before_request
+def setup_telegram():
+    """Setup Telegram but don't auto-start polling"""
+    global telegram_polling_started
+    if not telegram_polling_started and app.config.get('TELEGRAM_NOTIFIER'):
+        telegram_polling_started = True
+        print("[TELEGRAM] ✅ Notifier ready (polling disabled for now)")
+        
 if __name__ == '__main__':
     print_startup_banner()
     

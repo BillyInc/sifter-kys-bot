@@ -38,15 +38,22 @@ def get_wallet_monitor():
     global _wallet_monitor
     if _wallet_monitor is None:
         from services.wallet_monitor import WalletActivityMonitor
+        from flask import current_app  # ← ADD THIS
+        telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')  # ← ADD THIS
+
         _wallet_monitor = WalletActivityMonitor(
             birdeye_api_key=Config.BIRDEYE_API_KEY,
             db_path='watchlists.db',
-            poll_interval=120
+            poll_interval=120,
+            telegram_notifier=telegram_notifier  # ← ADD THIS
         )
         _wallet_monitor.start()
         print("[WALLET MONITOR] Started background monitoring")
+        if telegram_notifier:  # ← ADD THIS
+            print("[WALLET MONITOR] ✅ Telegram alerts ENABLED")
+        else:
+            print("[WALLET MONITOR] ⚠️ Telegram alerts DISABLED")
     return _wallet_monitor
-
 
 wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 
@@ -61,13 +68,10 @@ def analyze_wallets():
     """
     ✅ FIXED: General wallet analysis using 6-step professional method.
     
-    Changes from original:
-    1. Removed PrecisionRallyDetector (rally detection)
-    2. Now uses analyze_token_professional (6-step trader-based analysis)
-    3. Added OPTIONS method for CORS
-    4. Proper deduplication by professional_score
-    
-    NO rally detection - just find wallets who traded the token profitably.
+    FIXES:
+    1. Cross-token deduplication (keep highest professional_score)
+    2. Remove pump-related fields from response
+    3. Track which tokens were analyzed
     """
     if request.method == 'OPTIONS':
         return '', 204
@@ -88,12 +92,14 @@ def analyze_wallets():
         print(f"{'='*80}\n")
 
         wallet_analyzer = get_wallet_analyzer()
-        all_results = []
-
+        
+        # ✅ STEP 1: Collect ALL wallets from ALL selected tokens
+        wallet_map = {}  # {wallet_address: wallet_data}
+        
         for idx, token in enumerate(tokens, 1):
             print(f"\n[{idx}/{len(tokens)}] ANALYZING: {token['ticker']}")
             
-            # ✅ USE 6-STEP ANALYSIS (not rally detection!)
+            # Run 6-step analysis
             wallets = wallet_analyzer.analyze_token_professional(
                 token_address=token['address'],
                 token_symbol=token.get('ticker', 'UNKNOWN'),
@@ -101,21 +107,39 @@ def analyze_wallets():
                 user_id=user_id
             )
             
-            all_results.extend(wallets)
+            # ✅ STEP 2: Deduplicate - keep highest professional_score per wallet
+            for wallet in wallets:
+                addr = wallet['wallet']
+                
+                if addr not in wallet_map:
+                    # First time seeing this wallet
+                    wallet_map[addr] = wallet
+                    wallet_map[addr]['analyzed_tokens'] = [token['ticker']]
+                else:
+                    # Wallet already exists - compare scores
+                    if wallet['professional_score'] > wallet_map[addr]['professional_score']:
+                        # This token gave better score - replace
+                        wallet_map[addr] = wallet
+                        wallet_map[addr]['analyzed_tokens'] = [token['ticker']]
+                    else:
+                        # Keep existing score, but track this token too
+                        if token['ticker'] not in wallet_map[addr]['analyzed_tokens']:
+                            wallet_map[addr]['analyzed_tokens'].append(token['ticker'])
 
-        # Deduplicate wallets (keep highest professional score)
-        wallet_map = {}
-        for wallet in all_results:
-            addr = wallet['wallet']
-            if addr not in wallet_map or wallet['professional_score'] > wallet_map[addr]['professional_score']:
-                wallet_map[addr] = wallet
+        # ✅ STEP 3: Rank by professional score (cross-token)
+        all_wallets = list(wallet_map.values())
+        all_wallets.sort(key=lambda x: x['professional_score'], reverse=True)
+        
+        # ✅ STEP 4: Top 20 only
+        top_wallets = all_wallets[:20]
 
-        # Rank by professional score
-        top_wallets = sorted(
-            wallet_map.values(),
-            key=lambda x: x['professional_score'],
-            reverse=True
-        )[:50]
+        # ✅ STEP 5: Remove pump-related fields from response
+        for wallet in top_wallets:
+            # ❌ REMOVE these fields (pump-based, not in general mode)
+            wallet.pop('pump_count', None)
+            wallet.pop('in_window_count', None)
+            wallet.pop('avg_distance_to_ath_pct', None)
+            wallet.pop('rally_history', None)
 
         return jsonify({
             'success': True,
@@ -125,8 +149,8 @@ def analyze_wallets():
                 'a_plus_tier': len([w for w in top_wallets if w.get('professional_grade') == 'A+']),
             },
             'top_wallets': top_wallets,
-            'mode': 'general_6step_analysis',
-            'data_source': '6-Step Professional Analysis'
+            'mode': 'general_6step_cross_token',
+            'data_source': '6-Step Professional Analysis (Cross-Token Ranking)'
         }), 200
 
     except Exception as e:
@@ -135,7 +159,6 @@ def analyze_wallets():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
 # =============================================================================
 # WALLET WATCHLIST ENDPOINTS
 # =============================================================================
@@ -143,7 +166,7 @@ def analyze_wallets():
 @wallets_bp.route('/watchlist/add', methods=['POST', 'OPTIONS'])
 @optional_auth
 def add_wallet_to_watchlist():
-    """Add wallet to watchlist with alert settings."""
+    """✅ FIXED: Add wallet to watchlist with correct schema."""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -154,8 +177,21 @@ def add_wallet_to_watchlist():
         if not user_id or not data.get('wallet'):
             return jsonify({'error': 'user_id and wallet required'}), 400
 
+        wallet_data = data['wallet']
+        
+        # ✅ FIX: Map frontend fields to correct DB schema
+        db_wallet = {
+            'wallet_address': wallet_data.get('wallet'),  # ✅ 'wallet' → 'wallet_address'
+            'tier': wallet_data.get('tier', 'C'),
+            'pump_count': wallet_data.get('pump_count', 0),
+            'avg_distance_to_peak': wallet_data.get('avg_distance_to_ath_pct', 0),
+            'avg_roi_to_peak': wallet_data.get('avg_roi_to_peak_pct', 0),
+            'consistency_score': wallet_data.get('consistency_score', 0),
+            'tokens_hit': wallet_data.get('token_list', [])  # ✅ 'token_list' → 'tokens_hit'
+        }
+
         db = get_watchlist_db()
-        success = db.add_wallet_to_watchlist(user_id, data['wallet'])
+        success = db.add_wallet_to_watchlist(user_id, db_wallet)
 
         if not success:
             return jsonify({
@@ -169,18 +205,20 @@ def add_wallet_to_watchlist():
             update_alert_settings(
                 'watchlists.db',
                 user_id,
-                data['wallet']['wallet_address'],
+                db_wallet['wallet_address'],
                 data['alert_settings']
             )
 
         return jsonify({
             'success': True,
-            'message': f"Wallet {data['wallet']['wallet_address'][:8]}... added with alerts"
+            'message': f"Wallet {db_wallet['wallet_address'][:8]}... added with alerts"
         }), 200
 
     except Exception as e:
+        print(f"[WATCHLIST ADD ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
 
 @wallets_bp.route('/watchlist/get', methods=['GET', 'OPTIONS'])
 @optional_auth
