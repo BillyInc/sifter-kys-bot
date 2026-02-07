@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders, LogOut, Loader2 } from 'lucide-react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
 import TelegramSettings from './TelegramSettings';
@@ -25,16 +27,16 @@ export default function SifterKYS() {
     getAccessToken,
   } = useAuth();
 
+  // ========== WALLET CONNECTION ==========
+  const { publicKey, connected } = useWallet();
+  const walletAddress = publicKey?.toBase58() || null;
+
   // ========== MODE TOGGLE ==========
   const [mode, setMode] = useState('twitter'); // 'twitter' or 'wallet'
   const [isSwitchingMode, setIsSwitchingMode] = useState(false);
-  
+
   // ========== TAB STATE ==========
   const [activeTab, setActiveTab] = useState('analyze');
-  
-  // ========== WALLET CONNECTION ==========
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [showWalletMenu, setShowWalletMenu] = useState(false);
   
   // ========== TOKEN SEARCH ==========
   const [searchQuery, setSearchQuery] = useState('');
@@ -142,11 +144,6 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
     }
   }, [activeTab, mode]);
 
-  useEffect(() => {
-    const saved = localStorage.getItem('sifter_wallet');
-    if (saved) setWalletAddress(saved);
-  }, []);
-
   // Auto-load trending runners when tab is opened
   useEffect(() => {
     if (activeTab === 'trending') {
@@ -178,29 +175,6 @@ useEffect(() => {
     
     setMode(newMode);
     setIsSwitchingMode(false);
-  };
-
-  // ========== WALLET CONNECTION ==========
-  const connectWallet = async () => {
-    try {
-      if (window.solana && window.solana.isPhantom) {
-        const response = await window.solana.connect();
-        const address = response.publicKey.toString();
-        setWalletAddress(address);
-        localStorage.setItem('sifter_wallet', address);
-      } else {
-        alert('Please install Phantom wallet');
-        window.open('https://phantom.app/', '_blank');
-      }
-    } catch (error) {
-      console.error('Wallet error:', error);
-    }
-  };
-
-  const disconnectWallet = () => {
-    setWalletAddress(null);
-    localStorage.removeItem('sifter_wallet');
-    setShowWalletMenu(false);
   };
 
   // ========== TOKEN SEARCH ==========
@@ -927,36 +901,14 @@ const handleReplaceWallet = async (newWallet) => {
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
 
-              {walletAddress ? (
-                <div className="relative">
-                  <button
-                    onClick={() => setShowWalletMenu(!showWalletMenu)}
-                    className="px-3 py-2 bg-green-600 rounded-lg hover:bg-green-700 transition text-sm flex items-center gap-2"
-                  >
-                    <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                  </button>
-
-                  {showWalletMenu && (
-                    <div className="absolute right-0 top-12 bg-black border border-white/10 rounded-lg p-3 w-48 shadow-xl">
-                      <button
-                        onClick={disconnectWallet}
-                        className="w-full px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded text-sm"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={connectWallet}
-                  className="px-3 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition text-sm flex items-center gap-2"
-                >
-                  <Wallet size={16} />
-                  Connect Wallet
-                </button>
-              )}
+              <WalletMultiButton
+                style={{
+                  backgroundColor: connected ? '#16a34a' : 'rgba(255, 255, 255, 0.05)',
+                  height: '38px',
+                  fontSize: '14px',
+                  borderRadius: '8px',
+                }}
+              />
 
               <a
                 href="https://whop.com/sifter"
