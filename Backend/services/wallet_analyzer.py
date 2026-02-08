@@ -669,7 +669,7 @@ class WalletPumpAnalyzer:
     # =========================================================================
     # 30-DAY RUNNER HISTORY
     # =========================================================================
-    def _check_if_runner(self, token_address, min_multiplier=5.0):
+    def _check_if_runner(self, token_address, min_multiplier=10.0):
         """Verify if token is actually a 5x+ runner in last 30 days"""
         try:
             price_range = self._get_price_range_in_period(token_address, 30)
@@ -694,7 +694,7 @@ class WalletPumpAnalyzer:
          
         except:
             return None
-    def get_wallet_other_runners(self, wallet_address, current_token_address=None, min_multiplier=5.0):
+    def get_wallet_other_runners(self, wallet_address, current_token_address=None, min_multiplier=10.0):
         """Get other 5x+ runners WITH per-runner distance to ATH stats"""
         try:
             trades = self.get_wallet_trades_30days(wallet_address)
@@ -1088,7 +1088,7 @@ class WalletPumpAnalyzer:
                 wallet_address = wallet_info['wallet']
              
                 # ✅ Get 30-day runner history (ALWAYS)
-                runner_history = self._get_cached_other_runners(wallet_address, current_token=token_address, min_multiplier=5.0)
+                runner_history = self._get_cached_other_runners(wallet_address, current_token=token_address, min_multiplier=10.0)
              
                 # ✅ Calculate RELATIVE score
                 scoring_data = self.calculate_wallet_relative_score(
@@ -1208,7 +1208,7 @@ class WalletPumpAnalyzer:
                 user_id=user_id
             )
          
-            for wallet in wallets[:50]:
+            for wallet in wallets:
                 wallet_addr = wallet['wallet']
              
                 if wallet_hits[wallet_addr]['wallet'] is None:
@@ -1259,7 +1259,7 @@ class WalletPumpAnalyzer:
             else:
                 consistency_grade = 'D'
          
-            full_history = self._get_cached_other_runners(wallet_addr, min_multiplier=5.0)
+            full_history = self._get_cached_other_runners(wallet_addr, min_multiplier=10.0)
          
             batch_runner_addresses = data['runners_hit_addresses']
             outside_batch_runners = [
@@ -1291,6 +1291,9 @@ class WalletPumpAnalyzer:
             no_overlap_fallback = True
          
             for wallet_addr, data in wallet_hits.items():
+                total_invested = sum(p.get('invested', 0) for p in data['performances'])
+                if total_invested < 100: continue
+                
                 # Include ALL wallets regardless of token count
                 avg_professional_score = sum(data['professional_scores']) / len(data['professional_scores'])
                 avg_roi = sum(r['roi_percent'] for r in data['roi_details']) / len(data['roi_details'])
@@ -1374,7 +1377,7 @@ class WalletPumpAnalyzer:
             )
            
             # ✅ STEP 3: Track each wallet's appearance
-            for wallet in wallets[:50]: # Top 50 per token
+            for wallet in wallets: # Top 50 per token
                 addr = wallet['wallet']
                
                 # Initialize wallet if first time seeing it
@@ -1460,6 +1463,8 @@ class WalletPumpAnalyzer:
             no_overlap_fallback = True
            
             for addr, data in wallet_hits.items():
+                total_invested = sum(p.get('invested', 0) for p in data['performances'])
+                if total_invested < 100:continue
                 token_count = len(data['tokens_hit'])
                
                 avg_professional_score = sum(data['professional_scores']) / len(data['professional_scores']) if data['professional_scores'] else 0

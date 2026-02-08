@@ -128,7 +128,7 @@ def analyze_single_token():
             min_roi_multiplier=min_roi_multiplier,
             user_id=user_id
         )
-        top_wallets = wallets[:50]
+        top_wallets = wallets[:20]
         return jsonify({
             'success': True,
             'token': token,
@@ -236,7 +236,7 @@ def analyze_trending_runner():
         return jsonify({
             'success': True,
             'runner': runner,
-            'wallets': wallets[:50],
+            'wallets': wallets[:20],
             'total_wallets': len(wallets),
         }), 200
 
