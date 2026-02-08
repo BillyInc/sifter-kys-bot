@@ -6,7 +6,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from config import Config
 from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
-
+from rq import Queue
+from redis import Redis
 telegram_polling_started = False
 
 
@@ -59,6 +60,9 @@ def create_app() -> Flask:
     app.register_blueprint(wallets_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(telegram_bp)
+    
+    redis_conn = Redis(host='localhost', port=6379, db=0)
+    app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
 
     # Apply rate limits
     _apply_rate_limits(limiter)
@@ -89,6 +93,8 @@ def preload_trending_cache():
                     min_liquidity=50000
                 )
                 print(f"  ✓ {days_back}d: {len(runners)} runners")
+                for runner in runners[:5]:
+                    analyzer.analyze_token_professional(runner['address'])
             except Exception as e:
                 print(f"  ⚠️ {days_back}d cache failed: {e}")
                 continue  # Don't crash - continue to next timeframe

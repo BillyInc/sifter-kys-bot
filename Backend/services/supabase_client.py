@@ -4,7 +4,7 @@ from config import Config
 
 
 # Schema name for this project (isolates from other applications)
-SCHEMA_NAME = "sifter_kys_dev"
+SCHEMA_NAME = "sifter_dev"
 
 _supabase_client: Client = None
 
@@ -13,7 +13,7 @@ def get_supabase_client() -> Client:
     """
     Get or create Supabase client instance.
     Uses service role key for backend operations (bypasses RLS).
-    Configured to use the 'sifter_kys_dev' schema.
+    Configured to use the 'sifter_dev' schema.
     """
     global _supabase_client
 

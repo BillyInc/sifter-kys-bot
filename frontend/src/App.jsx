@@ -9,26 +9,29 @@ import WalletReplacementModal from './WalletReplacementModal';
 import Auth from './components/Auth';
 import { useAuth } from './contexts/AuthContext';
 import AnalysisSettings from './Analysis_Setting.jsx';
-
-// ========== WALLET RESULT CARD COMPONENT ==========
-const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
+// ========== WALLET RESULT CARD COMPONENT (UPDATED) ==========
+const WalletResultCard = ({ wallet, idx, onAddToWatchlist, isBatch = false, analysisMode = 'general' }) => {
   const [showRunners, setShowRunners] = useState(false);
-  
+
+  // Only apply spec changes for general mode
+  const isGeneralMode = analysisMode === 'general';
+
   // ✅ Determine token display
   const getTokenDisplay = () => {
     const analyzedTokens = wallet.analyzed_tokens || [];
     const otherTokens = wallet.other_runners?.map(r => r.symbol) || [];
     const allTokens = [...new Set([...analyzedTokens, ...otherTokens])];
-    
+
     if (allTokens.length === 0) return 'Unknown';
     if (allTokens.length === 1) return allTokens[0];
     if (allTokens.length <= 3) return allTokens.join(', ');
     return `${allTokens.slice(0, 3).join(', ')} +${allTokens.length - 3} more`;
   };
-  
+
   const tokenDisplay = getTokenDisplay();
-  const isSingleToken = (wallet.analyzed_tokens?.length || 0) === 1;
-  
+  const numTokens = (wallet.analyzed_tokens?.length || 0);
+  const isSingleToken = numTokens === 1;
+
   return (
     <div className="bg-black/30 border border-white/10 rounded-xl overflow-hidden">
       <div className="p-4">
@@ -51,14 +54,16 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                 </span>
               )}
             </div>
-            
-            {/* ✅ Token/Tokens display (NO "main token") */}
+           
+            {/* ✅ Token/Tokens display - Adjusted for batch/single per spec */}
             <div className="text-xs text-gray-400">
-              {isSingleToken ? 'Token: ' : 'Tokens: '}
-              {tokenDisplay}
+              {isGeneralMode && isBatch 
+                ? `Participated in ${numTokens} tokens` 
+                : (isSingleToken ? 'Token: ' : 'Tokens: ')}
+              {isGeneralMode && isBatch ? '' : tokenDisplay}
             </div>
           </div>
-          
+         
           <button
             onClick={() => onAddToWatchlist(wallet)}
             className="p-2 hover:bg-purple-500/20 rounded-lg text-purple-400 transition"
@@ -67,22 +72,20 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
             <BookmarkPlus size={16} />
           </button>
         </div>
-
-        {/* ✅ Professional Score Breakdown with CORRECT LABELS */}
-        {wallet.score_breakdown && (
+        {/* ✅ Professional Score Breakdown with CORRECT LABELS - Add 'Avg' for batch */}
+        {wallet.score_breakdown && isGeneralMode && (
           <div className="mb-3 border-t border-white/10 pt-3">
             <div className="text-xs font-semibold text-gray-400 mb-2">
               Professional Score Breakdown (60/30/10):
             </div>
             <div className="grid grid-cols-3 gap-2">
-              
               {/* Distance to ATH (60%) */}
               <div className="bg-white/5 rounded p-2">
                 <div className="text-sm font-bold text-blue-400 mb-1">
                   {wallet.score_breakdown.distance_to_ath_score || 0}
                 </div>
-                <div className="text-xs text-gray-500 mb-2">Distance to ATH (60%)</div>
-                
+                <div className="text-xs text-gray-500 mb-2">{isBatch ? 'Avg ' : ''}Distance to ATH (60%)</div>
+               
                 {wallet.entry_to_ath_multiplier && (
                   <div className="text-xs">
                     <div className="text-blue-300">{wallet.entry_to_ath_multiplier}x below</div>
@@ -92,28 +95,28 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                   </div>
                 )}
               </div>
-              
+             
               {/* Realized Profit (30%) */}
               <div className="bg-white/5 rounded p-2">
                 <div className="text-sm font-bold text-green-400 mb-1">
                   {wallet.score_breakdown.realized_profit_score || 0}
                 </div>
-                <div className="text-xs text-gray-500 mb-2">Realized Profit (30%)</div>
-                
+                <div className="text-xs text-gray-500 mb-2">{isBatch ? 'Avg ' : ''}Realized Profit (30%)</div>
+               
                 {wallet.realized_multiplier && (
                   <div className="text-xs text-green-300">
                     {wallet.realized_multiplier}x realized
                   </div>
                 )}
               </div>
-              
+             
               {/* Total Position (10%) */}
               <div className="bg-white/5 rounded p-2">
                 <div className="text-sm font-bold text-purple-400 mb-1">
                   {wallet.score_breakdown.total_position_score || 0}
                 </div>
-                <div className="text-xs text-gray-500 mb-2">Total Position (10%)</div>
-                
+                <div className="text-xs text-gray-500 mb-2">{isBatch ? 'Avg ' : ''}Total Position (10%)</div>
+               
                 {wallet.total_multiplier && (
                   <div className="text-xs text-purple-300">
                     {wallet.total_multiplier}x total
@@ -123,48 +126,64 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
             </div>
           </div>
         )}
-
-        {/* Main Stats */}
-        <div className="grid grid-cols-4 gap-3 mb-3">
-          {wallet.entry_to_ath_multiplier && (
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <div className="text-lg font-bold text-blue-400">
-                {wallet.entry_to_ath_multiplier}x
+        {/* Main Stats - Adjusted for batch/single per spec (add numTokens and consistency for batch, grid-cols-5) */}
+        {isGeneralMode && (
+          <div className="grid grid-cols-5 gap-3 mb-3">
+            {isBatch && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-yellow-400">
+                  {numTokens}
+                </div>
+                <div className="text-xs text-gray-400">Tokens</div>
               </div>
-              <div className="text-xs text-gray-400">Entry→ATH</div>
-            </div>
-          )}
-          
-          {wallet.distance_to_ath_pct && (
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <div className="text-lg font-bold text-cyan-400">
-                {wallet.distance_to_ath_pct.toFixed(1)}%
+            )}
+            {wallet.entry_to_ath_multiplier && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-blue-400">
+                  {wallet.entry_to_ath_multiplier}x
+                </div>
+                <div className="text-xs text-gray-400">{isBatch ? 'Avg Entry→ATH' : 'Entry→ATH'}</div>
               </div>
-              <div className="text-xs text-gray-400">Below ATH</div>
-            </div>
-          )}
-          
-          {wallet.realized_multiplier && (
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <div className="text-lg font-bold text-green-400">
-                {wallet.realized_multiplier}x
+            )}
+           
+            {wallet.distance_to_ath_pct && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-cyan-400">
+                  {wallet.distance_to_ath_pct.toFixed(1)}%
+                </div>
+                <div className="text-xs text-gray-400">{isBatch ? 'Avg Below ATH' : 'Below ATH'}</div>
               </div>
-              <div className="text-xs text-gray-400">Realized</div>
-            </div>
-          )}
-          
-          {wallet.total_multiplier && (
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <div className="text-lg font-bold text-purple-400">
-                {wallet.total_multiplier}x
+            )}
+           
+            {wallet.realized_multiplier && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-green-400">
+                  {wallet.realized_multiplier}x
+                </div>
+                <div className="text-xs text-gray-400">{isBatch ? 'Avg Realized ROI' : 'Realized ROI'}</div>
               </div>
-              <div className="text-xs text-gray-400">Total</div>
-            </div>
-          )}
-        </div>
-
-        {/* ✅ 30-Day Runner Dropdown with Per-Runner Stats */}
-        {wallet.other_runners && wallet.other_runners.length > 0 && (
+            )}
+           
+            {wallet.total_multiplier && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-purple-400">
+                  {wallet.total_multiplier}x
+                </div>
+                <div className="text-xs text-gray-400">{isBatch ? 'Avg Total ROI' : 'Total ROI'}</div>
+              </div>
+            )}
+            {wallet.professional_score && isBatch && (
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-purple-400">
+                  {wallet.professional_score}
+                </div>
+                <div className="text-xs text-gray-400">Avg Consistency</div>
+              </div>
+            )}
+          </div>
+        )}
+        {/* ✅ 30-Day Runner Dropdown with Per-Runner Stats - Updated title per spec */}
+        {wallet.other_runners && wallet.other_runners.length > 0 && isGeneralMode && (
           <div className="border-t border-white/10 pt-3">
             <button
               onClick={() => setShowRunners(!showRunners)}
@@ -173,21 +192,19 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
               <div className="flex items-center gap-2">
                 <TrendingUp size={14} className="text-purple-400" />
                 <span className="text-sm font-semibold text-purple-400">
-                  Other 5x+ Runners (Last 30 Days)
+                  This person also traded the following tokens in the last 30 days
                 </span>
                 <span className="text-xs bg-purple-500/20 px-2 py-0.5 rounded">
                   {wallet.runner_hits_30d || wallet.other_runners.length}
                 </span>
               </div>
-              <ChevronDown 
-                size={16} 
+              <ChevronDown
+                size={16}
                 className={`text-gray-400 transition-transform ${showRunners ? 'rotate-180' : ''}`}
               />
             </button>
-
             {showRunners && (
               <div className="mt-3 space-y-3">
-                
                 {/* Summary Stats */}
                 {(wallet.other_runners_stats || wallet.runner_success_rate) && (
                   <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
@@ -212,7 +229,7 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                           </div>
                         </div>
                       )}
-                      
+                     
                       {(wallet.other_runners_stats?.avg_roi || wallet.runner_avg_roi) && (
                         <div>
                           <div className="text-gray-400 mb-1">Avg ROI:</div>
@@ -221,7 +238,7 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                           </div>
                         </div>
                       )}
-                      
+                     
                       {(wallet.other_runners_stats?.success_rate || wallet.runner_success_rate) && (
                         <div>
                           <div className="text-gray-400 mb-1">Success Rate:</div>
@@ -233,12 +250,10 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                     </div>
                   </div>
                 )}
-
                 {/* Individual Runner Cards */}
                 <div className="space-y-2">
                   {wallet.other_runners.map((runner, ri) => (
                     <div key={ri} className="bg-black/40 rounded-lg border border-white/5 overflow-hidden">
-                      
                       {/* Runner Header */}
                       <div className="p-3 bg-gradient-to-r from-white/5 to-transparent border-b border-white/5">
                         <div className="flex items-center justify-between">
@@ -255,17 +270,17 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                           </div>
                         </div>
                       </div>
-                      
+                     
                       {/* Distance to ATH Section */}
                       {runner.entry_to_ath_multiplier && (
                         <div className="p-3 border-b border-white/5">
                           <div className="flex items-center gap-2 mb-2">
                             <TrendingUp size={12} className="text-blue-400" />
                             <span className="text-xs font-semibold text-gray-400">
-                              Entry Distance to ATH
+                              Distance to ATH
                             </span>
                           </div>
-                          
+                         
                           <div className="grid grid-cols-2 gap-2">
                             <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
                               <div className="text-base font-bold text-blue-400">
@@ -273,7 +288,7 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                               </div>
                               <div className="text-xs text-gray-500">below ATH</div>
                             </div>
-                            
+                           
                             <div className="bg-white/5 rounded-lg p-2 text-center border border-cyan-500/20">
                               <div className="text-base font-bold text-cyan-400">
                                 {runner.distance_to_ath_pct?.toFixed(1)}%
@@ -283,17 +298,17 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                           </div>
                         </div>
                       )}
-                      
-                      {/* Profit Performance Section */}
+                     
+                      {/* Profit Performance Section (Total ROI/multiplier) */}
                       {runner.roi_multiplier && (
                         <div className="p-3">
                           <div className="flex items-center gap-2 mb-2">
                             <BarChart3 size={12} className="text-green-400" />
                             <span className="text-xs font-semibold text-gray-400">
-                              Profit Performance
+                              Total ROI/Multiplier
                             </span>
                           </div>
-                          
+                         
                           <div className="grid grid-cols-3 gap-2">
                             <div className="bg-white/5 rounded-lg p-2 text-center border border-green-500/20">
                               <div className="text-base font-bold text-green-400">
@@ -301,14 +316,14 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                               </div>
                               <div className="text-xs text-gray-500">ROI</div>
                             </div>
-                            
+                           
                             <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
                               <div className="text-sm font-bold text-blue-400">
                                 ${runner.invested}
                               </div>
                               <div className="text-xs text-gray-500">Invested</div>
                             </div>
-                            
+                           
                             <div className="bg-white/5 rounded-lg p-2 text-center border border-purple-500/20">
                               <div className="text-sm font-bold text-purple-400">
                                 ${runner.realized}
@@ -329,7 +344,6 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
     </div>
   );
 };
-
 export default function SifterKYS() {
   // ========== AUTHENTICATION ==========
   const {
@@ -344,18 +358,17 @@ export default function SifterKYS() {
     updatePassword,
     getAccessToken,
   } = useAuth();
-
   // ========== MODE TOGGLE ==========
   const [mode, setMode] = useState('twitter'); // 'twitter' or 'wallet'
   const [isSwitchingMode, setIsSwitchingMode] = useState(false);
-  
+ 
   // ========== TAB STATE ==========
   const [activeTab, setActiveTab] = useState('analyze');
-  
+ 
   // ========== WALLET CONNECTION ==========
   const [walletAddress, setWalletAddress] = useState(null);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
-  
+ 
   // ========== TOKEN SEARCH ==========
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -363,25 +376,25 @@ export default function SifterKYS() {
   const [isSearching, setIsSearching] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef(null);
-  
+ 
   // ========== ANALYSIS SETTINGS ==========
   const [analysisType, setAnalysisType] = useState('general'); // 'pump_window' or 'general'
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
-  
+ 
   // Global settings
   const [daysBack, setDaysBack] = useState(7);
   const [candleSize, setCandleSize] = useState('5m');
   const [tMinusWindow, setTMinusWindow] = useState(35);
   const [tPlusWindow, setTPlusWindow] = useState(10);
-  
+ 
   // ========== ANALYSIS RESULTS ==========
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [twitterResults, setTwitterResults] = useState(null);
   const [walletResults, setWalletResults] = useState(null);
   const [expandedTokens, setExpandedTokens] = useState({});
   const [expandedWallets, setExpandedWallets] = useState({});
-  
+ 
   // ========== WATCHLIST ==========
   const [twitterWatchlist, setTwitterWatchlist] = useState([]);
   const [twitterWatchlistStats, setTwitterWatchlistStats] = useState(null);
@@ -391,18 +404,15 @@ export default function SifterKYS() {
   const [editingTags, setEditingTags] = useState(null);
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
-
   // ========== BATCH ANALYSIS ==========
   const [selectedRunners, setSelectedRunners] = useState([]);
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
   const [batchResults, setBatchResults] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefreshTime, setLastRefreshTime] = useState(null);
-
   // ========== WALLET ALERTS ==========
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
   const [activeSettingsTab, setActiveSettingsTab] = useState('telegram');
-
   // ========== TRENDING RUNNERS ==========
   const [trendingRunners, setTrendingRunners] = useState([]);
   const [isLoadingRunners, setIsLoadingRunners] = useState(false);
@@ -419,20 +429,17 @@ export default function SifterKYS() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [tempFilters, setTempFilters] = useState(runnerFilters);
   const [expandedRunners, setExpandedRunners] = useState({});
-  
+ 
   // ========== AUTO DISCOVERY ==========
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
-
   // ========== WALLET REPLACEMENT ==========
   const [showReplacementModal, setShowReplacementModal] = useState(false);
   const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
   const [replacementSuggestions, setReplacementSuggestions] = useState([]);
   const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
-
   const API_URL = 'http://localhost:5000';
   const userId = user?.id;
-
   // Helper for authenticated API calls
   const authFetch = async (url, options = {}) => {
     const token = getAccessToken();
@@ -442,7 +449,6 @@ export default function SifterKYS() {
     };
     return fetch(url, { ...options, headers });
   };
-
   // ========== EFFECTS ==========
   useEffect(() => {
     function handleClickOutside(event) {
@@ -453,7 +459,6 @@ export default function SifterKYS() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
   useEffect(() => {
     if (activeTab === 'watchlist') {
       if (mode === 'twitter') {
@@ -465,60 +470,53 @@ export default function SifterKYS() {
       }
     }
   }, [activeTab, mode]);
-
   useEffect(() => {
     const saved = localStorage.getItem('sifter_wallet');
     if (saved) setWalletAddress(saved);
   }, []);
-
   // Auto-load trending runners when tab is opened
   useEffect(() => {
     if (activeTab === 'trending') {
       loadTrendingRunners();
     }
   }, [activeTab]);
-
   // Load watchlist when tab opens
   useEffect(() => {
     if (activeTab === 'watchlist' && mode === 'wallet') {
       loadWalletWatchlist();
     }
   }, [activeTab, mode]);
-
   // Auto-reload trending runners when filters change
   useEffect(() => {
     if (activeTab === 'trending') {
       loadTrendingRunners();
     }
-  }, [runnerFilters.timeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity, 
-      runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier, 
+  }, [runnerFilters.timeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity,
+      runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier,
       runnerFilters.minTokenAge, runnerFilters.maxTokenAge]);
-
   // Auto-refresh trending runners every 60 seconds
   useEffect(() => {
     if (!autoRefresh || activeTab !== 'trending') return;
-    
+   
     const interval = setInterval(() => {
       console.log('Auto-refreshing trending runners...');
       loadTrendingRunners();
       setLastRefreshTime(new Date());
     }, 60000); // 60 seconds
-    
+   
     return () => clearInterval(interval);
   }, [autoRefresh, activeTab]);
-
   // ========== MODE SWITCHING WITH TRANSITION ==========
   const handleModeSwitch = async (newMode) => {
     if (newMode === mode) return;
-    
+   
     setIsSwitchingMode(true);
-    
+   
     await new Promise(resolve => setTimeout(resolve, 400));
-    
+   
     setMode(newMode);
     setIsSwitchingMode(false);
   };
-
   // ========== WALLET CONNECTION ==========
   const connectWallet = async () => {
     try {
@@ -535,26 +533,21 @@ export default function SifterKYS() {
       console.error('Wallet error:', error);
     }
   };
-
   const disconnectWallet = () => {
     setWalletAddress(null);
     localStorage.removeItem('sifter_wallet');
     setShowWalletMenu(false);
   };
-
   // ========== TOKEN SEARCH ==========
   const searchTokens = async (query) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
       return;
     }
-
     setIsSearching(true);
-
     try {
       const response = await fetch(`https://api.dexscreener.com/latest/dex/search/?q=${encodeURIComponent(query)}`);
       const data = await response.json();
-
       if (data.pairs && data.pairs.length > 0) {
         const formatted = data.pairs.map(pair => ({
           address: pair.baseToken.address,
@@ -567,7 +560,6 @@ export default function SifterKYS() {
           pairAddress: pair.pairAddress,
           url: pair.url
         }));
-
         formatted.sort((a, b) => b.liquidity - a.liquidity);
         setSearchResults(formatted.slice(0, 20));
       } else {
@@ -577,29 +569,25 @@ export default function SifterKYS() {
       console.error('Search error:', error);
       setSearchResults([]);
     }
-
     setIsSearching(false);
   };
-
   useEffect(() => {
     setSearchResults([]);
     setShowDropdown(false);
-    
+   
     const timer = setTimeout(() => {
       if (searchQuery.trim()) {
         searchTokens(searchQuery.trim());
         setShowDropdown(true);
       }
     }, 500);
-
     return () => clearTimeout(timer);
   }, [searchQuery]);
-
   const toggleTokenSelection = (token) => {
     const isSelected = selectedTokens.some(
       t => t.address.toLowerCase() === token.address.toLowerCase() && t.chain === token.chain
     );
-    
+   
     if (isSelected) {
       setSelectedTokens(selectedTokens.filter(
         t => !(t.address.toLowerCase() === token.address.toLowerCase() && t.chain === token.chain)
@@ -623,11 +611,10 @@ export default function SifterKYS() {
         });
       }
     }
-    
+   
     setShowDropdown(false);
     setSearchQuery('');
   };
-
   const removeToken = (address, chain) => {
     setSelectedTokens(selectedTokens.filter(
       t => !(t.address.toLowerCase() === address.toLowerCase() && t.chain === chain)
@@ -637,7 +624,6 @@ export default function SifterKYS() {
     delete newSettings[key];
     setTokenSettings(newSettings);
   };
-
   const updateTokenSetting = (address, chain, field, value) => {
     const key = `${chain}-${address}`;
     setTokenSettings({
@@ -648,21 +634,18 @@ export default function SifterKYS() {
       }
     });
   };
-
   // ========== ANALYSIS FUNCTIONS ==========
   const handleAnalysis = async () => {
     if (selectedTokens.length === 0) {
       alert('Please select at least one token');
       return;
     }
-
     setIsAnalyzing(true);
     setActiveTab('results');
-
     try {
       const tokensToAnalyze = selectedTokens.map(token => {
         const key = `${token.chain}-${token.address}`;
-        
+       
         const settings = useGlobalSettings ? {
           days_back: daysBack,
           candle_size: candleSize,
@@ -674,7 +657,6 @@ export default function SifterKYS() {
           t_minus: tMinusWindow,
           t_plus: tPlusWindow
         });
-
         return {
           address: token.address,
           ticker: token.ticker,
@@ -684,7 +666,6 @@ export default function SifterKYS() {
           settings: settings
         };
       });
-
       if (mode === 'twitter') {
         const endpoint = '/api/wallets/analyze';
         const response = await authFetch(`${API_URL}${endpoint}`, {
@@ -692,9 +673,7 @@ export default function SifterKYS() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tokens: tokensToAnalyze })
         });
-
         const data = await response.json();
-
         if (response.ok) {
           setTwitterResults(data);
           const expanded = {};
@@ -707,11 +686,10 @@ export default function SifterKYS() {
         }
       } else {
         const endpoint = '/api/wallets/analyze';
-
         const response = await authFetch(`${API_URL}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             tokens: tokensToAnalyze,
             user_id: userId,
             global_settings: {
@@ -723,9 +701,7 @@ export default function SifterKYS() {
             }
           })
         });
-
         const data = await response.json();
-
         if (response.ok && data.success) {
           setWalletResults(data);
           const expanded = {};
@@ -741,19 +717,15 @@ export default function SifterKYS() {
       console.error('Analysis error:', error);
       alert(`Analysis failed: ${error.message}`);
     }
-
     setIsAnalyzing(false);
   };
-
   // ========== BATCH ANALYSIS FUNCTIONS ==========
   const analyzeBatchRunners = async () => {
     if (selectedRunners.length === 0) {
       alert('Please select at least one runner');
       return;
     }
-
     setIsBatchAnalyzing(true);
-
     try {
       const response = await authFetch(`${API_URL}/api/wallets/trending/analyze-batch`, {
         method: 'POST',
@@ -765,9 +737,7 @@ export default function SifterKYS() {
           min_runner_hits: 2
         })
       });
-
       const data = await response.json();
-
       if (data.success) {
         setBatchResults(data);
         setActiveTab('results'); // Switch to results tab
@@ -778,32 +748,27 @@ export default function SifterKYS() {
       console.error('Batch analysis error:', error);
       alert('Batch analysis failed');
     }
-
     setIsBatchAnalyzing(false);
   };
-
   const toggleRunnerSelection = (runner) => {
     const isSelected = selectedRunners.some(r => r.address === runner.address);
-    
+   
     if (isSelected) {
       setSelectedRunners(selectedRunners.filter(r => r.address !== runner.address));
     } else {
       setSelectedRunners([...selectedRunners, runner]);
     }
   };
-
   const selectAllRunners = () => {
     setSelectedRunners([...trendingRunners]);
   };
-
   const clearRunnerSelection = () => {
     setSelectedRunners([]);
   };
-
   // ========== WATCHLIST FUNCTIONS ==========
   const loadTwitterWatchlist = async () => {
     try {
-      const response = await authFetch(`${API_URL}/api/watchlist/get?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/get?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setTwitterWatchlist(data.accounts);
@@ -812,10 +777,9 @@ export default function SifterKYS() {
       console.error('Error loading twitter watchlist:', error);
     }
   };
-
   const loadTwitterWatchlistStats = async () => {
     try {
-      const response = await authFetch(`${API_URL}/api/watchlist/stats?user_id=${userId}`);
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
       const data = await response.json();
       if (data.success) {
         setTwitterWatchlistStats(data.stats);
@@ -824,7 +788,6 @@ export default function SifterKYS() {
       console.error('Error loading twitter stats:', error);
     }
   };
-
   const loadWalletWatchlist = async () => {
     try {
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
@@ -837,7 +800,6 @@ export default function SifterKYS() {
       console.error('Error loading wallet watchlist:', error);
     }
   };
-
   const loadWalletWatchlistStats = async () => {
     try {
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/stats?user_id=${userId}`);
@@ -849,10 +811,9 @@ export default function SifterKYS() {
       console.error('Error loading wallet stats:', error);
     }
   };
-
   const addToTwitterWatchlist = async (account) => {
     try {
-      const response = await authFetch(`${API_URL}/api/watchlist/add`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, account })
@@ -865,25 +826,24 @@ export default function SifterKYS() {
       console.error('Error adding to twitter watchlist:', error);
     }
   };
-
   const addToWalletWatchlist = async (wallet) => {
     try {
       // ✅ FIX: Map fields correctly to match backend schema
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          user_id: userId, 
+        body: JSON.stringify({
+          user_id: userId,
           wallet: {
-            wallet: wallet.wallet,  // ✅ Backend maps to wallet_address
-            tier: wallet.professional_grade === 'A+' ? 'S' : 
+            wallet: wallet.wallet, // ✅ Backend maps to wallet_address
+            tier: wallet.professional_grade === 'A+' ? 'S' :
                   wallet.professional_grade?.startsWith('A') ? 'A' :
                   wallet.professional_grade?.startsWith('B') ? 'B' : 'C',
             pump_count: wallet.runner_hits_30d || 0,
             avg_distance_to_ath_pct: wallet.ath_distance || 0,
             avg_roi_to_peak_pct: wallet.roi_percent || 0,
             consistency_score: wallet.professional_score || 0,
-            token_list: wallet.other_runners?.map(r => r.symbol) || []  // ✅ Mapped to tokens_hit
+            token_list: wallet.other_runners?.map(r => r.symbol) || [] // ✅ Mapped to tokens_hit
           },
           alert_settings: {
             alert_enabled: true,
@@ -893,9 +853,9 @@ export default function SifterKYS() {
           }
         })
       });
-      
+     
       const data = await response.json();
-      
+     
       if (data.success) {
         alert('✅ Added to wallet watchlist with alerts enabled!');
       } else {
@@ -906,11 +866,10 @@ export default function SifterKYS() {
       alert('❌ Error adding to watchlist');
     }
   };
-
   const removeFromTwitterWatchlist = async (authorId) => {
     if (!confirm('Remove this account from watchlist?')) return;
     try {
-      const response = await authFetch(`${API_URL}/api/watchlist/remove`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/remove`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId })
@@ -924,7 +883,6 @@ export default function SifterKYS() {
       console.error('Error removing from twitter watchlist:', error);
     }
   };
-
   const removeFromWalletWatchlist = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
     try {
@@ -942,10 +900,9 @@ export default function SifterKYS() {
       console.error('Error removing wallet from watchlist:', error);
     }
   };
-
   const updateTwitterWatchlistNotes = async (authorId, notes) => {
     try {
-      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, notes })
@@ -960,11 +917,10 @@ export default function SifterKYS() {
       console.error('Error updating twitter notes:', error);
     }
   };
-
   const updateTwitterWatchlistTags = async (authorId, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
-      const response = await authFetch(`${API_URL}/api/watchlist/update`, {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, author_id: authorId, tags: tagsArray })
@@ -979,7 +935,6 @@ export default function SifterKYS() {
       console.error('Error updating twitter tags:', error);
     }
   };
-
   const updateWalletWatchlistNotes = async (walletAddress, notes) => {
     try {
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/update`, {
@@ -997,7 +952,6 @@ export default function SifterKYS() {
       console.error('Error updating wallet notes:', error);
     }
   };
-
   const updateWalletWatchlistTags = async (walletAddress, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
@@ -1016,17 +970,16 @@ export default function SifterKYS() {
       console.error('Error updating wallet tags:', error);
     }
   };
-
   // ========== WALLET REPLACEMENT FUNCTIONS ==========
   const findReplacements = async (walletAddress) => {
     try {
       setIsLoadingReplacements(true);
       setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
-      
+     
       const token = getAccessToken();
       const response = await fetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
@@ -1036,9 +989,9 @@ export default function SifterKYS() {
           min_professional_score: 85
         })
       });
-      
+     
       const data = await response.json();
-      
+     
       if (data.success) {
         setReplacementSuggestions(data.replacements || []);
         setShowReplacementModal(true);
@@ -1049,13 +1002,12 @@ export default function SifterKYS() {
       setIsLoadingReplacements(false);
     }
   };
-
   const handleReplaceWallet = async (newWallet) => {
     try {
       const token = getAccessToken();
       const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
@@ -1065,9 +1017,9 @@ export default function SifterKYS() {
           new_wallet: newWallet.wallet
         })
       });
-      
+     
       const data = await response.json();
-      
+     
       if (data.success) {
         await loadWalletWatchlist();
         setShowReplacementModal(false);
@@ -1080,7 +1032,6 @@ export default function SifterKYS() {
       alert('Failed to replace wallet');
     }
   };
-
   // ========== TRENDING RUNNERS ==========
   const loadTrendingRunners = async () => {
     setIsLoadingRunners(true);
@@ -1095,10 +1046,9 @@ export default function SifterKYS() {
         min_age_days: runnerFilters.minTokenAge,
         max_age_days: runnerFilters.maxTokenAge
       });
-
       const response = await authFetch(`${API_URL}/api/wallets/trending/runners?${params}`);
       const data = await response.json();
-      
+     
       if (data.success) {
         setTrendingRunners(data.runners);
       }
@@ -1107,21 +1057,19 @@ export default function SifterKYS() {
     }
     setIsLoadingRunners(false);
   };
-
   const analyzeRunner = async (runner) => {
     const runnerKey = `${runner.chain}-${runner.address}`;
-    
+   
     setExpandedRunners(prev => ({
       ...prev,
       [runnerKey]: { ...prev[runnerKey], loading: true }
     }));
-
     try {
       if (mode === 'twitter') {
-        const response = await authFetch(`${API_URL}/api/analyze/runner`, {
+        const response = await authFetch(`${API_URL}/api/wallets/trending/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             runner: {
               address: runner.address,
               chain: runner.chain,
@@ -1131,20 +1079,20 @@ export default function SifterKYS() {
           })
         });
         const data = await response.json();
-        
+       
         setExpandedRunners(prev => ({
           ...prev,
-          [runnerKey]: { 
-            expanded: true, 
+          [runnerKey]: {
+            expanded: true,
             loading: false,
             data: data.accounts || []
           }
         }));
       } else {
-        const response = await authFetch(`${API_URL}/api/trending/analyze`, {
+        const response = await authFetch(`${API_URL}/api/wallets/trending/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             runner: {
               address: runner.address,
               chain: runner.chain,
@@ -1156,11 +1104,11 @@ export default function SifterKYS() {
           })
         });
         const data = await response.json();
-        
+       
         setExpandedRunners(prev => ({
           ...prev,
-          [runnerKey]: { 
-            expanded: true, 
+          [runnerKey]: {
+            expanded: true,
             loading: false,
             data: data.wallets || []
           }
@@ -1170,24 +1118,22 @@ export default function SifterKYS() {
       console.error('Error analyzing runner:', error);
       setExpandedRunners(prev => ({
         ...prev,
-        [runnerKey]: { 
-          expanded: true, 
+        [runnerKey]: {
+          expanded: true,
           loading: false,
           error: 'Failed to analyze'
         }
       }));
     }
   };
-
   // ========== AUTO DISCOVERY ==========
   const runAutoDiscovery = async () => {
     setIsDiscovering(true);
-    
+   
     try {
-      const endpoint = mode === 'twitter' 
+      const endpoint = mode === 'twitter'
         ? '/api/discover/twitter'
         : '/api/wallets/discover';
-
       const response = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1199,9 +1145,8 @@ export default function SifterKYS() {
           min_liquidity: 50000
         })
       });
-
       const data = await response.json();
-      
+     
       if (data.success) {
         setDiscoveryResults(data);
       }
@@ -1209,17 +1154,14 @@ export default function SifterKYS() {
       console.error('Error running auto discovery:', error);
       alert('Auto discovery failed');
     }
-
     setIsDiscovering(false);
   };
-
   // ========== HELPER FUNCTIONS ==========
   const formatNumber = (num) => {
     if (num >= 1000000) return `$${(num / 1000000).toFixed(2)}M`;
     if (num >= 1000) return `$${(num / 1000).toFixed(1)}K`;
     return `$${num.toFixed(2)}`;
   };
-
   const formatPrice = (price) => {
     if (!price) return '$0.00';
     const num = parseFloat(price);
@@ -1227,21 +1169,18 @@ export default function SifterKYS() {
     if (num < 0.01) return `$${num.toFixed(6)}`;
     return `$${num.toFixed(4)}`;
   };
-
   const toggleTokenExpansion = (idx) => {
     setExpandedTokens(prev => ({
       ...prev,
       [idx]: !prev[idx]
     }));
   };
-
   const toggleWalletExpansion = (idx) => {
     setExpandedWallets(prev => ({
       ...prev,
       [idx]: !prev[idx]
     }));
   };
-
   const clearResults = () => {
     if (confirm('Clear analysis results?')) {
       setTwitterResults(null);
@@ -1251,9 +1190,7 @@ export default function SifterKYS() {
       setExpandedWallets({});
     }
   };
-
   const hasResults = isAnalyzing || twitterResults || walletResults || batchResults;
-
   // Show loading spinner while checking auth
   if (authLoading) {
     return (
@@ -1265,7 +1202,6 @@ export default function SifterKYS() {
       </div>
     );
   }
-
   // Show auth screen if not authenticated
   if (!isAuthenticated || isPasswordRecovery) {
     return (
@@ -1278,7 +1214,6 @@ export default function SifterKYS() {
       />
     );
   }
-
   return (
     <div className="min-h-screen bg-black text-gray-100">
       {/* NAVBAR */}
@@ -1289,7 +1224,7 @@ export default function SifterKYS() {
               <div className="text-xl font-bold">
                 SIFTER <span className="text-purple-500">KYS</span>
               </div>
-              
+             
               {/* MODE TOGGLE */}
               <div className="relative flex items-center gap-1 bg-gradient-to-r from-gray-900 to-gray-800 rounded-lg p-1 border border-white/10">
                 <button
@@ -1318,10 +1253,9 @@ export default function SifterKYS() {
                 </button>
               </div>
             </div>
-            
+           
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
-
               {walletAddress ? (
                 <div className="relative">
                   <button
@@ -1331,7 +1265,6 @@ export default function SifterKYS() {
                     <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
                     {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
                   </button>
-
                   {showWalletMenu && (
                     <div className="absolute right-0 top-12 bg-black border border-white/10 rounded-lg p-3 w-48 shadow-xl">
                       <button
@@ -1352,7 +1285,6 @@ export default function SifterKYS() {
                   Connect Wallet
                 </button>
               )}
-
               <a
                 href="https://whop.com/sifter"
                 target="_blank"
@@ -1361,7 +1293,6 @@ export default function SifterKYS() {
               >
                 Upgrade
               </a>
-
               <button
                 onClick={() => signOut()}
                 className="px-3 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition text-sm flex items-center gap-2"
@@ -1374,7 +1305,6 @@ export default function SifterKYS() {
           </div>
         </div>
       </nav>
-
       {/* Mode Switching Overlay */}
       {isSwitchingMode && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 flex items-center justify-center">
@@ -1386,7 +1316,6 @@ export default function SifterKYS() {
           </div>
         </div>
       )}
-
       <div className="pt-20 max-w-7xl mx-auto px-6 py-6">
         {/* MAIN TABS */}
         <div className="flex gap-3 mb-6 border-b border-white/10">
@@ -1415,7 +1344,6 @@ export default function SifterKYS() {
             </button>
           ))}
         </div>
-
         {/* ========== ANALYZE TAB ========== */}
         {activeTab === 'analyze' && (
           <div className="space-y-4">
@@ -1423,7 +1351,7 @@ export default function SifterKYS() {
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-base font-semibold">Token Search</h3>
-                
+               
                 {/* Analysis Type Dropdown */}
                 <div className="relative">
                   <select
@@ -1436,12 +1364,12 @@ export default function SifterKYS() {
                   >
                   <option value="general" className="bg-gray-900 text-white py-2">📊 General Analysis</option>
                     <option value="pump_window" className="bg-gray-900 text-white py-2">🎯 Pump Window</option>
-                    
+                   
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" size={16} />
                 </div>
               </div>
-              
+             
               <div className="relative flex-1" ref={searchRef}>
                 <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                 <input
@@ -1456,7 +1384,7 @@ export default function SifterKYS() {
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   </div>
                 )}
-                
+               
                 {/* Search Dropdown */}
                 {showDropdown && searchResults.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-white/20 rounded-xl shadow-2xl max-h-96 overflow-y-auto z-50">
@@ -1464,7 +1392,7 @@ export default function SifterKYS() {
                       const isSelected = selectedTokens.some(
                         t => t.address.toLowerCase() === token.address.toLowerCase() && t.chain === token.chain
                       );
-                      
+                     
                       return (
                         <div
                           key={`${token.chain}-${token.address}-${idx}`}
@@ -1489,7 +1417,7 @@ export default function SifterKYS() {
                               <div className="text-xs text-gray-400">{token.name}</div>
                               <div className="text-xs text-gray-500 mt-1">Liq: {formatNumber(token.liquidity)}</div>
                             </div>
-                            
+                           
                             <a
                               href={token.url}
                               target="_blank"
@@ -1507,7 +1435,6 @@ export default function SifterKYS() {
                 )}
               </div>
             </div>
-
             {/* Selected Tokens */}
             {selectedTokens.length > 0 && (
               <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
@@ -1522,7 +1449,6 @@ export default function SifterKYS() {
                     Clear All
                   </button>
                 </div>
-
                 {/* Token List */}
                 <div className="space-y-2 mb-4">
                   {selectedTokens.map((token) => (
@@ -1542,7 +1468,6 @@ export default function SifterKYS() {
                     </div>
                   ))}
                 </div>
-
                 {/* ✅ USE THE AnalysisSettings COMPONENT */}
                 <AnalysisSettings
                   analysisType={analysisType}
@@ -1564,7 +1489,6 @@ export default function SifterKYS() {
                     if (settings.tPlusWindow !== undefined) setTPlusWindow(settings.tPlusWindow);
                   }}
                 />
-
                 {/* Run Analysis Button */}
                 <button
                   onClick={handleAnalysis}
@@ -1587,7 +1511,6 @@ export default function SifterKYS() {
             )}
           </div>
         )}
-
         {/* ========== RESULTS TAB ========== */}
         {activeTab === 'results' && (
           <div className="space-y-4">
@@ -1600,12 +1523,22 @@ export default function SifterKYS() {
                 <div className="text-xs text-gray-500">This may take a moment</div>
               </div>
             )}
-
             {(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                {walletResults.mode === 'batch_no_overlap_fallback' && (
+      <div className="mb-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 flex items-start gap-3">
+        <AlertCircle className="text-yellow-400 flex-shrink-0 mt-0.5" size={18} />
+        <div className="text-sm">
+          <div className="font-semibold text-yellow-400 mb-1">No Cross-Token Overlap</div>
+          <div className="text-gray-300">
+            No wallets appeared in multiple tokens. Showing top wallets ranked by individual performance instead.
+          </div>
+        </div>
+      </div>
+    )}
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">
-                    {batchResults ? '🔥 Batch Analysis Results' : 
+                    {batchResults ? '🔥 Batch Analysis Results' :
                      mode === 'twitter' ? 'Twitter Analysis Results' : 'Wallet Analysis Results'}
                   </h3>
                   <button
@@ -1616,7 +1549,6 @@ export default function SifterKYS() {
                     Clear
                   </button>
                 </div>
-
                 {mode === 'twitter' && twitterResults && (
                   <div className="space-y-3">
                     {twitterResults.results?.map((result, idx) => (
@@ -1640,7 +1572,6 @@ export default function SifterKYS() {
                     ))}
                   </div>
                 )}
-
                 {mode === 'wallet' && (walletResults || batchResults) && (
                   <div className="space-y-4">
                     {/* Batch Results Summary */}
@@ -1651,7 +1582,7 @@ export default function SifterKYS() {
                             <div className="text-2xl font-bold text-green-400">
                               {batchResults.wallets_discovered}
                             </div>
-                            <div className="text-xs text-gray-400">Smart Money Wallets</div>
+                            <div className="text-xs text-gray-400">Smart Wallets</div>
                           </div>
                           <div>
                             <div className="text-2xl font-bold text-yellow-400">
@@ -1674,55 +1605,114 @@ export default function SifterKYS() {
                         </div>
                       </div>
                     )}
-
                     {/* Wallet Results Summary */}
-                    {walletResults && !batchResults && (
-                      <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
-                        <div>
-                          <div className="text-2xl font-bold text-green-400">
-                            {walletResults.summary?.qualified_wallets || walletResults.top_wallets?.length || 0}
-                          </div>
-                          <div className="text-xs text-gray-400">Qualified Wallets</div>
-                        </div>
-                        <div>
-                          <div className="text-2xl font-bold text-yellow-400">
-                            {walletResults.summary?.real_winners || 0}
-                          </div>
-                          <div className="text-xs text-gray-400">S-Tier Wallets</div>
-                        </div>
-                        <div>
-                          <div className="text-2xl font-bold text-blue-400">
-                            {walletResults.summary?.total_rallies || 0}
-                          </div>
-                          <div className="text-xs text-gray-400">Total Rallies</div>
-                        </div>
-                        <div>
-                          <div className="text-2xl font-bold text-purple-400">
-                            {walletResults.summary?.tokens_analyzed || 0}
-                          </div>
-                          <div className="text-xs text-gray-400">Tokens Analyzed</div>
-                        </div>
-                      </div>
-                    )}
-
+{walletResults && !batchResults && (
+  <div className="space-y-4">
+    {/* Tokens Participated */}
+    <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg p-4">
+      <div className="text-xs font-semibold text-gray-400 mb-2">Tokens Participated:</div>
+      <div className="flex flex-wrap gap-2">
+        {walletResults.summary?.tokens_participated?.map((ticker, idx) => (
+          <span key={idx} className="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-lg text-sm font-semibold">
+            {ticker}
+          </span>
+        ))}
+      </div>
+    </div>
+    {/* Main Stats Grid */}
+    <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
+      <div>
+        <div className="text-2xl font-bold text-green-400">
+          {walletResults.summary?.qualified_wallets || 0}
+        </div>
+        <div className="text-xs text-gray-400">Qualified Wallets</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-yellow-400">
+          {walletResults.summary?.s_tier_wallets || 0}
+        </div>
+        <div className="text-xs text-gray-400">S-Tier Wallets</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-blue-400">
+          {walletResults.summary?.top_wallets_shown || 0}
+        </div>
+        <div className="text-xs text-gray-400">Top Wallets Shown</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-purple-400">
+          {walletResults.summary?.avg_runner_hits_30d?.toFixed(1) || 0}
+        </div>
+        <div className="text-xs text-gray-400">Avg Runner Hits (30d)</div>
+      </div>
+    </div>
+    {/* Performance Metrics Grid */}
+    <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-blue-900/20 to-blue-800/10 border border-blue-500/20 rounded-lg">
+      <div>
+        <div className="text-2xl font-bold text-blue-400">
+          {walletResults.summary?.avg_distance_to_ath?.toFixed(2) || 0}x
+        </div>
+        <div className="text-xs text-gray-400">Avg Distance to ATH</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-green-400">
+          {walletResults.summary?.total_roi?.toFixed(2) || 0}%
+        </div>
+        <div className="text-xs text-gray-400">Total ROI</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-green-400">
+          {walletResults.summary?.avg_roi?.toFixed(2) || 0}%
+        </div>
+        <div className="text-xs text-gray-400">Avg ROI</div>
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-purple-400">
+          {walletResults.summary?.avg_professional_score?.toFixed(2) || 0}
+        </div>
+        <div className="text-xs text-gray-400">Avg Professional Score</div>
+      </div>
+    </div>
+    {/* Consistency Metrics */}
+    {walletResults.summary?.avg_variance !== undefined && (
+      <div className="grid grid-cols-2 gap-4 p-4 bg-gradient-to-r from-gray-900/20 to-gray-800/10 border border-gray-500/20 rounded-lg">
+        <div>
+          <div className="text-2xl font-bold text-cyan-400">
+            {walletResults.summary?.avg_variance?.toFixed(2) || 0}
+          </div>
+          <div className="text-xs text-gray-400">Avg Variance</div>
+        </div>
+        <div>
+          <div className="text-2xl font-bold text-purple-400">
+            {walletResults.summary?.a_plus_consistency || 0}
+          </div>
+          <div className="text-xs text-gray-400">A+ Consistency Wallets</div>
+        </div>
+      </div>
+    )}
+  </div>
+)}
                     <div className="space-y-3">
-                      {/* ✅ UPDATED: Use WalletResultCard component */}
+                      {/* ✅ UPDATED: Pass isBatch and analysisMode */}
                       {walletResults && !batchResults && walletResults.top_wallets?.map((wallet, idx) => (
                         <WalletResultCard
                           key={wallet.wallet}
                           wallet={wallet}
                           idx={idx}
                           onAddToWatchlist={addToWalletWatchlist}
+                          isBatch={walletResults.summary?.tokens_participated?.length > 1}
+                          analysisMode={walletResults.mode === 'pump' ? 'pump' : 'general'} // Adjust based on backend mode
                         />
                       ))}
-                      
-                      {/* Batch results display */}
+                     
                       {batchResults?.smart_money_wallets?.map((wallet, idx) => (
                         <WalletResultCard
                           key={wallet.wallet}
                           wallet={wallet}
                           idx={idx}
                           onAddToWatchlist={addToWalletWatchlist}
+                          isBatch={true}
+                          analysisMode={'general'} // Assume batch is always general
                         />
                       ))}
                     </div>
@@ -1730,7 +1720,6 @@ export default function SifterKYS() {
                 )}
               </div>
             )}
-
             {!isAnalyzing && !isBatchAnalyzing && !(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-12 text-center">
                 <BarChart3 className="mx-auto mb-4 text-gray-600" size={48} />
@@ -1748,7 +1737,6 @@ export default function SifterKYS() {
             )}
           </div>
         )}
-
         {/* ========== TRENDING RUNNERS TAB ========== */}
         {activeTab === 'trending' && (
           <div className="space-y-4">
@@ -1768,9 +1756,7 @@ export default function SifterKYS() {
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white" size={14} />
                 </div>
-
                 <div className="h-8 w-px bg-white/10" />
-
                 {/* Multiplier Buttons */}
                 <div className="flex items-center gap-2">
                   {[5, 10, 20, 50].map(mult => (
@@ -1787,9 +1773,7 @@ export default function SifterKYS() {
                     </button>
                   ))}
                 </div>
-
                 <div className="h-8 w-px bg-white/10" />
-
                 {/* Advanced Filters Button */}
                 <button
                   onClick={() => {
@@ -1801,7 +1785,6 @@ export default function SifterKYS() {
                   <Sliders size={14} />
                   Advanced Filters
                 </button>
-
                 {/* Manual Refresh Button */}
                 <button
                   onClick={loadTrendingRunners}
@@ -1814,7 +1797,6 @@ export default function SifterKYS() {
                 </button>
               </div>
             </div>
-
             {isLoadingRunners && (
               <div className="flex items-center justify-center py-12">
                 <div className="flex items-center gap-3">
@@ -1823,7 +1805,6 @@ export default function SifterKYS() {
                 </div>
               </div>
             )}
-
             {!isLoadingRunners && trendingRunners.length > 0 && (
               <div className="space-y-3">
                 {/* Batch Selection Controls */}
@@ -1849,7 +1830,6 @@ export default function SifterKYS() {
                           Select All ({trendingRunners.length})
                         </button>
                       </div>
-
                       <div className="flex items-center gap-3">
                         {/* Auto-refresh toggle */}
                         <div className="flex items-center gap-2">
@@ -1867,13 +1847,11 @@ export default function SifterKYS() {
                             Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
                           </span>
                         </div>
-
                         {lastRefreshTime && (
                           <div className="text-xs text-gray-500">
                             Last: {lastRefreshTime.toLocaleTimeString()}
                           </div>
                         )}
-
                         <button
                           onClick={analyzeBatchRunners}
                           disabled={selectedRunners.length === 0 || isBatchAnalyzing}
@@ -1895,7 +1873,6 @@ export default function SifterKYS() {
                     </div>
                   </div>
                 )}
-
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -1931,7 +1908,6 @@ export default function SifterKYS() {
                           const runnerKey = `${runner.chain}-${runner.address}`;
                           const runnerState = expandedRunners[runnerKey] || {};
                           const isSelected = selectedRunners.some(r => r.address === runner.address);
-
                           return (
                             <React.Fragment key={runnerKey}>
                               <tr className={`border-b border-white/5 hover:bg-white/5 transition-colors ${
@@ -1972,7 +1948,6 @@ export default function SifterKYS() {
                                   </button>
                                 </td>
                               </tr>
-
                               {runnerState.expanded && (
                                 <tr className="bg-black/30 border-b border-white/5">
                                   <td colSpan={mode === 'wallet' ? 8 : 7} className="px-4 py-3">
@@ -1983,47 +1958,16 @@ export default function SifterKYS() {
                                       {runnerState.data && runnerState.data.length === 0 ? (
                                         <div className="text-xs text-gray-500">No data found</div>
                                       ) : (
-                                        <div className="grid grid-cols-1 gap-2">
-                                          {runnerState.data?.slice(0, 5).map((item, i) => (
-                                            <div key={i} className="p-3 bg-white/5 rounded">
-                                              {mode === 'twitter' ? (
-                                                <div className="text-xs flex justify-between items-center">
-                                                  <span>@{item.username}</span>
-                                                  <span className="text-gray-400">Influence: {item.influence_score}</span>
-                                                </div>
-                                              ) : (
-                                                <>
-                                                  <div className="flex justify-between items-center mb-2">
-                                                    <span className="font-mono text-sm">{item.wallet?.slice(0, 16)}...</span>
-                                                    <div className="flex items-center gap-2">
-                                                      {item.professional_grade && item.professional_score && (
-                                                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                                                          {item.professional_grade} • {item.professional_score}
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                  </div>
-                                                  
-                                                  <div className="text-xs text-gray-400 mb-2">
-                                                    {item.roi_percent}% ROI • {item.runner_hits_30d} runners (30d)
-                                                  </div>
-                                                  
-                                                  {item.other_runners && item.other_runners.length > 0 && (
-                                                    <div className="mt-3 space-y-2">
-                                                      <div className="text-xs font-semibold text-gray-400">
-                                                        Other 5x+ Runners (Last 30 Days):
-                                                      </div>
-                                                      {item.other_runners.map((r, ri) => (
-                                                        <div key={ri} className="text-xs bg-black/40 rounded p-2">
-                                                          <span className="font-semibold">{r.symbol}</span>
-                                                          <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
-                                                        </div>
-                                                      ))}
-                                                    </div>
-                                                  )}
-                                                </>
-                                              )}
-                                            </div>
+                                        <div className="space-y-3">
+                                          {runnerState.data?.slice(0, 5).map((wallet, i) => (
+                                            <WalletResultCard
+                                              key={i}
+                                              wallet={wallet}
+                                              idx={i}
+                                              onAddToWatchlist={addToWalletWatchlist}
+                                              isBatch={false} // Single runner analysis
+                                              analysisMode={'general'}
+                                            />
                                           ))}
                                         </div>
                                       )}
@@ -2040,7 +1984,6 @@ export default function SifterKYS() {
                 </div>
               </div>
             )}
-
             {!isLoadingRunners && trendingRunners.length === 0 && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-12 text-center">
                 <TrendingUp className="mx-auto mb-4 text-gray-400" size={48} />
@@ -2052,7 +1995,6 @@ export default function SifterKYS() {
             )}
           </div>
         )}
-
         {showFilterModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-gradient-to-br from-gray-900 to-black border border-white/20 rounded-2xl p-4 max-w-md w-full shadow-2xl max-h-[85vh] flex flex-col">
@@ -2065,7 +2007,6 @@ export default function SifterKYS() {
                   <X size={18} />
                 </button>
               </div>
-
               <div className="space-y-3 overflow-y-auto flex-1 pr-2">
                 <div className="bg-white/5 rounded-lg p-3 border border-white/10">
                   <label className="block text-sm font-semibold mb-2 text-purple-400">Liquidity Range</label>
@@ -2092,7 +2033,6 @@ export default function SifterKYS() {
                     </div>
                   </div>
                 </div>
-
                 <div className="bg-white/5 rounded-lg p-3 border border-white/10">
                   <label className="block text-sm font-semibold mb-2 text-purple-400">Volume Range</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -2118,7 +2058,6 @@ export default function SifterKYS() {
                     </div>
                   </div>
                 </div>
-
                 <div className="bg-white/5 rounded-lg p-3 border border-white/10">
                   <label className="block text-sm font-semibold mb-2 text-purple-400">Min Multiplier</label>
                   <input
@@ -2130,7 +2069,6 @@ export default function SifterKYS() {
                     className="w-full bg-black/60 border border-white/20 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
                   />
                 </div>
-
                 <div className="bg-white/5 rounded-lg p-3 border border-white/10">
                   <label className="block text-sm font-semibold mb-2 text-purple-400">Token Age (Days)</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -2157,7 +2095,6 @@ export default function SifterKYS() {
                   </div>
                 </div>
               </div>
-
               <div className="flex gap-2 mt-3 flex-shrink-0">
                 <button
                   onClick={() => setShowFilterModal(false)}
@@ -2178,7 +2115,6 @@ export default function SifterKYS() {
             </div>
           </div>
         )}
-
         {/* ========== AUTO DISCOVERY TAB ========== */}
         {activeTab === 'discover' && (
           <div className="space-y-4">
@@ -2189,13 +2125,13 @@ export default function SifterKYS() {
                     <Zap className="text-purple-400" size={28} />
                   </div>
                 </div>
-                
+               
                 <div className="flex-1">
                   <h2 className="text-lg font-bold mb-2">Auto Discovery</h2>
                   <p className="text-gray-400 text-sm mb-4">
                     Discover {mode === 'twitter' ? 'Twitter accounts' : 'wallets'} appearing across multiple 5x+ runners
                   </p>
-                  
+                 
                   <button
                     onClick={runAutoDiscovery}
                     disabled={isDiscovering}
@@ -2216,91 +2152,24 @@ export default function SifterKYS() {
                 </div>
               </div>
             </div>
-
             {discoveryResults && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                 <h3 className="text-lg font-semibold mb-2">Discovery Results</h3>
                 <div className="text-sm text-gray-400 mb-4">
                   Found {discoveryResults.total_wallets || discoveryResults.total_found} {mode === 'twitter' ? 'accounts' : 'wallets'}
                 </div>
-                
+               
                 {mode === 'wallet' && discoveryResults.smart_money_wallets && (
                   <div className="space-y-2">
                     {discoveryResults.smart_money_wallets.slice(0, 10).map((wallet, idx) => (
-                      <div key={idx} className="bg-black/30 border border-white/10 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="font-mono text-sm mb-1">
-                              {wallet.wallet?.slice(0, 16)}...
-                              {wallet.is_fresh && (
-                                <span className="ml-2 text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
-                                  ✨ Fresh
-                                </span>
-                              )}
-                            </div>
-                            
-                            {(wallet.consistency_grade || wallet.avg_professional_score || wallet.variance) && (
-                              <div className="text-xs text-gray-400 flex items-center gap-2 mb-1">
-                                {wallet.consistency_grade && (
-                                  <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded font-bold">
-                                    {wallet.consistency_grade}
-                                  </span>
-                                )}
-                                {wallet.avg_professional_score && (
-                                  <span>Avg Score: {wallet.avg_professional_score}</span>
-                                )}
-                                {wallet.variance && (
-                                  <span>Variance: {wallet.variance}</span>
-                                )}
-                              </div>
-                            )}
-                            
-                            <div className="text-xs text-gray-500">
-                              {wallet.runner_count} runners
-                              {wallet.in_batch_count !== undefined && ` • In Batch: ${wallet.in_batch_count}`}
-                              {wallet.outside_batch_count !== undefined && ` • Outside: ${wallet.outside_batch_count}`}
-                              {!wallet.in_batch_count && !wallet.outside_batch_count && wallet.avg_roi && ` • ${wallet.avg_roi.toFixed(0)}% avg ROI`}
-                              {wallet.runner_hits_30d > 0 && ` • 🎯 ${wallet.runner_hits_30d} hits`}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => addToWalletWatchlist(wallet)}
-                            className="p-2 hover:bg-purple-500/20 rounded text-purple-400 transition"
-                          >
-                            <BookmarkPlus size={16} />
-                          </button>
-                        </div>
-                        
-                        {(wallet.roi_details || wallet.outside_batch_runners) && (
-                          <div className="mt-3 space-y-2">
-                            {wallet.roi_details && wallet.roi_details.length > 0 && (
-                              <div>
-                                <div className="text-xs font-semibold text-gray-400 mb-1">Batch Runners:</div>
-                                {wallet.roi_details.map((r, i) => (
-                                  <div key={i} className="text-xs bg-black/40 rounded p-2 mb-1">
-                                    <span className="font-semibold">{r.runner}</span>
-                                    <span className="ml-2 text-green-400">{r.professional_grade} • {r.roi_percent}%</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            
-                            {wallet.outside_batch_runners && wallet.outside_batch_runners.length > 0 && (
-                              <div className="border-t border-white/10 pt-2">
-                                <div className="text-xs font-semibold text-gray-400 mb-1">
-                                  Other Runners (Outside Batch):
-                                </div>
-                                {wallet.outside_batch_runners.map((r, i) => (
-                                  <div key={i} className="text-xs bg-black/40 rounded p-2 mb-1">
-                                    <span className="font-semibold">{r.symbol}</span>
-                                    <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      <WalletResultCard
+                        key={idx}
+                        wallet={wallet}
+                        idx={idx}
+                        onAddToWatchlist={addToWalletWatchlist}
+                        isBatch={wallet.runner_count > 1} // Batch-like if multiple runners
+                        analysisMode={'general'}
+                      />
                     ))}
                   </div>
                 )}
@@ -2308,7 +2177,6 @@ export default function SifterKYS() {
             )}
           </div>
         )}
-
         {/* ========== WATCHLIST TAB ========== */}
         {activeTab === 'watchlist' && (
           <div className="space-y-4">
@@ -2326,7 +2194,6 @@ export default function SifterKYS() {
                 loadWalletWatchlist();
               }}
             />
-
             {/* Premier League Table */}
             <WalletLeagueTable
               wallets={walletWatchlist}
@@ -2346,7 +2213,6 @@ export default function SifterKYS() {
                 setAlertSettingsWallet(wallet.wallet_address);
               }}
             />
-
             {/* Replacement Modal */}
             {showReplacementModal && (
               <WalletReplacementModal
@@ -2362,7 +2228,6 @@ export default function SifterKYS() {
             )}
           </div>
         )}
-
         {/* ========== SETTINGS TAB ========== */}
         {activeTab === 'settings' && (
           <div className="space-y-4">
@@ -2379,7 +2244,6 @@ export default function SifterKYS() {
               </button>
               {/* Add more setting tabs here later */}
             </div>
-
             {activeSettingsTab === 'telegram' && (
               <TelegramSettings userId={userId} apiUrl={API_URL} />
             )}
