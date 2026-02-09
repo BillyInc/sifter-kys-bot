@@ -3,16 +3,18 @@ wallet_monitor.py - Real-time Wallet Activity Monitor
 Continuously polls Birdeye API for transactions from watched wallets
 Creates notifications when activity matches user alert settings
 Supports Telegram alerts integration
+
+Uses Supabase for persistent storage.
 """
 
-import sqlite3
 import requests
 import time
-import json
 from datetime import datetime
 from collections import defaultdict
 import threading
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, List, Dict
+
+from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
 if TYPE_CHECKING:
     from services.telegram_notifier import TelegramNotifier
@@ -22,239 +24,39 @@ class WalletActivityMonitor:
     """
     Monitors wallets in real-time and creates notifications.
     Runs as a background service polling Birdeye API.
+    Uses Supabase for data persistence.
     """
 
-    def __init__(self, birdeye_api_key, db_path='watchlists.db', poll_interval=120,
-                 telegram_notifier: Optional['TelegramNotifier'] = None):
+    def __init__(self, birdeye_api_key, poll_interval=120,
+                 telegram_notifier: Optional['TelegramNotifier'] = None,
+                 db_path: str = None):  # db_path kept for backward compatibility
         self.birdeye_key = birdeye_api_key
-        self.db_path = db_path
         self.poll_interval = poll_interval  # seconds (default: 2 minutes)
         self.birdeye_txs_url = "https://public-api.birdeye.so/defi/v3/token/txs"
         self.running = False
         self.monitor_thread = None
 
+        # Supabase client
+        self.supabase = get_supabase_client()
+        self.schema = SCHEMA_NAME
+
         # Telegram notifier for sending alerts
         self.telegram_notifier = telegram_notifier
-
-        # *** CRITICAL: Initialize database tables before starting ***
-        self._ensure_database_initialized()
 
         telegram_status = "Enabled" if telegram_notifier else "Disabled"
         print(f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║           WALLET ACTIVITY MONITOR - INITIALIZED                  ║
 ╚══════════════════════════════════════════════════════════════════╝
-  📊 Database: {db_path}
+  📊 Database: Supabase ({self.schema})
   🔄 Poll Interval: {poll_interval}s ({poll_interval/60:.1f} minutes)
   🔑 Birdeye API: Configured
   📱 Telegram Alerts: {telegram_status}
 """)
 
-    def _ensure_database_initialized(self):
-        """Ensure all required database tables exist"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        try:
-            # Check if critical tables exist
-            cursor.execute("""
-                SELECT name FROM sqlite_master
-                WHERE type='table' AND name IN (
-                    'wallet_watchlist',
-                    'wallet_activity',
-                    'wallet_notifications',
-                    'wallet_monitor_status'
-                )
-            """)
-
-            existing_tables = {row[0] for row in cursor.fetchall()}
-            required_tables = {
-                'wallet_watchlist',
-                'wallet_activity',
-                'wallet_notifications',
-                'wallet_monitor_status'
-            }
-
-            missing_tables = required_tables - existing_tables
-
-            if missing_tables:
-                print(f"\n⚠️  Missing tables: {', '.join(missing_tables)}")
-                print("   Creating required tables...")
-
-                # Create missing tables
-                self._create_required_tables(cursor)
-                conn.commit()
-
-                print("✅ Database tables created successfully\n")
-            else:
-                print("✅ All required database tables exist\n")
-
-        except Exception as e:
-            print(f"❌ Error checking/creating database tables: {e}")
-            raise
-        finally:
-            conn.close()
-
-    def _create_required_tables(self, cursor):
-        """Create all required tables for wallet monitoring"""
-
-        # Wallet watchlist table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS wallet_watchlist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                wallet_address TEXT NOT NULL,
-                tier TEXT,
-                pump_count INTEGER DEFAULT 0,
-                avg_distance_to_peak REAL,
-                avg_roi_to_peak REAL,
-                consistency_score REAL,
-                tokens_hit TEXT,
-                notes TEXT,
-                tags TEXT,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                alert_enabled BOOLEAN DEFAULT TRUE,
-                alert_on_buy BOOLEAN DEFAULT TRUE,
-                alert_on_sell BOOLEAN DEFAULT FALSE,
-                min_trade_usd REAL DEFAULT 100,
-                UNIQUE(user_id, wallet_address)
-            )
-        """)
-
-        # Check if alert columns exist, add them if they don't
-        cursor.execute("PRAGMA table_info(wallet_watchlist)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
-
-        alert_columns = {
-            'alert_enabled': 'BOOLEAN DEFAULT TRUE',
-            'alert_on_buy': 'BOOLEAN DEFAULT TRUE',
-            'alert_on_sell': 'BOOLEAN DEFAULT FALSE',
-            'min_trade_usd': 'REAL DEFAULT 100',
-            'last_updated': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
-        }
-
-        for col_name, col_def in alert_columns.items():
-            if col_name not in existing_columns:
-                try:
-                    cursor.execute(f"""
-                        ALTER TABLE wallet_watchlist
-                        ADD COLUMN {col_name} {col_def}
-                    """)
-                    print(f"  ✓ Added column: {col_name}")
-                except Exception as e:
-                    print(f"  ⚠️ Could not add column {col_name}: {e}")
-
-        # Now create the index (only if alert_enabled column exists)
-        if 'alert_enabled' in existing_columns or 'alert_enabled' in alert_columns:
-            try:
-                cursor.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_alerts_enabled
-                    ON wallet_watchlist(alert_enabled) WHERE alert_enabled = TRUE
-                """)
-            except Exception as e:
-                print(f"  ⚠️ Could not create index: {e}")
-
-        # Wallet activity table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS wallet_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                wallet_address TEXT NOT NULL,
-                token_address TEXT NOT NULL,
-                token_ticker TEXT,
-                token_name TEXT,
-                side TEXT NOT NULL,
-                token_amount REAL,
-                usd_value REAL,
-                price REAL,
-                tx_hash TEXT UNIQUE NOT NULL,
-                block_time INTEGER NOT NULL,
-                detected_at INTEGER DEFAULT (strftime('%s', 'now')),
-                from_address TEXT,
-                to_address TEXT,
-                dex TEXT,
-                is_processed BOOLEAN DEFAULT FALSE
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallet_activity_wallet
-            ON wallet_activity(wallet_address)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallet_activity_time
-            ON wallet_activity(block_time DESC)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallet_activity_tx_hash
-            ON wallet_activity(tx_hash)
-        """)
-
-        # Wallet notifications table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS wallet_notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                wallet_address TEXT NOT NULL,
-                activity_id INTEGER NOT NULL,
-                sent_at INTEGER DEFAULT (strftime('%s', 'now')),
-                read_at INTEGER DEFAULT NULL,
-                dismissed_at INTEGER DEFAULT NULL,
-                token_ticker TEXT,
-                token_name TEXT,
-                side TEXT,
-                usd_value REAL,
-                tx_hash TEXT,
-                FOREIGN KEY (activity_id) REFERENCES wallet_activity(id) ON DELETE CASCADE
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user
-            ON wallet_notifications(user_id)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user_unread
-            ON wallet_notifications(user_id, read_at) WHERE read_at IS NULL
-        """)
-
-        # Wallet monitor status table (CRITICAL)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS wallet_monitor_status (
-                wallet_address TEXT PRIMARY KEY,
-                last_checked_at INTEGER DEFAULT (strftime('%s', 'now')),
-                last_activity_at INTEGER,
-                check_count INTEGER DEFAULT 0,
-                error_count INTEGER DEFAULT 0,
-                last_error TEXT,
-                is_active BOOLEAN DEFAULT TRUE
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_monitor_status_last_checked
-            ON wallet_monitor_status(last_checked_at)
-        """)
-
-        # Users table (might be needed)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                wallet_address TEXT,
-                subscription_tier TEXT DEFAULT 'free',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create demo user
-        cursor.execute("""
-            INSERT OR IGNORE INTO users (user_id, subscription_tier)
-            VALUES ('demo_user', 'free')
-        """)
+    def _table(self, name: str):
+        """Get table reference with schema."""
+        return self.supabase.schema(self.schema).table(name)
 
     def start(self):
         """Start the monitoring service in a background thread"""
@@ -319,39 +121,67 @@ class WalletActivityMonitor:
                 traceback.print_exc()
                 time.sleep(30)  # Brief pause before retrying
 
-    def _get_monitored_wallets(self):
+    def _get_monitored_wallets(self) -> List[Dict]:
         """Get all wallets that have alerts enabled from any user"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        try:
+            # Get unique wallets with alert settings from all users
+            result = self._table('wallet_watchlist').select(
+                'wallet_address, tier, alert_enabled'
+            ).eq('alert_enabled', True).execute()
 
-        # Get unique wallets with alert settings from all users
-        cursor.execute("""
-            SELECT DISTINCT
-                ww.wallet_address,
-                ww.tier,
-                wms.last_checked_at,
-                wms.last_activity_at
-            FROM wallet_watchlist ww
-            LEFT JOIN wallet_monitor_status wms ON ww.wallet_address = wms.wallet_address
-            WHERE ww.alert_enabled = 1
-            ORDER BY wms.last_checked_at ASC NULLS FIRST
-        """)
+            wallets = []
+            seen_addresses = set()
 
-        wallets = [dict(row) for row in cursor.fetchall()]
-        conn.close()
+            for row in result.data:
+                addr = row['wallet_address']
+                if addr not in seen_addresses:
+                    seen_addresses.add(addr)
 
-        return wallets
+                    # Get monitor status for this wallet
+                    status_result = self._table('wallet_monitor_status').select(
+                        'last_checked_at, last_activity_at'
+                    ).eq('wallet_address', addr).limit(1).execute()
+
+                    status = status_result.data[0] if status_result.data else {}
+
+                    wallets.append({
+                        'wallet_address': addr,
+                        'tier': row.get('tier'),
+                        'last_checked_at': status.get('last_checked_at'),
+                        'last_activity_at': status.get('last_activity_at')
+                    })
+
+            # Sort by last_checked_at (oldest first)
+            wallets.sort(key=lambda x: x.get('last_checked_at') or '1970-01-01')
+
+            return wallets
+
+        except Exception as e:
+            print(f"[MONITOR] Error getting monitored wallets: {e}")
+            return []
 
     def _check_wallet_activity(self, wallet_info):
         """Check a single wallet for new transactions - ENHANCED"""
         wallet_address = wallet_info['wallet_address']
-        last_checked = wallet_info['last_checked_at'] or 0
-        
+        last_checked = wallet_info.get('last_checked_at')
+
+        # Convert ISO timestamp to epoch if needed
+        if last_checked:
+            try:
+                if isinstance(last_checked, str):
+                    dt = datetime.fromisoformat(last_checked.replace('Z', '+00:00'))
+                    last_checked_epoch = int(dt.timestamp())
+                else:
+                    last_checked_epoch = int(last_checked)
+            except:
+                last_checked_epoch = 0
+        else:
+            last_checked_epoch = 0
+
         lookback_buffer = 300
-        after_time = max(0, last_checked - lookback_buffer)
+        after_time = max(0, last_checked_epoch - lookback_buffer)
         before_time = int(time.time())
-        
+
         try:
             # Fetch ALL recent trades (not just first buys)
             transactions = self._fetch_wallet_all_trades(
@@ -359,13 +189,13 @@ class WalletActivityMonitor:
                 after_time=after_time,
                 before_time=before_time
             )
-            
+
             if transactions:
                 print(f"  {wallet_address[:8]}... → {len(transactions)} new tx(s)")
-                
+
                 new_activities = []
                 tokens_bought = defaultdict(list)  # Track buys by token
-                
+
                 for tx in transactions:
                     activity_id = self._save_wallet_activity(tx, wallet_address)
                     if activity_id:
@@ -373,7 +203,7 @@ class WalletActivityMonitor:
                             'activity_id': activity_id,
                             'tx': tx
                         })
-                        
+
                         # Track buys for multi-wallet detection
                         if tx.get('side') == 'buy':
                             tokens_bought[tx.get('token_address')].append({
@@ -381,29 +211,29 @@ class WalletActivityMonitor:
                                 'tier': wallet_info.get('tier', 'C'),
                                 'usd_value': tx.get('usd_value', 0)
                             })
-                
+
                 # Create notifications for users watching this wallet
                 if new_activities:
                     self._create_notifications_for_wallet(wallet_address, new_activities)
-                
+
                 # Check for multi-wallet signals
                 for token_address, wallets_buying in tokens_bought.items():
                     signal = self._detect_multi_wallet_signal(token_address, wallets_buying)
                     if signal:
                         self._create_signal_alert(signal)
-            
+
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=before_time,
-                last_activity_at=before_time if transactions else wallet_info['last_activity_at'],
+                last_checked_at=datetime.utcnow().isoformat(),
+                last_activity_at=datetime.utcnow().isoformat() if transactions else None,
                 success=True
             )
-        
+
         except Exception as e:
             print(f"  ❌ Error checking {wallet_address[:8]}...: {e}")
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=before_time,
+                last_checked_at=datetime.utcnow().isoformat(),
                 success=False,
                 error_message=str(e)
             )
@@ -420,7 +250,7 @@ class WalletActivityMonitor:
             'since_time': after_time * 1000,  # Convert to ms
             'limit': 100
         }
-        
+
         try:
             response = requests.get(url, headers=headers, params=params, timeout=15)
             if response.status_code == 200:
@@ -428,21 +258,21 @@ class WalletActivityMonitor:
                 return data.get('trades', [])
         except Exception as e:
             print(f"Error fetching trades: {e}")
-        
+
         return []
 
     def _detect_multi_wallet_signal(self, token_address, wallets_buying):
         """Detect if multiple high-tier wallets bought same token"""
         if len(wallets_buying) < 2:
             return None
-        
+
         # Calculate signal strength
         signal_strength = 0
         tier_weights = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
-        
+
         for wallet_info in wallets_buying:
             signal_strength += tier_weights.get(wallet_info['tier'], 1)
-        
+
         # Strong signal if 2+ wallets AND combined strength ≥ 5
         if signal_strength >= 5:
             return {
@@ -452,131 +282,83 @@ class WalletActivityMonitor:
                 'wallets': wallets_buying,
                 'timestamp': int(time.time())
             }
-        
+
         return None
 
     def _create_signal_alert(self, signal):
         """Create alert for multi-wallet signal"""
         print(f"  🚨 MULTI-WALLET SIGNAL: {signal['wallet_count']} wallets bought {signal['token_address'][:8]}...")
-        
-        # Create notifications for ALL users with ANY of these wallets
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        wallet_addresses = [w['wallet'] for w in signal['wallets']]
-        placeholders = ','.join(['?'] * len(wallet_addresses))
-        
-        cursor.execute(f"""
-            SELECT DISTINCT user_id
-            FROM wallet_watchlist
-            WHERE wallet_address IN ({placeholders})
-            AND alert_enabled = 1
-        """, wallet_addresses)
-        
-        users = [row[0] for row in cursor.fetchall()]
-        
-        for user_id in users:
-            # Send high-priority Telegram alert
-            if self.telegram_notifier:
-                self.telegram_notifier.send_multi_wallet_signal_alert(
-                    user_id,
-                    signal
-                )
-        
-        conn.close()
-
-    def _fetch_wallet_transactions(self, wallet_address, after_time, before_time, chain='solana'):
-        """Fetch transactions for a wallet from Birdeye"""
-        headers = {
-            'accept': 'application/json',
-            'x-chain': chain,
-            'X-API-KEY': self.birdeye_key
-        }
-
-        transactions = []
-
-        # TODO: Implement proper wallet transaction fetching
-        # Options:
-        # 1. Track which tokens each wallet trades and monitor those token pairs
-        # 2. Use Birdeye's wallet-specific endpoints if available
-        # 3. Use on-chain RPC calls for more comprehensive monitoring
-
-        return transactions
-
-    def _save_wallet_activity(self, tx, wallet_address):
-        """Save transaction to wallet_activity table"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
 
         try:
-            cursor.execute("""
-                INSERT OR IGNORE INTO wallet_activity (
-                    wallet_address,
-                    token_address,
-                    token_ticker,
-                    token_name,
-                    side,
-                    token_amount,
-                    usd_value,
-                    price,
-                    tx_hash,
-                    block_time,
-                    detected_at,
-                    from_address,
-                    to_address,
-                    dex,
-                    is_processed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                wallet_address,
-                tx.get('token_address'),
-                tx.get('token_ticker'),
-                tx.get('token_name'),
-                tx.get('side'),
-                tx.get('token_amount', 0),
-                tx.get('usd_value', 0),
-                tx.get('price', 0),
-                tx.get('tx_hash'),
-                tx.get('block_time'),
-                int(time.time()),
-                tx.get('from_address'),
-                tx.get('to_address'),
-                tx.get('dex'),
-                False
-            ))
+            # Get all users watching any of these wallets
+            wallet_addresses = [w['wallet'] for w in signal['wallets']]
 
-            activity_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
+            result = self._table('wallet_watchlist').select('user_id').in_(
+                'wallet_address', wallet_addresses
+            ).eq('alert_enabled', True).execute()
 
-            return activity_id if activity_id > 0 else None
+            user_ids = list(set(row['user_id'] for row in result.data))
 
-        except sqlite3.IntegrityError:
-            # Transaction already exists (duplicate tx_hash)
-            conn.close()
+            for user_id in user_ids:
+                # Send high-priority Telegram alert
+                if self.telegram_notifier:
+                    self.telegram_notifier.send_multi_wallet_signal_alert(
+                        user_id,
+                        signal
+                    )
+
+        except Exception as e:
+            print(f"  ⚠️ Error creating signal alert: {e}")
+
+    def _save_wallet_activity(self, tx, wallet_address) -> Optional[int]:
+        """Save transaction to wallet_activity table"""
+        try:
+            # Check if tx_hash already exists
+            existing = self._table('wallet_activity').select('id').eq(
+                'signature', tx.get('tx_hash')
+            ).limit(1).execute()
+
+            if existing.data:
+                # Already exists
+                return None
+
+            result = self._table('wallet_activity').insert({
+                'wallet_address': wallet_address,
+                'token_address': tx.get('token_address'),
+                'token_ticker': tx.get('token_ticker'),
+                'token_name': tx.get('token_name'),
+                'side': tx.get('side'),
+                'amount': tx.get('token_amount', 0),
+                'usd_value': tx.get('usd_value', 0),
+                'price_per_token': tx.get('price', 0),
+                'signature': tx.get('tx_hash'),
+                'block_time': datetime.fromtimestamp(tx.get('block_time', time.time())).isoformat()
+            }).execute()
+
+            if result.data:
+                return result.data[0]['id']
             return None
+
         except Exception as e:
             print(f"    ⚠️ Error saving activity: {e}")
-            conn.close()
             return None
 
     def _get_wallet_info(self, user_id: str, wallet_address: str) -> dict:
         """Get wallet tier and stats from watchlist for Telegram alerts"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        try:
+            result = self._table('wallet_watchlist').select(
+                'tier, consistency_score'
+            ).eq('user_id', user_id).eq('wallet_address', wallet_address).limit(1).execute()
 
-        cursor.execute('''
-            SELECT tier, consistency_score
-            FROM wallet_watchlist
-            WHERE user_id = ? AND wallet_address = ?
-        ''', (user_id, wallet_address))
+            if result.data:
+                row = result.data[0]
+                return {'tier': row.get('tier', 'C'), 'consistency_score': row.get('consistency_score', 0)}
 
-        result = cursor.fetchone()
-        conn.close()
+            return {'tier': 'C', 'consistency_score': 0}
 
-        if result:
-            return {'tier': result[0] or 'C', 'consistency_score': result[1] or 0}
-        return {'tier': 'C', 'consistency_score': 0}
+        except Exception as e:
+            print(f"[MONITOR] Error getting wallet info: {e}")
+            return {'tier': 'C', 'consistency_score': 0}
 
     def _send_telegram_alert(self, user_id: str, wallet_address: str, tx: dict, activity_id: int):
         """Send Telegram alert for wallet activity"""
@@ -624,96 +406,68 @@ class WalletActivityMonitor:
 
     def _create_notifications_for_wallet(self, wallet_address, activities):
         """Create notifications for all users watching this wallet"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        try:
+            # Get all users watching this wallet with their alert settings
+            result = self._table('wallet_watchlist').select(
+                'user_id, alert_enabled, alert_threshold_usd'
+            ).eq('wallet_address', wallet_address).eq('alert_enabled', True).execute()
 
-        # Get all users watching this wallet with their alert settings
-        cursor.execute("""
-            SELECT
-                user_id,
-                alert_on_buy,
-                alert_on_sell,
-                min_trade_usd
-            FROM wallet_watchlist
-            WHERE wallet_address = ?
-            AND alert_enabled = 1
-        """, (wallet_address,))
+            watchers = result.data
 
-        watchers = cursor.fetchall()
+            if not watchers:
+                return
 
-        if not watchers:
-            conn.close()
-            return
+            notifications_created = 0
 
-        notifications_created = 0
+            for activity in activities:
+                tx = activity['tx']
+                activity_id = activity['activity_id']
 
-        for activity in activities:
-            tx = activity['tx']
-            activity_id = activity['activity_id']
+                for watcher in watchers:
+                    # Check if transaction meets user's alert criteria
+                    if self._should_notify(tx, watcher):
+                        try:
+                            self._table('wallet_notifications').insert({
+                                'user_id': watcher['user_id'],
+                                'wallet_address': wallet_address,
+                                'notification_type': tx.get('side', 'trade'),
+                                'title': f"{tx.get('side', 'Trade').upper()}: {tx.get('token_ticker', 'UNKNOWN')}",
+                                'message': f"${tx.get('usd_value', 0):.2f} {tx.get('side', 'trade')}",
+                                'metadata': {
+                                    'activity_id': activity_id,
+                                    'token_address': tx.get('token_address'),
+                                    'tx_hash': tx.get('tx_hash'),
+                                    'usd_value': tx.get('usd_value', 0)
+                                }
+                            }).execute()
 
-            for watcher in watchers:
-                # Check if transaction meets user's alert criteria
-                if self._should_notify(tx, dict(watcher)):
-                    try:
-                        cursor.execute("""
-                            INSERT INTO wallet_notifications (
-                                user_id,
-                                wallet_address,
-                                activity_id,
-                                sent_at,
-                                token_ticker,
-                                token_name,
-                                side,
-                                usd_value,
-                                tx_hash
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            watcher['user_id'],
-                            wallet_address,
-                            activity_id,
-                            int(time.time()),
-                            tx.get('token_ticker'),
-                            tx.get('token_name'),
-                            tx.get('side'),
-                            tx.get('usd_value', 0),
-                            tx.get('tx_hash')
-                        ))
+                            notifications_created += 1
 
-                        notifications_created += 1
+                            # Send Telegram alert
+                            if self.telegram_notifier:
+                                self._send_telegram_alert(
+                                    watcher['user_id'],
+                                    wallet_address,
+                                    tx,
+                                    activity_id
+                                )
 
-                        # Send Telegram alert
-                        if self.telegram_notifier:
-                            self._send_telegram_alert(
-                                watcher['user_id'],
-                                wallet_address,
-                                tx,
-                                activity_id
-                            )
+                        except Exception as e:
+                            print(f"    ⚠️ Error creating notification: {e}")
 
-                    except Exception as e:
-                        print(f"    ⚠️ Error creating notification: {e}")
+            if notifications_created > 0:
+                print(f"    🔔 Created {notifications_created} notification(s)")
 
-        conn.commit()
-        conn.close()
-
-        if notifications_created > 0:
-            print(f"    🔔 Created {notifications_created} notification(s)")
+        except Exception as e:
+            print(f"[MONITOR] Error creating notifications: {e}")
 
     def _should_notify(self, tx, settings):
         """Determine if user should be notified about this transaction"""
-        side = tx.get('side', '').lower()
         usd_value = tx.get('usd_value', 0)
-
-        # Check side (buy/sell)
-        if side == 'buy' and not settings['alert_on_buy']:
-            return False
-
-        if side == 'sell' and not settings['alert_on_sell']:
-            return False
+        threshold = settings.get('alert_threshold_usd', 100)
 
         # Check minimum USD value
-        if usd_value < settings['min_trade_usd']:
+        if usd_value < threshold:
             return False
 
         return True
@@ -721,125 +475,115 @@ class WalletActivityMonitor:
     def _update_monitor_status(self, wallet_address, last_checked_at,
                                last_activity_at=None, success=True, error_message=None):
         """Update monitoring status for a wallet"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        try:
+            # Check if status exists
+            existing = self._table('wallet_monitor_status').select('wallet_address').eq(
+                'wallet_address', wallet_address
+            ).limit(1).execute()
 
-        # Check if status exists
-        cursor.execute("""
-            SELECT wallet_address FROM wallet_monitor_status
-            WHERE wallet_address = ?
-        """, (wallet_address,))
+            if existing.data:
+                # Update existing status
+                update_data = {
+                    'last_checked_at': last_checked_at,
+                    'updated_at': datetime.utcnow().isoformat()
+                }
 
-        exists = cursor.fetchone() is not None
+                if success:
+                    update_data['error_count'] = 0
+                    update_data['last_error'] = None
+                    if last_activity_at:
+                        update_data['last_activity_at'] = last_activity_at
+                else:
+                    update_data['last_error'] = error_message
 
-        if exists:
-            # Update existing status
-            if success:
-                cursor.execute("""
-                    UPDATE wallet_monitor_status
-                    SET last_checked_at = ?,
-                        last_activity_at = COALESCE(?, last_activity_at),
-                        check_count = check_count + 1,
-                        error_count = 0,
-                        last_error = NULL
-                    WHERE wallet_address = ?
-                """, (last_checked_at, last_activity_at, wallet_address))
+                self._table('wallet_monitor_status').update(update_data).eq(
+                    'wallet_address', wallet_address
+                ).execute()
+
+                # Increment check_count with raw SQL via RPC
+                self.supabase.rpc('increment_check_count', {
+                    'p_wallet_address': wallet_address,
+                    'p_error_increment': 0 if success else 1
+                }).execute()
+
             else:
-                cursor.execute("""
-                    UPDATE wallet_monitor_status
-                    SET last_checked_at = ?,
-                        check_count = check_count + 1,
-                        error_count = error_count + 1,
-                        last_error = ?
-                    WHERE wallet_address = ?
-                """, (last_checked_at, error_message, wallet_address))
-        else:
-            # Insert new status
-            cursor.execute("""
-                INSERT INTO wallet_monitor_status (
-                    wallet_address,
-                    last_checked_at,
-                    last_activity_at,
-                    check_count,
-                    error_count,
-                    last_error,
-                    is_active
-                ) VALUES (?, ?, ?, 1, ?, ?, 1)
-            """, (
-                wallet_address,
-                last_checked_at,
-                last_activity_at,
-                0 if success else 1,
-                None if success else error_message
-            ))
+                # Insert new status
+                self._table('wallet_monitor_status').insert({
+                    'wallet_address': wallet_address,
+                    'last_checked_at': last_checked_at,
+                    'last_activity_at': last_activity_at,
+                    'check_count': 1,
+                    'error_count': 0 if success else 1,
+                    'last_error': None if success else error_message,
+                    'is_active': True
+                }).execute()
 
-        conn.commit()
-        conn.close()
+        except Exception as e:
+            print(f"[MONITOR] Error updating status: {e}")
 
-    def get_monitoring_stats(self):
+    def get_monitoring_stats(self) -> Dict:
         """Get current monitoring statistics"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        try:
+            # Active wallets being monitored
+            active_result = self._table('wallet_watchlist').select(
+                'wallet_address', count='exact'
+            ).eq('alert_enabled', True).execute()
+            active_wallets = active_result.count or 0
 
-        # Active wallets being monitored
-        cursor.execute("""
-            SELECT COUNT(DISTINCT wallet_address) as active_wallets
-            FROM wallet_watchlist
-            WHERE alert_enabled = 1
-        """)
-        active_wallets = cursor.fetchone()['active_wallets']
+            # Recent activity (last hour)
+            one_hour_ago = datetime.utcfromtimestamp(time.time() - 3600).isoformat()
+            activity_result = self._table('wallet_activity').select(
+                'id', count='exact'
+            ).gte('created_at', one_hour_ago).execute()
+            recent_activities = activity_result.count or 0
 
-        # Recent activity (last hour)
-        one_hour_ago = int(time.time()) - 3600
-        cursor.execute("""
-            SELECT COUNT(*) as recent_activities
-            FROM wallet_activity
-            WHERE detected_at > ?
-        """, (one_hour_ago,))
-        recent_activities = cursor.fetchone()['recent_activities']
+            # Pending notifications
+            pending_result = self._table('wallet_notifications').select(
+                'id', count='exact'
+            ).eq('is_read', False).execute()
+            pending_notifications = pending_result.count or 0
 
-        # Pending notifications
-        cursor.execute("""
-            SELECT COUNT(*) as pending_notifications
-            FROM wallet_notifications
-            WHERE read_at IS NULL AND dismissed_at IS NULL
-        """)
-        pending_notifications = cursor.fetchone()['pending_notifications']
+            # Monitor health
+            health_result = self._table('wallet_monitor_status').select(
+                'wallet_address, error_count, check_count'
+            ).execute()
 
-        # Monitor health
-        cursor.execute("""
-            SELECT
-                COUNT(*) as total_monitored,
-                SUM(CASE WHEN error_count > 0 THEN 1 ELSE 0 END) as with_errors,
-                AVG(check_count) as avg_checks
-            FROM wallet_monitor_status
-        """)
-        health = cursor.fetchone()
+            total_monitored = len(health_result.data)
+            with_errors = sum(1 for r in health_result.data if (r.get('error_count') or 0) > 0)
+            avg_checks = sum(r.get('check_count', 0) for r in health_result.data) / max(total_monitored, 1)
 
-        conn.close()
+            return {
+                'active_wallets': active_wallets,
+                'recent_activities': recent_activities,
+                'pending_notifications': pending_notifications,
+                'monitor_health': {
+                    'total_monitored': total_monitored,
+                    'with_errors': with_errors,
+                    'avg_checks': round(avg_checks, 1)
+                },
+                'running': self.running,
+                'poll_interval_seconds': self.poll_interval,
+                'telegram_enabled': self.telegram_notifier is not None
+            }
 
-        return {
-            'active_wallets': active_wallets,
-            'recent_activities': recent_activities,
-            'pending_notifications': pending_notifications,
-            'monitor_health': {
-                'total_monitored': health['total_monitored'],
-                'with_errors': health['with_errors'],
-                'avg_checks': round(health['avg_checks'], 1) if health['avg_checks'] else 0
-            },
-            'running': self.running,
-            'poll_interval_seconds': self.poll_interval,
-            'telegram_enabled': self.telegram_notifier is not None
-        }
-
+        except Exception as e:
+            print(f"[MONITOR] Error getting stats: {e}")
+            return {
+                'active_wallets': 0,
+                'recent_activities': 0,
+                'pending_notifications': 0,
+                'monitor_health': {'total_monitored': 0, 'with_errors': 0, 'avg_checks': 0},
+                'running': self.running,
+                'poll_interval_seconds': self.poll_interval,
+                'telegram_enabled': self.telegram_notifier is not None
+            }
 
     def force_check_wallet(self, wallet_address):
         """Manually trigger a check for a specific wallet (for testing/debugging)"""
         wallet_info = {
             'wallet_address': wallet_address,
             'tier': None,
-            'last_checked_at': 0,
+            'last_checked_at': None,
             'last_activity_at': None
         }
 
@@ -849,142 +593,104 @@ class WalletActivityMonitor:
 
 
 # =============================================================================
-# HELPER FUNCTIONS FOR API INTEGRATION
+# HELPER FUNCTIONS FOR API INTEGRATION (Using Supabase)
 # =============================================================================
 
-def get_recent_wallet_activity(db_path, wallet_address=None, limit=50):
+def get_recent_wallet_activity(wallet_address=None, limit=50, db_path=None) -> List[Dict]:
     """Get recent wallet activity (for API endpoint)"""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    try:
+        supabase = get_supabase_client()
+        query = supabase.schema(SCHEMA_NAME).table('wallet_activity').select('*')
 
-    if wallet_address:
-        cursor.execute("""
-            SELECT *
-            FROM wallet_activity
-            WHERE wallet_address = ?
-            ORDER BY block_time DESC
-            LIMIT ?
-        """, (wallet_address, limit))
-    else:
-        cursor.execute("""
-            SELECT *
-            FROM wallet_activity
-            ORDER BY block_time DESC
-            LIMIT ?
-        """, (limit,))
+        if wallet_address:
+            query = query.eq('wallet_address', wallet_address)
 
-    activities = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        result = query.order('block_time', desc=True).limit(limit).execute()
+        return result.data
 
-    return activities
+    except Exception as e:
+        print(f"[MONITOR] Error getting recent activity: {e}")
+        return []
 
 
-def get_user_notifications(db_path, user_id, unread_only=False, limit=50):
+def get_user_notifications(user_id, unread_only=False, limit=50, db_path=None) -> List[Dict]:
     """Get notifications for a user (for API endpoint)"""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    try:
+        supabase = get_supabase_client()
+        query = supabase.schema(SCHEMA_NAME).table('wallet_notifications').select('*').eq('user_id', user_id)
 
-    if unread_only:
-        cursor.execute("""
-            SELECT
-                wn.*,
-                wa.token_address,
-                wa.price,
-                wa.block_time
-            FROM wallet_notifications wn
-            LEFT JOIN wallet_activity wa ON wn.activity_id = wa.id
-            WHERE wn.user_id = ?
-            AND wn.read_at IS NULL
-            AND wn.dismissed_at IS NULL
-            ORDER BY wn.sent_at DESC
-            LIMIT ?
-        """, (user_id, limit))
-    else:
-        cursor.execute("""
-            SELECT
-                wn.*,
-                wa.token_address,
-                wa.price,
-                wa.block_time
-            FROM wallet_notifications wn
-            LEFT JOIN wallet_activity wa ON wn.activity_id = wa.id
-            WHERE wn.user_id = ?
-            ORDER BY wn.sent_at DESC
-            LIMIT ?
-        """, (user_id, limit))
+        if unread_only:
+            query = query.eq('is_read', False)
 
-    notifications = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        result = query.order('sent_at', desc=True).limit(limit).execute()
+        return result.data
 
-    return notifications
+    except Exception as e:
+        print(f"[MONITOR] Error getting notifications: {e}")
+        return []
 
 
-def mark_notification_read(db_path, notification_id, user_id):
+def mark_notification_read(notification_id, user_id, db_path=None) -> bool:
     """Mark a notification as read"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        supabase = get_supabase_client()
+        supabase.schema(SCHEMA_NAME).table('wallet_notifications').update({
+            'is_read': True
+        }).eq('id', notification_id).eq('user_id', user_id).execute()
+        return True
 
-    cursor.execute("""
-        UPDATE wallet_notifications
-        SET read_at = ?
-        WHERE id = ? AND user_id = ?
-    """, (int(time.time()), notification_id, user_id))
-
-    success = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-
-    return success
+    except Exception as e:
+        print(f"[MONITOR] Error marking notification read: {e}")
+        return False
 
 
-def mark_all_notifications_read(db_path, user_id):
+def mark_all_notifications_read(user_id, db_path=None) -> int:
     """Mark all notifications as read for a user"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        supabase = get_supabase_client()
 
-    cursor.execute("""
-        UPDATE wallet_notifications
-        SET read_at = ?
-        WHERE user_id = ? AND read_at IS NULL
-    """, (int(time.time()), user_id))
+        # Count first
+        count_result = supabase.schema(SCHEMA_NAME).table('wallet_notifications').select(
+            'id', count='exact'
+        ).eq('user_id', user_id).eq('is_read', False).execute()
 
-    count = cursor.rowcount
-    conn.commit()
-    conn.close()
+        count = count_result.count or 0
 
-    return count
+        # Update
+        supabase.schema(SCHEMA_NAME).table('wallet_notifications').update({
+            'is_read': True
+        }).eq('user_id', user_id).eq('is_read', False).execute()
+
+        return count
+
+    except Exception as e:
+        print(f"[MONITOR] Error marking all notifications read: {e}")
+        return 0
 
 
-def update_alert_settings(db_path, user_id, wallet_address, settings):
+def update_alert_settings(user_id, wallet_address, settings, db_path=None) -> bool:
     """Update alert settings for a wallet"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        supabase = get_supabase_client()
 
-    cursor.execute("""
-        UPDATE wallet_watchlist
-        SET alert_enabled = ?,
-            alert_on_buy = ?,
-            alert_on_sell = ?,
-            min_trade_usd = ?,
-            last_updated = ?
-        WHERE user_id = ? AND wallet_address = ?
-    """, (
-        settings.get('alert_enabled', True),
-        settings.get('alert_on_buy', True),
-        settings.get('alert_on_sell', False),
-        settings.get('min_trade_usd', 100),
-        int(time.time()),
-        user_id,
-        wallet_address
-    ))
+        update_data = {
+            'last_updated': datetime.utcnow().isoformat()
+        }
 
-    success = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
+        if 'alert_enabled' in settings:
+            update_data['alert_enabled'] = settings['alert_enabled']
+        if 'alert_threshold_usd' in settings:
+            update_data['alert_threshold_usd'] = settings['alert_threshold_usd']
 
-    return success
+        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update(update_data).eq(
+            'user_id', user_id
+        ).eq('wallet_address', wallet_address).execute()
+
+        return True
+
+    except Exception as e:
+        print(f"[MONITOR] Error updating alert settings: {e}")
+        return False
 
 
 # =============================================================================
@@ -998,7 +704,6 @@ if __name__ == '__main__':
 
     monitor = WalletActivityMonitor(
         birdeye_api_key=BIRDEYE_API_KEY,
-        db_path='watchlists.db',
         poll_interval=120  # 2 minutes
     )
 
