@@ -41,12 +41,11 @@ def get_wallet_monitor():
 
         _wallet_monitor = WalletActivityMonitor(
             birdeye_api_key=Config.BIRDEYE_API_KEY,
-            db_path='watchlists.db',
             poll_interval=120,
             telegram_notifier=telegram_notifier
         )
         _wallet_monitor.start()
-        print("[WALLET MONITOR] Started background monitoring")
+        print("[WALLET MONITOR] Started background monitoring (Supabase)")
     return _wallet_monitor
 
 wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
@@ -518,7 +517,6 @@ def get_wallet_activity():
         limit = int(request.args.get('limit', 50))
 
         activities = get_recent_wallet_activity(
-            db_path='watchlists.db',
             wallet_address=wallet_address,
             limit=limit
         )
@@ -550,7 +548,6 @@ def get_notifications():
         limit = int(request.args.get('limit', 50))
 
         notifications = get_user_notifications(
-            db_path='watchlists.db',
             user_id=user_id,
             unread_only=unread_only,
             limit=limit
@@ -584,7 +581,7 @@ def mark_notifications_read():
             return jsonify({'error': 'user_id required'}), 400
 
         if data.get('mark_all'):
-            count = mark_all_notifications_read('watchlists.db', user_id)
+            count = mark_all_notifications_read(user_id)
             return jsonify({
                 'success': True,
                 'message': f'{count} notification(s) marked as read'
@@ -592,7 +589,6 @@ def mark_notifications_read():
 
         elif data.get('notification_id'):
             success = mark_notification_read(
-                'watchlists.db',
                 data['notification_id'],
                 user_id
             )
@@ -637,7 +633,6 @@ def update_wallet_alerts():
             return jsonify({'error': 'settings object required'}), 400
 
         success = update_alert_settings(
-            'watchlists.db',
             user_id,
             data['wallet_address'],
             data['settings']
@@ -712,8 +707,8 @@ def get_watchlist_table():
             return jsonify({'error': 'user_id required'}), 400
         
         from db.watchlist_db import WatchlistDatabase
-        db = WatchlistDatabase(db_path='watchlists.db')
-        
+        db = WatchlistDatabase()
+
         table_data = db.get_premier_league_table(user_id)
         
         return jsonify({
@@ -779,19 +774,20 @@ def replace_wallet():
             return jsonify({'error': 'Missing required fields'}), 400
         
         from db.watchlist_db import WatchlistDatabase
-        db = WatchlistDatabase(db_path='watchlists.db')
-        
+        db = WatchlistDatabase()
+
         db.remove_wallet_from_watchlist(user_id, old_wallet)
-        
-        db.add_wallet_to_watchlist(
-            user_id=user_id,
-            wallet_address=new_wallet_data['wallet'],
-            tier=new_wallet_data.get('tier', 'C'),
-            avg_professional_score=new_wallet_data.get('professional_score', 0),
-            avg_roi_to_peak=new_wallet_data.get('roi_multiplier', 0) * 100,
-            pump_count=new_wallet_data.get('runner_hits_30d', 0),
-            consistency_score=new_wallet_data.get('consistency_score', 0)
-        )
+
+        # Build wallet_data dict for add_wallet_to_watchlist
+        wallet_data = {
+            'wallet_address': new_wallet_data['wallet'],
+            'tier': new_wallet_data.get('tier', 'C'),
+            'avg_distance_to_peak': new_wallet_data.get('professional_score', 0),
+            'avg_roi_to_peak': new_wallet_data.get('roi_multiplier', 0) * 100,
+            'pump_count': new_wallet_data.get('runner_hits_30d', 0),
+            'consistency_score': new_wallet_data.get('consistency_score', 0)
+        }
+        db.add_wallet_to_watchlist(user_id, wallet_data)
         
         return jsonify({
             'success': True,

@@ -26,9 +26,6 @@ class Config:
     WATCHLIST_WRITE_LIMIT = "30 per hour"
     WATCHLIST_READ_LIMIT = "60 per hour"
 
-    # Database
-    WATCHLIST_DB_PATH = 'watchlists.db'
-
     # Supabase Configuration
     SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
     SUPABASE_SERVICE_KEY = os.environ.get('SUPABASE_SERVICE_KEY', '')

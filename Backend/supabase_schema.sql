@@ -311,3 +311,184 @@ CREATE POLICY "Users can update own telegram connection"
 CREATE POLICY "System can insert telegram connections"
     ON sifter_dev.telegram_users FOR INSERT
     WITH CHECK (true);
+
+-- ============================================
+-- WALLET WATCHLIST TABLE
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sifter_dev.wallet_watchlist (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_dev.users(user_id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    tier TEXT DEFAULT 'C',
+    pump_count INTEGER DEFAULT 0,
+    avg_distance_to_peak REAL DEFAULT 0,
+    avg_roi_to_peak REAL DEFAULT 0,
+    consistency_score REAL DEFAULT 0,
+    tokens_hit JSONB DEFAULT '[]'::jsonb,
+    notes TEXT DEFAULT '',
+    tags JSONB DEFAULT '[]'::jsonb,
+    -- Alert settings
+    alert_enabled BOOLEAN DEFAULT FALSE,
+    alert_threshold_usd REAL DEFAULT 1000,
+    last_alert_at TIMESTAMPTZ,
+    -- Timestamps
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    last_updated TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, wallet_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_user_id
+ON sifter_dev.wallet_watchlist(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_wallet
+ON sifter_dev.wallet_watchlist(wallet_address);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_tier
+ON sifter_dev.wallet_watchlist(tier);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_alerts
+ON sifter_dev.wallet_watchlist(user_id, alert_enabled)
+WHERE alert_enabled = TRUE;
+
+ALTER TABLE sifter_dev.wallet_watchlist ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own wallet watchlist"
+    ON sifter_dev.wallet_watchlist FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert to own wallet watchlist"
+    ON sifter_dev.wallet_watchlist FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own wallet watchlist"
+    ON sifter_dev.wallet_watchlist FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete from own wallet watchlist"
+    ON sifter_dev.wallet_watchlist FOR DELETE
+    USING (auth.uid() = user_id);
+
+-- ============================================
+-- WALLET NOTIFICATIONS TABLE
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sifter_dev.wallet_notifications (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_dev.users(user_id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    notification_type TEXT NOT NULL, -- 'buy', 'sell', 'alert', 'degradation', 'promotion'
+    title TEXT NOT NULL,
+    message TEXT DEFAULT '',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT FALSE,
+    sent_at TIMESTAMPTZ DEFAULT NOW(),
+    telegram_sent BOOLEAN DEFAULT FALSE,
+    telegram_sent_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_user
+ON sifter_dev.wallet_notifications(user_id, sent_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_notifications_unread
+ON sifter_dev.wallet_notifications(user_id, is_read)
+WHERE is_read = FALSE;
+
+ALTER TABLE sifter_dev.wallet_notifications ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own notifications"
+    ON sifter_dev.wallet_notifications FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "System can insert notifications"
+    ON sifter_dev.wallet_notifications FOR INSERT
+    WITH CHECK (true);
+
+CREATE POLICY "Users can update own notifications"
+    ON sifter_dev.wallet_notifications FOR UPDATE
+    USING (auth.uid() = user_id);
+
+-- ============================================
+-- WALLET ACTIVITY TABLE (Monitor Events)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sifter_dev.wallet_activity (
+    id BIGSERIAL PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    token_address TEXT NOT NULL,
+    token_ticker TEXT,
+    token_name TEXT,
+    side TEXT NOT NULL, -- 'buy' or 'sell'
+    amount NUMERIC,
+    usd_value NUMERIC,
+    price_per_token NUMERIC,
+    signature TEXT UNIQUE,
+    block_time TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_wallet
+ON sifter_dev.wallet_activity(wallet_address, block_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_token
+ON sifter_dev.wallet_activity(token_address);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_activity_time
+ON sifter_dev.wallet_activity(block_time DESC);
+
+-- Partition hint: Consider partitioning by block_time for large datasets
+-- No RLS needed - this is system data accessed via service role
+
+-- ============================================
+-- WALLET MONITOR STATUS TABLE (Health)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sifter_dev.wallet_monitor_status (
+    id BIGSERIAL PRIMARY KEY,
+    wallet_address TEXT UNIQUE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_checked_at TIMESTAMPTZ,
+    last_activity_at TIMESTAMPTZ,
+    check_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    avg_check_duration_ms INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_monitor_active
+ON sifter_dev.wallet_monitor_status(is_active, last_checked_at);
+
+-- No RLS - system table accessed via service role
+
+-- ============================================
+-- REFRESH GRANTS FOR NEW TABLES
+-- ============================================
+
+GRANT ALL ON ALL TABLES IN SCHEMA sifter_dev TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA sifter_dev TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA sifter_dev TO authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sifter_dev TO authenticated;
+
+-- ============================================
+-- RPC FUNCTIONS
+-- ============================================
+
+-- Function to atomically increment check_count and error_count
+CREATE OR REPLACE FUNCTION sifter_dev.increment_check_count(
+    p_wallet_address TEXT,
+    p_error_increment INTEGER DEFAULT 0
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE sifter_dev.wallet_monitor_status
+    SET
+        check_count = check_count + 1,
+        error_count = error_count + p_error_increment
+    WHERE wallet_address = p_wallet_address;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute to service role
+GRANT EXECUTE ON FUNCTION sifter_dev.increment_check_count(TEXT, INTEGER) TO service_role;

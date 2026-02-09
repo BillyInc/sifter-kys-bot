@@ -1,10 +1,18 @@
+const path = require('path');
+
+// Detect OS for interpreter path
+const isWindows = process.platform === 'win32';
+const pythonInterpreter = isWindows
+  ? path.join(__dirname, '.venv', 'Scripts', 'python.exe')
+  : path.join(__dirname, '.venv', 'bin', 'python');
+
 module.exports = {
   apps: [
     {
       name: 'sifter-backend',
-      cwd: __dirname,  // Stay in backend/ folder
+      cwd: __dirname,
       script: 'app.py',
-      interpreter: '../.venv/Scripts/python.exe',
+      interpreter: pythonInterpreter,
       env: {
         PORT: 5000
       },
@@ -19,9 +27,8 @@ module.exports = {
     {
       name: 'rq-worker',
       cwd: __dirname,
-      script: 'rq',
-      args: 'worker -w rq.SimpleWorker',
-      interpreter: '../.venv/Scripts/python.exe',
+      script: pythonInterpreter,
+      args: '-m rq.cli worker -w rq.SimpleWorker',
       instances: 5,
       exec_mode: 'fork',
       autorestart: true,
@@ -34,18 +41,15 @@ module.exports = {
     },
     {
       name: 'wallet-monitor',
-      cwd: __dirname + '/backend',
-      script: 'python',
-      args: '-m services.wallet_monitor',  // Run as module
-      interpreter: '../.venv/Scripts/python.exe',  // Windows
-      // interpreter: '../.venv/bin/python',  // Linux
+      cwd: __dirname,
+      script: pythonInterpreter,
+      args: '-m services.wallet_monitor',
       autorestart: true,
       max_memory_restart: '500M',
       error_file: 'logs/wallet-monitor-error.log',
-      out_file: 'logs/wallet-monitor-out.log'
-    },
-
-
-
+      out_file: 'logs/wallet-monitor-out.log',
+      merge_logs: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
+    }
   ]
 }
