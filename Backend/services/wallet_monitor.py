@@ -344,28 +344,28 @@ class WalletActivityMonitor:
         return wallets
 
     def _check_wallet_activity(self, wallet_info):
-        """Check a single wallet for new transactions"""
+        """Check a single wallet for new transactions - ENHANCED"""
         wallet_address = wallet_info['wallet_address']
         last_checked = wallet_info['last_checked_at'] or 0
-
-        # Look back slightly further than last check to avoid gaps
-        lookback_buffer = 300  # 5 minutes buffer
+        
+        lookback_buffer = 300
         after_time = max(0, last_checked - lookback_buffer)
         before_time = int(time.time())
-
+        
         try:
-            # Fetch recent transactions
-            transactions = self._fetch_wallet_transactions(
+            # Fetch ALL recent trades (not just first buys)
+            transactions = self._fetch_wallet_all_trades(
                 wallet_address,
                 after_time=after_time,
                 before_time=before_time
             )
-
+            
             if transactions:
                 print(f"  {wallet_address[:8]}... → {len(transactions)} new tx(s)")
-
-                # Process each transaction
+                
                 new_activities = []
+                tokens_bought = defaultdict(list)  # Track buys by token
+                
                 for tx in transactions:
                     activity_id = self._save_wallet_activity(tx, wallet_address)
                     if activity_id:
@@ -373,19 +373,32 @@ class WalletActivityMonitor:
                             'activity_id': activity_id,
                             'tx': tx
                         })
-
+                        
+                        # Track buys for multi-wallet detection
+                        if tx.get('side') == 'buy':
+                            tokens_bought[tx.get('token_address')].append({
+                                'wallet': wallet_address,
+                                'tier': wallet_info.get('tier', 'C'),
+                                'usd_value': tx.get('usd_value', 0)
+                            })
+                
                 # Create notifications for users watching this wallet
                 if new_activities:
                     self._create_notifications_for_wallet(wallet_address, new_activities)
-
-            # Update monitor status
+                
+                # Check for multi-wallet signals
+                for token_address, wallets_buying in tokens_bought.items():
+                    signal = self._detect_multi_wallet_signal(token_address, wallets_buying)
+                    if signal:
+                        self._create_signal_alert(signal)
+            
             self._update_monitor_status(
                 wallet_address,
                 last_checked_at=before_time,
                 last_activity_at=before_time if transactions else wallet_info['last_activity_at'],
                 success=True
             )
-
+        
         except Exception as e:
             print(f"  ❌ Error checking {wallet_address[:8]}...: {e}")
             self._update_monitor_status(
@@ -394,6 +407,83 @@ class WalletActivityMonitor:
                 success=False,
                 error_message=str(e)
             )
+
+    def _fetch_wallet_all_trades(self, wallet_address, after_time, before_time):
+        """Fetch ALL trades (buys AND sells) for a wallet"""
+        # Use Solana Tracker trades endpoint
+        url = f"https://data.solanatracker.io/wallet/{wallet_address}/trades"
+        headers = {
+            'accept': 'application/json',
+            'x-api-key': self.birdeye_key  # Or solanatracker_key
+        }
+        params = {
+            'since_time': after_time * 1000,  # Convert to ms
+            'limit': 100
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('trades', [])
+        except Exception as e:
+            print(f"Error fetching trades: {e}")
+        
+        return []
+
+    def _detect_multi_wallet_signal(self, token_address, wallets_buying):
+        """Detect if multiple high-tier wallets bought same token"""
+        if len(wallets_buying) < 2:
+            return None
+        
+        # Calculate signal strength
+        signal_strength = 0
+        tier_weights = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
+        
+        for wallet_info in wallets_buying:
+            signal_strength += tier_weights.get(wallet_info['tier'], 1)
+        
+        # Strong signal if 2+ wallets AND combined strength ≥ 5
+        if signal_strength >= 5:
+            return {
+                'token_address': token_address,
+                'signal_strength': signal_strength,
+                'wallet_count': len(wallets_buying),
+                'wallets': wallets_buying,
+                'timestamp': int(time.time())
+            }
+        
+        return None
+
+    def _create_signal_alert(self, signal):
+        """Create alert for multi-wallet signal"""
+        print(f"  🚨 MULTI-WALLET SIGNAL: {signal['wallet_count']} wallets bought {signal['token_address'][:8]}...")
+        
+        # Create notifications for ALL users with ANY of these wallets
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        wallet_addresses = [w['wallet'] for w in signal['wallets']]
+        placeholders = ','.join(['?'] * len(wallet_addresses))
+        
+        cursor.execute(f"""
+            SELECT DISTINCT user_id
+            FROM wallet_watchlist
+            WHERE wallet_address IN ({placeholders})
+            AND alert_enabled = 1
+        """, wallet_addresses)
+        
+        users = [row[0] for row in cursor.fetchall()]
+        
+        for user_id in users:
+            # Send high-priority Telegram alert
+            if self.telegram_notifier:
+                self.telegram_notifier.send_multi_wallet_signal_alert(
+                    user_id,
+                    signal
+                )
+        
+        conn.close()
 
     def _fetch_wallet_transactions(self, wallet_address, after_time, before_time, chain='solana'):
         """Fetch transactions for a wallet from Birdeye"""

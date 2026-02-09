@@ -498,3 +498,67 @@ Next update: {digest_data['next_update']}
                     "❌ <b>Invalid or expired code</b>\n\n"
                     "Generate a new code in your dashboard."
                 )
+    # Add to TelegramNotifier class
+
+def send_multi_wallet_signal_alert(self, user_id: str, signal: Dict) -> bool:
+    """Send alert when multiple watchlist wallets buy same token"""
+    chat_id = self.get_user_chat_id(user_id)
+    if not chat_id:
+        return False
+    
+    wallet_count = signal['wallet_count']
+    token_address = signal['token_address']
+    signal_strength = signal['signal_strength']
+    wallets = signal['wallets']
+    
+    # Calculate signal emoji based on strength
+    if signal_strength >= 10:
+        signal_emoji = "🔥🔥🔥"
+        signal_label = "EXTREME"
+    elif signal_strength >= 7:
+        signal_emoji = "🔥🔥"
+        signal_label = "STRONG"
+    else:
+        signal_emoji = "🔥"
+        signal_label = "MODERATE"
+    
+    # Build wallet list
+    wallet_list = "\n".join([
+        f"{'🥇' if w['tier'] == 'S' else '🥈' if w['tier'] == 'A' else '🥉'} "
+        f"{w['tier']}-Tier: {w['wallet'][:8]}... (${w['usd_value']:,.0f})"
+        for w in wallets[:5]
+    ])
+    
+    message = f"""
+{signal_emoji} <b>MULTI-WALLET SIGNAL - {signal_label}</b>
+
+<b>{wallet_count} of your watchlist wallets just bought the SAME token!</b>
+
+🎯 Token: <code>{token_address[:12]}...</code>
+💪 Signal Strength: {signal_strength}/10
+
+<b>Wallets Buying:</b>
+{wallet_list}
+
+⏰ {wallet_count} wallets bought within the same time window 
+
+<b>What to do:</b>
+1️⃣ Check the token chart immediately
+2️⃣ Review if it's a fresh launch or existing runner
+3️⃣ Set alerts to track if more wallets join
+""".strip()
+    
+    buttons = {
+        'inline_keyboard': [
+            [
+                {'text': '📊 View on DexScreener', 'url': f'https://dexscreener.com/solana/{token_address}'},
+                {'text': '🔍 View on Birdeye', 'url': f'https://birdeye.so/token/{token_address}'}
+            ],
+            [
+                {'text': '📋 Copy Address', 'callback_data': f'copy_token:{token_address}'}
+            ]
+        ]
+    }
+    
+    return self.send_message(chat_id, message, buttons)
+                
