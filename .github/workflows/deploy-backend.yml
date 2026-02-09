@@ -6,6 +6,11 @@ on:
     paths:
       - 'Backend/**'
       - '.github/workflows/deploy-backend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Backend/**'
+      - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
 concurrency:
@@ -91,6 +96,7 @@ jobs:
     name: Deploy to Server
     runs-on: ubuntu-latest
     needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: development
 
     steps:
