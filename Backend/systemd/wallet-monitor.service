@@ -1,0 +1,26 @@
+[Unit]
+Description=Sifter Wallet Activity Monitor
+After=network.target redis.service postgresql.service sifter-backend.service
+Wants=sifter-backend.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/sifter-backend
+Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
+EnvironmentFile=/home/ubuntu/sifter-backend/.env
+ExecStart=/home/ubuntu/sifter-backend/.venv/bin/python -m services.wallet_monitor
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/sifter-backend/logs
+
+[Install]
+WantedBy=multi-user.target
