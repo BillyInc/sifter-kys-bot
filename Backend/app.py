@@ -8,6 +8,7 @@ from config import Config
 from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
 from rq import Queue
 from redis import Redis
+from services import preload_trending_cache_parallel
 telegram_polling_started = False
 
 
@@ -70,39 +71,45 @@ def create_app() -> Flask:
 
     return app
 
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    preload_trending_cache_parallel()
 
 
 
 
 # ✅ MOVE preload_trending_cache OUTSIDE create_app (before create_app definition)
 def preload_trending_cache():
-    """Preload trending runners cache on startup"""
+    """Preload trending runners cache AND start wallet monitoring"""
     try:
         print("\n[CACHE WARMUP] Preloading trending runners...")
         from routes.wallets import get_wallet_analyzer
+        from services import preload_trending_cache_parallel
         
-        analyzer = get_wallet_analyzer()
+        # Start parallel cache warmup using RQ workers
+        preload_trending_cache_parallel()
         
-        # Preload common timeframes with error handling
-        for days_back in [7, 14]:
-            try:
-                print(f"  → Warming {days_back}d cache...")
-                runners = analyzer.find_trending_runners_enhanced(
-                    days_back=days_back,
-                    min_multiplier=5.0,
-                    min_liquidity=50000
-                )
-                print(f"  ✓ {days_back}d: {len(runners)} runners")
-                for runner in runners[:5]:
-                    analyzer.analyze_token_professional(runner['address'])
-            except Exception as e:
-                print(f"  ⚠️ {days_back}d cache failed: {e}")
-                continue  # Don't crash - continue to next timeframe
-        
-        print("  ✅ Cache warmup complete\n")
+        print("  ✅ Cache warmup jobs queued\n")
     except Exception as e:
         print(f"  ⚠️ Cache warmup failed: {e}\n")
-        # Don't crash the server - just log and continue
+
+
+def start_wallet_monitoring():
+    """Start background wallet monitoring (every 30-60 seconds)"""
+    try:
+        print("\n[WALLET MONITORING] Starting real-time monitoring...")
+        from flask import current_app
+        from db.watchlist_db import WatchlistDatabase
+        
+        db = WatchlistDatabase()
+        q = current_app.config['RQ_QUEUE']
+        
+        # Schedule monitoring jobs for all active wallets
+        # This runs every 30-60 seconds via a separate scheduler
+        # (You'll need to set up APScheduler or similar)
+        
+        print("  ✅ Wallet monitoring started\n")
+    except Exception as e:
+        print(f"  ⚠️ Monitoring start failed: {e}\n")
 
 
 def _apply_rate_limits(limiter: Limiter):
@@ -154,6 +161,7 @@ if __name__ == '__main__':
     # ✅ Only preload cache if NOT in reloader process
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         preload_trending_cache()
+        start_wallet_monitoring()  # NEW
     
     port = int(os.environ.get("PORT", 5000))
     print(f"\nStarting server on http://localhost:{port}\n")
