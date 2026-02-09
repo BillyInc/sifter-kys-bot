@@ -14,7 +14,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
+    environment: development
 
     steps:
       - name: Checkout code
