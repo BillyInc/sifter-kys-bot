@@ -165,8 +165,17 @@ jobs:
             # Create logs directory
             mkdir -p logs
 
-            # Restart PM2 process
-            pm2 restart sifter-backend || pm2 start ecosystem.config.js
+            # Install/update systemd service files
+            sudo cp systemd/*.service /etc/systemd/system/
+            sudo systemctl daemon-reload
+
+            # Enable services on first deploy
+            sudo systemctl enable sifter-backend rq-worker@{1..5} wallet-monitor 2>/dev/null || true
+
+            # Restart services (graceful reload for gunicorn)
+            sudo systemctl reload-or-restart sifter-backend
+            sudo systemctl restart rq-worker@{1..5}
+            sudo systemctl restart wallet-monitor
 
             echo "Deployment complete!"
           ENDSSH
