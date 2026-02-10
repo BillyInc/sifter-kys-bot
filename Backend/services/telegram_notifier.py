@@ -398,6 +398,68 @@ Next update: {digest_data['next_update']}
         
         return self.send_message(chat_id, message, buttons)
     
+    def send_multi_wallet_signal_alert(self, user_id: str, signal: Dict) -> bool:
+        """Send alert when multiple watchlist wallets buy same token"""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
+        
+        wallet_count = signal['wallet_count']
+        token_address = signal['token_address']
+        signal_strength = signal['signal_strength']
+        wallets = signal['wallets']
+        
+        # Calculate signal emoji based on strength
+        if signal_strength >= 10:
+            signal_emoji = "🔥🔥🔥"
+            signal_label = "EXTREME"
+        elif signal_strength >= 7:
+            signal_emoji = "🔥🔥"
+            signal_label = "STRONG"
+        else:
+            signal_emoji = "🔥"
+            signal_label = "MODERATE"
+        
+        # Build wallet list
+        wallet_list = "\n".join([
+            f"{'🥇' if w['tier'] == 'S' else '🥈' if w['tier'] == 'A' else '🥉'} "
+            f"{w['tier']}-Tier: {w['wallet'][:8]}... (${w['usd_value']:,.0f})"
+            for w in wallets[:5]
+        ])
+        
+        message = f"""
+{signal_emoji} <b>MULTI-WALLET SIGNAL - {signal_label}</b>
+
+<b>{wallet_count} of your watchlist wallets just bought the SAME token!</b>
+
+🎯 Token: <code>{token_address[:12]}...</code>
+💪 Signal Strength: {signal_strength}/10
+
+<b>Wallets Buying:</b>
+{wallet_list}
+
+⏰ {wallet_count} wallets bought within the same time window 
+
+<b>What to do:</b>
+1️⃣ Check the token chart immediately
+2️⃣ Review if it's a fresh launch or existing runner
+3️⃣ Set alerts to track if more wallets join
+""".strip()
+        
+        buttons = {
+            'inline_keyboard': [
+                [
+                    {'text': '📊 View on DexScreener', 'url': f'https://dexscreener.com/solana/{token_address}'},
+                    {'text': '🔍 View on Birdeye', 'url': f'https://birdeye.so/token/{token_address}'}
+                ],
+                [
+                    {'text': '📋 Copy Address', 'callback_data': f'copy_token:{token_address}'}
+                ]
+            ]
+        }
+        
+        return self.send_message(chat_id, message, buttons)
+    
     def handle_callback_query(self, callback_query: dict) -> bool:
         """Handle inline button callbacks"""
         callback_id = callback_query['id']
@@ -458,9 +520,9 @@ Next update: {digest_data['next_update']}
                 self.handle_callback_query(update['callback_query'])
     
     def _handle_message(self, message: dict):
-        """Handle incoming message"""
+        """Handle incoming message with proper linking flow"""
         chat_id = str(message['chat']['id'])
-        text = message.get('text', '')
+        text = message.get('text', '').strip()
         username = message['from'].get('username')
         first_name = message['from'].get('first_name')
         last_name = message['from'].get('last_name')
@@ -468,17 +530,19 @@ Next update: {digest_data['next_update']}
         if text == '/start':
             self.send_message(
                 chat_id,
-                "👋 <b>Welcome to Sifter KYS Alerts!</b>\n\n"
-                "To connect your account:\n"
-                "1. Go to your dashboard settings\n"
-                "2. Click 'Connect Telegram'\n"
-                "3. Enter the code shown here"
+                "👋 <b>Welcome to Sifter KYS!</b>\n\n"
+                "🔗 <b>To connect your dashboard:</b>\n"
+                "1. Go to your Sifter dashboard → Settings → Telegram\n"
+                "2. Click 'Generate Connection Code'\n"
+                "3. Send that 6-character code here\n\n"
+                "<b>Example code:</b> <code>AB123C</code>\n\n"
+                "💡 Your Chat ID: <code>{}</code>".format(chat_id)
             )
         
+        # Check if it's a 6-character alphanumeric code
         elif len(text) == 6 and text.isalnum():
-            # Possibly a connection code
             user_id = self.verify_connection_code(
-                text.upper(),
+                text.upper(),  # Convert to uppercase for consistency
                 chat_id,
                 username,
                 first_name,
@@ -488,77 +552,37 @@ Next update: {digest_data['next_update']}
             if user_id:
                 self.send_message(
                     chat_id,
-                    "✅ <b>Account Connected!</b>\n\n"
-                    "You'll now receive wallet alerts here.\n\n"
-                    "Manage settings in your dashboard."
+                    "✅ <b>Account Connected Successfully!</b>\n\n"
+                    "You will now receive:\n"
+                    "• 🔔 Wallet trade alerts\n"
+                    "• 📊 Watchlist updates\n"
+                    "• 📈 Performance notifications\n\n"
+                    "Manage your alert settings in your dashboard.\n\n"
+                    "Chat ID: <code>{}</code>".format(chat_id)
                 )
             else:
                 self.send_message(
                     chat_id,
-                    "❌ <b>Invalid or expired code</b>\n\n"
-                    "Generate a new code in your dashboard."
+                    "❌ <b>Invalid or Expired Code</b>\n\n"
+                    "The connection code is either invalid or has expired (10 min limit).\n\n"
+                    "Please generate a new code in your dashboard:\n"
+                    "Settings → Telegram → Generate Connection Code"
                 )
-    # Add to TelegramNotifier class
-
-def send_multi_wallet_signal_alert(self, user_id: str, signal: Dict) -> bool:
-    """Send alert when multiple watchlist wallets buy same token"""
-    chat_id = self.get_user_chat_id(user_id)
-    if not chat_id:
-        return False
-    
-    wallet_count = signal['wallet_count']
-    token_address = signal['token_address']
-    signal_strength = signal['signal_strength']
-    wallets = signal['wallets']
-    
-    # Calculate signal emoji based on strength
-    if signal_strength >= 10:
-        signal_emoji = "🔥🔥🔥"
-        signal_label = "EXTREME"
-    elif signal_strength >= 7:
-        signal_emoji = "🔥🔥"
-        signal_label = "STRONG"
-    else:
-        signal_emoji = "🔥"
-        signal_label = "MODERATE"
-    
-    # Build wallet list
-    wallet_list = "\n".join([
-        f"{'🥇' if w['tier'] == 'S' else '🥈' if w['tier'] == 'A' else '🥉'} "
-        f"{w['tier']}-Tier: {w['wallet'][:8]}... (${w['usd_value']:,.0f})"
-        for w in wallets[:5]
-    ])
-    
-    message = f"""
-{signal_emoji} <b>MULTI-WALLET SIGNAL - {signal_label}</b>
-
-<b>{wallet_count} of your watchlist wallets just bought the SAME token!</b>
-
-🎯 Token: <code>{token_address[:12]}...</code>
-💪 Signal Strength: {signal_strength}/10
-
-<b>Wallets Buying:</b>
-{wallet_list}
-
-⏰ {wallet_count} wallets bought within the same time window 
-
-<b>What to do:</b>
-1️⃣ Check the token chart immediately
-2️⃣ Review if it's a fresh launch or existing runner
-3️⃣ Set alerts to track if more wallets join
-""".strip()
-    
-    buttons = {
-        'inline_keyboard': [
-            [
-                {'text': '📊 View on DexScreener', 'url': f'https://dexscreener.com/solana/{token_address}'},
-                {'text': '🔍 View on Birdeye', 'url': f'https://birdeye.so/token/{token_address}'}
-            ],
-            [
-                {'text': '📋 Copy Address', 'callback_data': f'copy_token:{token_address}'}
-            ]
-        ]
-    }
-    
-    return self.send_message(chat_id, message, buttons)
-                
+        
+        elif text.startswith('/'):
+            # Unknown command
+            self.send_message(
+                chat_id,
+                "❓ <b>Unknown Command</b>\n\n"
+                "<b>Available Commands:</b>\n"
+                "• <code>/start</code> - Get setup instructions\n\n"
+                "To connect, generate a code in your dashboard and send it here."
+            )
+        
+        else:
+            # Not a command or valid code
+            self.send_message(
+                chat_id,
+                "❓ I didn't understand that.\n\n"
+                "Send <code>/start</code> for setup instructions."
+            )

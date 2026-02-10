@@ -64,7 +64,7 @@ def generate_connection_code():
         'expires_in': 600,  # 10 minutes
         'instructions': [
             'Open Telegram',
-            'Search for @YourBotName',  # TODO: Update with actual bot name
+            'Search for @SifterDueDiligenceBot',
             'Send /start',
             'Send this code'
         ]
@@ -171,7 +171,6 @@ def send_test_alert():
         }
     }
     
-    import time
     success = telegram_notifier.send_wallet_alert(user_id, test_alert, 0)
     
     if success:
@@ -184,29 +183,6 @@ def send_test_alert():
             'success': False,
             'error': 'Failed to send test alert'
         }), 500
-
-
-@telegram_bp.route('/webhook', methods=['POST'])
-def telegram_webhook():
-    """
-    Webhook endpoint for Telegram bot updates.
-    Configure this URL in BotFather as your webhook.
-    """
-    if not telegram_notifier:
-        return jsonify({'error': 'Telegram not configured'}), 503
-    
-    update = request.json
-    
-    if not update:
-        return jsonify({'error': 'No update data'}), 400
-    
-    try:
-        # Process single update
-        telegram_notifier.process_bot_updates([update])
-        return jsonify({'ok': True}), 200
-    except Exception as e:
-        print(f"[TELEGRAM WEBHOOK] Error: {e}")
-        return jsonify({'error': str(e)}), 500
 
 
 @telegram_bp.route('/bot/info', methods=['GET'])
@@ -234,13 +210,14 @@ def get_bot_info():
             'success': False,
             'error': 'Failed to fetch bot info'
         }), 500
-        
+
+
 @telegram_bp.route('/start-polling', methods=['POST'])
 def start_polling():
     """Start polling for Telegram updates (local dev without ngrok)"""
     def poll_updates():
         last_update_id = 0
-        TELEGRAM_API_BASE = f"https://api.telegram.org/bot8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk"
+        TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
         print("[TELEGRAM POLLING] Started")
         
@@ -272,3 +249,47 @@ def start_polling():
     thread.start()
     
     return jsonify({'success': True, 'message': 'Polling started'})
+
+
+@telegram_bp.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    """
+    Ultra-fast webhook handler - queues processing immediately
+    Responds to Telegram in <50ms
+    """
+    if not telegram_notifier:
+        return jsonify({'error': 'Telegram not configured'}), 503
+    
+    update = request.json
+    
+    if not update:
+        return jsonify({'error': 'No update data'}), 400
+    
+    # ✅ PRODUCTION: Verify secret token (if set)
+    secret_token = os.environ.get('TELEGRAM_SECRET_TOKEN')
+    if secret_token:
+        header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
+        if header_token != secret_token:
+            print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
+            return jsonify({'error': 'Unauthorized'}), 401
+    
+    # ✅ Queue the update for background processing
+    from flask import current_app
+    q = current_app.config.get('RQ_QUEUE')
+    
+    if q:
+        # Process in background worker
+        q.enqueue('tasks.process_telegram_update', update)
+        print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
+    else:
+        # Fallback: Process in thread (for local dev without Redis)
+        import threading
+        threading.Thread(
+            target=telegram_notifier.process_bot_updates,
+            args=([update],),
+            daemon=True
+        ).start()
+        print(f"[TELEGRAM WEBHOOK] ✓ Update threaded")
+    
+    # ✅ Respond immediately (Telegram requires <1s response)
+    return jsonify({'ok': True}), 200

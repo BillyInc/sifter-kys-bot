@@ -300,12 +300,8 @@ class WalletActivityMonitor:
             user_ids = list(set(row['user_id'] for row in result.data))
 
             for user_id in user_ids:
-                # Send high-priority Telegram alert
-                if self.telegram_notifier:
-                    self.telegram_notifier.send_multi_wallet_signal_alert(
-                        user_id,
-                        signal
-                    )
+                # Queue Telegram alert
+                self._send_telegram_alert(user_id, 'multi_wallet', signal)
 
         except Exception as e:
             print(f"  ⚠️ Error creating signal alert: {e}")
@@ -360,12 +356,40 @@ class WalletActivityMonitor:
             print(f"[MONITOR] Error getting wallet info: {e}")
             return {'tier': 'C', 'consistency_score': 0}
 
-    def _send_telegram_alert(self, user_id: str, wallet_address: str, tx: dict, activity_id: int):
-        """Send Telegram alert for wallet activity"""
+    def _send_telegram_alert(self, user_id: str, alert_type: str, alert_data: Dict):
+        """Queue Telegram alert for background sending"""
         if not self.telegram_notifier:
             return
-
+        
+        # ✅ Use RQ queue if available (production)
         try:
+            from flask import current_app
+            q = current_app.config.get('RQ_QUEUE')
+            
+            if q:
+                q.enqueue('tasks.send_telegram_alert_async', 
+                          user_id, alert_type, alert_data)
+                print(f"[WALLET MONITOR] ✓ Alert queued for {user_id[:8]}...")
+            else:
+                # Fallback: Send directly (local dev)
+                self._send_alert_direct(user_id, alert_type, alert_data)
+        except Exception as e:
+            print(f"[WALLET MONITOR] ⚠️ Alert queue failed: {e}")
+            # Fallback: Send directly
+            self._send_alert_direct(user_id, alert_type, alert_data)
+
+    def _send_alert_direct(self, user_id: str, alert_type: str, alert_data: Dict):
+        """Direct send (fallback)"""
+        if alert_type == 'trade':
+            self._send_trade_alert_direct(user_id, alert_data)
+        elif alert_type == 'multi_wallet':
+            self.telegram_notifier.send_multi_wallet_signal_alert(user_id, alert_data)
+
+    def _send_trade_alert_direct(self, user_id: str, tx: dict):
+        """Send direct trade alert"""
+        try:
+            wallet_address = tx.get('wallet_address', '')
+            
             # Get wallet tier/stats from watchlist
             wallet_info = self._get_wallet_info(user_id, wallet_address)
 
@@ -398,7 +422,7 @@ class WalletActivityMonitor:
             }
 
             # Send to Telegram
-            self.telegram_notifier.send_wallet_alert(user_id, alert_payload, activity_id)
+            self.telegram_notifier.send_wallet_alert(user_id, alert_payload, tx.get('activity_id'))
             print(f"    📱 Telegram alert sent to user {user_id}")
 
         except Exception as e:
@@ -445,11 +469,12 @@ class WalletActivityMonitor:
 
                             # Send Telegram alert
                             if self.telegram_notifier:
+                                tx['wallet_address'] = wallet_address
+                                tx['activity_id'] = activity_id
                                 self._send_telegram_alert(
                                     watcher['user_id'],
-                                    wallet_address,
-                                    tx,
-                                    activity_id
+                                    'trade',
+                                    tx
                                 )
 
                         except Exception as e:
