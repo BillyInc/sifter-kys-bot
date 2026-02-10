@@ -80,6 +80,14 @@ class WalletPumpAnalyzer:
                 last_updated FLOAT
             )
         """)
+        # ✅ NEW: Token launch price cache table
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS token_launch_cache (
+                token TEXT PRIMARY KEY,
+                launch_price REAL,
+                last_updated REAL
+            )
+        """)
         self.con.execute("CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_token_cache(wallet, token)")
         self._log("DuckDB cache initialized")
      
@@ -258,6 +266,149 @@ class WalletPumpAnalyzer:
             self.con.execute("INSERT OR REPLACE INTO token_runner_cache VALUES (?, ?, ?)", [token, json.dumps(runner_info), now])
             return runner_info
         return None
+
+    # ✅ NEW METHOD: Get token launch price
+    def _get_token_launch_price(self, token_address):
+        now = time.time()
+        result = self.con.execute("""
+            SELECT launch_price 
+            FROM token_launch_cache 
+            WHERE token = ? AND last_updated > ?
+        """, [token_address, now - 86400]).fetchone()  # 24hr cache
+    
+        if result:
+            return result[0]
+        
+        # Fetch from Solana Tracker
+        try:
+            url = f"{self.st_base_url}/tokens/{token_address}"
+            
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
+            
+            if data and data.get('pools'):
+                pools = data['pools']
+                if pools:
+                    # Get primary pool (highest liquidity)
+                    primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+                    
+                    # Get launch/first trade price
+                    launch_price = primary_pool.get('price', {}).get('usd', 0)
+                    
+                    if launch_price and launch_price > 0:
+                        # Cache it
+                        self.con.execute("""
+                            INSERT OR REPLACE INTO token_launch_cache 
+                            (token, launch_price, last_updated) 
+                            VALUES (?, ?, ?)
+                        """, [token_address, launch_price, now])
+                        
+                        return launch_price
+        
+        except Exception as e:
+            self._log(f"Error fetching launch price: {e}")
+        
+        return None
+
+    # ✅ NEW METHOD: Calculate consistency score
+    def _calculate_consistency(self, wallet_address, tokens_traded_list):
+        """
+        Consistency = How consistently does wallet enter at same multiplier from launch?
+        
+        ONLY USED IN BATCH ANALYSIS (needs 2+ tokens for variance)
+        
+        For each token traded:
+        1. Get token launch price
+        2. Get wallet's entry price
+        3. Calculate: entry_price / launch_price = entry_multiplier
+        4. Variance of entry_multipliers = consistency
+        
+        Low variance = always enters at similar multiplier (e.g., always 2-3x)
+        High variance = random entries (sometimes 2x, sometimes 50x, sometimes 100x)
+        """
+        
+        if len(tokens_traded_list) < 2:
+            return 50  # Can't calculate variance with < 2 tokens
+        
+        entry_multipliers = []
+        
+        for token_address in tokens_traded_list:
+            # Get token launch price (CACHED)
+            launch_price = self._get_token_launch_price(token_address)
+            
+            if not launch_price or launch_price == 0:
+                continue
+            
+            # Get wallet's first entry price for this token
+            cached_data = self._get_cached_pnl_and_entry(wallet_address, token_address)
+            
+            if not cached_data or not cached_data.get('entry_price'):
+                continue
+            
+            entry_price = cached_data['entry_price']
+            
+            if entry_price == 0:
+                continue
+            
+            # Calculate multiplier from launch
+            entry_multiplier = entry_price / launch_price
+            entry_multipliers.append(entry_multiplier)
+        
+        # Need at least 2 data points for variance
+        if len(entry_multipliers) < 2:
+            return 50
+        
+        try:
+            # Calculate variance of entry multipliers
+            variance = statistics.variance(entry_multipliers)
+            
+            # Convert to 0-100 score
+            # Lower variance = higher consistency
+            # Normalize: variance of 0 = 100, variance of 50+ = 0
+            consistency_score = max(0, 100 - (variance * 2))
+            
+            return round(consistency_score, 1)
+        
+        except:
+            return 50
+
+    # ✅ NEW METHOD: Assign tier based on participation + aggregate score
+    def _assign_tier(self, runner_count, aggregate_score, tokens_analyzed):
+        """
+        Assign tier (S/A/B/C) based on:
+        1. Participation rate (runner_count / tokens_analyzed)
+        2. Aggregate score (60/30/10)
+        
+        TIER RULES:
+        - S-Tier: 80%+ participation + aggregate >= 85
+        - A-Tier: 60%+ participation + aggregate >= 75
+        - B-Tier: 40%+ participation + aggregate >= 65
+        - C-Tier: Below 40% or aggregate < 65
+        """
+        
+        if tokens_analyzed == 0:
+            return 'C'
+        
+        participation_rate = runner_count / tokens_analyzed
+        
+        # S-Tier: Elite performers
+        if participation_rate >= 0.8 and aggregate_score >= 85:
+            return 'S'
+        
+        # A-Tier: Strong performers
+        elif participation_rate >= 0.6 and aggregate_score >= 75:
+            return 'A'
+        
+        # B-Tier: Decent performers
+        elif participation_rate >= 0.4 and aggregate_score >= 65:
+            return 'B'
+        
+        # C-Tier: Below threshold
+        else:
+            return 'C'
  
     def get_wallet_pnl_solanatracker(self, wallet_address, token_address):
         """Get PnL data for a wallet-token pair"""
@@ -1120,10 +1271,21 @@ class WalletPumpAnalyzer:
              
                 wallet_info['ath_price'] = ath_price
                 scoring_data = self.calculate_wallet_relative_score(wallet_info)
+
+                # ✅ TIER ASSIGNMENT FOR SINGLE TOKEN (based on professional score)
+                if scoring_data['professional_score'] >= 90:
+                    tier = 'S'
+                elif scoring_data['professional_score'] >= 80:
+                    tier = 'A'
+                elif scoring_data['professional_score'] >= 70:
+                    tier = 'B'
+                else:
+                    tier = 'C'
              
                 wallet_results.append({
                     'wallet': wallet_address,
                     'source': wallet_info['source'],
+                    'tier': tier,  # ✅ ADDED
                     'roi_percent': round((wallet_info['realized_multiplier'] - 1) * 100, 2),
                     'roi_multiplier': round(wallet_info['realized_multiplier'], 2),
                     'entry_to_ath_multiplier': scoring_data.get('entry_to_ath_multiplier'),
@@ -1217,7 +1379,9 @@ class WalletPumpAnalyzer:
             'runners_hit_addresses': set(),
             'roi_details': [],
             'professional_scores': [],
-            'entry_to_ath_multipliers': []
+            'entry_to_ath_multipliers': [],
+            'distance_to_ath_values': [],  # ✅ ADDED for 60/30/10
+            'roi_multipliers': []  # ✅ ADDED for 60/30/10
         })
      
         for idx, runner in enumerate(runners_list, 1):
@@ -1247,12 +1411,18 @@ class WalletPumpAnalyzer:
                     'roi_multiplier': wallet['roi_multiplier'],
                     'professional_score': wallet['professional_score'],
                     'professional_grade': wallet['professional_grade'],
-                    'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier')
+                    'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
+                    'distance_to_ath_pct': wallet.get('distance_to_ath_pct')  # ✅ ADDED
                 })
              
                 wallet_hits[wallet_addr]['professional_scores'].append(wallet['professional_score'])
                 if wallet.get('entry_to_ath_multiplier'):
                     wallet_hits[wallet_addr]['entry_to_ath_multipliers'].append(wallet['entry_to_ath_multiplier'])
+                
+                # ✅ ADDED: Track distance to ATH and ROI for 60/30/10
+                if wallet.get('distance_to_ath_pct'):
+                    wallet_hits[wallet_addr]['distance_to_ath_values'].append(wallet['distance_to_ath_pct'])
+                wallet_hits[wallet_addr]['roi_multipliers'].append(wallet['roi_multiplier'])
      
         smart_money = []
         no_overlap_fallback = False
@@ -1260,10 +1430,30 @@ class WalletPumpAnalyzer:
         for wallet_addr, data in wallet_hits.items():
             if len(data['runners_hit']) < min_runner_hits:
                 continue
-         
-            avg_professional_score = sum(data['professional_scores']) / len(data['professional_scores'])
-            avg_roi = sum(r['roi_percent'] for r in data['roi_details']) / len(data['roi_details'])
-            avg_entry_to_ath = sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']) if data['entry_to_ath_multipliers'] else None
+
+            # ✅ UPDATED: Calculate 60/30/10 aggregate score
+            avg_distance_to_ath = sum(data['distance_to_ath_values']) / len(data['distance_to_ath_values']) if data['distance_to_ath_values'] else 0
+            avg_roi = sum(data['roi_multipliers']) / len(data['roi_multipliers']) if data['roi_multipliers'] else 0
+            
+            # Get list of token addresses this wallet traded
+            tokens_traded = list(data['runners_hit_addresses'])
+            
+            # Calculate consistency (ONLY works with 2+ tokens)
+            consistency_score = self._calculate_consistency(wallet_addr, tokens_traded)
+            
+            # 60/30/10 AGGREGATE SCORE
+            aggregate_score = (
+                0.60 * avg_distance_to_ath +
+                0.30 * (avg_roi / 10) +  # Normalize ROI to 0-100 scale
+                0.10 * consistency_score
+            )
+            
+            # ✅ ASSIGN TIER based on participation + aggregate
+            tier = self._assign_tier(
+                runner_count=len(data['runners_hit']),
+                aggregate_score=aggregate_score,
+                tokens_analyzed=len(runners_list)
+            )
          
             if len(data['professional_scores']) > 1:
                 variance = statistics.variance(data['professional_scores'])
@@ -1293,9 +1483,15 @@ class WalletPumpAnalyzer:
                 'wallet': wallet_addr,
                 'runner_count': len(data['runners_hit']),
                 'runners_hit': data['runners_hit'],
-                'avg_professional_score': round(avg_professional_score, 2),
+                # ✅ UPDATED: 60/30/10 components
+                'avg_distance_to_ath_pct': round(avg_distance_to_ath, 2),
                 'avg_roi': round(avg_roi, 2),
-                'avg_entry_to_ath_multiplier': round(avg_entry_to_ath, 2) if avg_entry_to_ath else None,
+                'consistency_score': consistency_score,
+                'aggregate_score': round(aggregate_score, 2),
+                'tier': tier,  # ✅ ADDED
+                # Legacy fields (keep for compatibility)
+                'avg_professional_score': round(sum(data['professional_scores']) / len(data['professional_scores']), 2),
+                'avg_entry_to_ath_multiplier': round(sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']), 2) if data['entry_to_ath_multipliers'] else None,
                 'variance': round(variance, 2),
                 'consistency_grade': consistency_grade,
                 'roi_details': data['roi_details'][:5],
@@ -1312,9 +1508,23 @@ class WalletPumpAnalyzer:
             no_overlap_fallback = True
          
             for wallet_addr, data in wallet_hits.items():
-                avg_professional_score = sum(data['professional_scores']) / len(data['professional_scores'])
-                avg_roi = sum(r['roi_percent'] for r in data['roi_details']) / len(data['roi_details'])
-                avg_entry_to_ath = sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']) if data['entry_to_ath_multipliers'] else None
+                avg_distance_to_ath = sum(data['distance_to_ath_values']) / len(data['distance_to_ath_values']) if data['distance_to_ath_values'] else 0
+                avg_roi = sum(data['roi_multipliers']) / len(data['roi_multipliers']) if data['roi_multipliers'] else 0
+                
+                tokens_traded = list(data['runners_hit_addresses'])
+                consistency_score = self._calculate_consistency(wallet_addr, tokens_traded)
+                
+                aggregate_score = (
+                    0.60 * avg_distance_to_ath +
+                    0.30 * (avg_roi / 10) +
+                    0.10 * consistency_score
+                )
+                
+                tier = self._assign_tier(
+                    runner_count=len(data['runners_hit']),
+                    aggregate_score=aggregate_score,
+                    tokens_analyzed=len(runners_list)
+                )
              
                 if len(data['professional_scores']) > 1:
                     variance = statistics.variance(data['professional_scores'])
@@ -1343,9 +1553,13 @@ class WalletPumpAnalyzer:
                     'wallet': wallet_addr,
                     'runner_count': len(data['runners_hit']),
                     'runners_hit': data['runners_hit'],
-                    'avg_professional_score': round(avg_professional_score, 2),
+                    'avg_distance_to_ath_pct': round(avg_distance_to_ath, 2),
                     'avg_roi': round(avg_roi, 2),
-                    'avg_entry_to_ath_multiplier': round(avg_entry_to_ath, 2) if avg_entry_to_ath else None,
+                    'consistency_score': consistency_score,
+                    'aggregate_score': round(aggregate_score, 2),
+                    'tier': tier,
+                    'avg_professional_score': round(sum(data['professional_scores']) / len(data['professional_scores']), 2),
+                    'avg_entry_to_ath_multiplier': round(sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']), 2) if data['entry_to_ath_multipliers'] else None,
                     'variance': round(variance, 2),
                     'consistency_grade': consistency_grade,
                     'roi_details': data['roi_details'][:5],
@@ -1358,10 +1572,12 @@ class WalletPumpAnalyzer:
                     'no_overlap_fallback': True
                 })
          
-            smart_money.sort(key=lambda x: x['avg_professional_score'], reverse=True)
+            # ✅ UPDATED: Sort by aggregate score for fallback
+            smart_money.sort(key=lambda x: x['aggregate_score'], reverse=True)
         else:
+            # ✅ UPDATED: PRIMARY = runner count, SECONDARY = aggregate score
             smart_money.sort(
-                key=lambda x: (x['runner_count'], x['avg_professional_score'], -x['variance']),
+                key=lambda x: (x['runner_count'], x['aggregate_score']),
                 reverse=True
             )
      

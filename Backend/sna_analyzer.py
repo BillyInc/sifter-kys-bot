@@ -3,7 +3,7 @@ import numpy as np
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
-from tweet_extractor import TwitterTweetExtractor
+from twitter import TwitterTweetExtractor
 
 
 class SocialNetworkAnalyzer:

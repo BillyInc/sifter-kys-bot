@@ -667,3 +667,90 @@ def detect_multi_wallet_signals(token_address, wallets_buying):
         }
     
     return None
+# Add to tasks.py (after all existing functions)
+
+def rerank_all_watchlists():
+    """
+    Daily task: Rerank all users' watchlists
+    Run this via cron job at 2 AM
+    """
+    from services.watchlist_manager import WatchlistLeagueManager
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    
+    print("\n" + "="*80)
+    print("DAILY WATCHLIST RERANKING")
+    print("="*80)
+    
+    manager = WatchlistLeagueManager()
+    supabase = get_supabase_client()
+    
+    # Get all unique user_ids with wallets
+    result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select('user_id').execute()
+    user_ids = list(set(row['user_id'] for row in result.data))
+    
+    print(f"\n[RERANK] Processing {len(user_ids)} users...")
+    
+    success_count = 0
+    error_count = 0
+    
+    for user_id in user_ids:
+        try:
+            manager.rerank_user_watchlist(user_id)
+            print(f"  ✓ {user_id[:8]}...")
+            success_count += 1
+        except Exception as e:
+            print(f"  ✗ {user_id[:8]}...: {e}")
+            error_count += 1
+    
+    print(f"\n[RERANK] Complete: {success_count} success, {error_count} errors")
+    print("="*80 + "\n")
+    
+    # ADD THIS FUNCTION AT THE END OF tasks.py
+
+def track_weekly_performance():
+    """
+    Track weekly performance for all watchlist wallets
+    Run this ONCE PER WEEK (Sunday midnight)
+    
+    Stores each wallet's weekly performance in history table
+    Used for 4-week trend detection
+    """
+    from services.watchlist_manager import WatchlistLeagueManager
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    from datetime import datetime, timedelta
+    
+    print("\n" + "="*80)
+    print("WEEKLY PERFORMANCE TRACKING")
+    print("="*80)
+    
+    manager = WatchlistLeagueManager()
+    supabase = get_supabase_client()
+    
+    # Get all wallets from all users
+    result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select('*').execute()
+    wallets = result.data
+    
+    week_start = datetime.utcnow() - timedelta(days=7)
+    week_end = datetime.utcnow()
+    
+    for wallet in wallets:
+        wallet_address = wallet['wallet_address']
+        
+        # Calculate this week's performance
+        metrics = manager._refresh_wallet_metrics(wallet_address)
+        
+        # Store in history table
+        supabase.schema(SCHEMA_NAME).table('wallet_performance_history').insert({
+            'wallet_address': wallet_address,
+            'user_id': wallet['user_id'],
+            'week_start': week_start.isoformat(),
+            'week_end': week_end.isoformat(),
+            'runners_hit': metrics.get('runners_7d', 0),
+            'avg_roi': metrics.get('roi_7d', 0),
+            'position': wallet['position'],
+            'zone': wallet.get('zone', 'unknown'),
+            'professional_score': metrics.get('professional_score', 0),
+            'created_at': datetime.utcnow().isoformat()
+        }).execute()
+    
+    print(f"✅ Tracked {len(wallets)} wallets")
