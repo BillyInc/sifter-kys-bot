@@ -353,7 +353,7 @@ useEffect(() => {
               min_pump_count: 1,
               wallet_window_before: 35,
               wallet_window_after: 0,
-              mode: analysisType === 'pump_window' ? 'pump' : 'general',
+              mode: analysisType === 'general' ? 'pump' : 'general',
               min_roi_multiplier: 3.0
             }
           })
