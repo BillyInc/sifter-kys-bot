@@ -396,6 +396,8 @@ def add_wallet_to_watchlist():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# Find this function in routes/wallets.py and REPLACE it:
+
 @wallets_bp.route('/watchlist/get', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_wallet_watchlist():
@@ -409,16 +411,35 @@ def get_wallet_watchlist():
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
 
-        db = get_watchlist_db()
-        wallets = db.get_wallet_watchlist(user_id, tier)
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        
+        # SELECT with ALL new columns
+        query = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'wallet_address, tier, position, movement, positions_changed, '
+            'form, status, degradation_alerts, roi_7d, roi_30d, '
+            'runners_7d, runners_30d, win_rate_7d, last_trade_time, '
+            'professional_score, consistency_score, pump_count, '
+            'avg_distance_to_peak, avg_roi_to_peak, tokens_hit, '
+            'tags, notes, alert_enabled, alert_threshold_usd, '
+            'added_at, last_updated'
+        ).eq('user_id', user_id)
+        
+        if tier:
+            query = query.eq('tier', tier)
+        
+        # ORDER BY position
+        result = query.order('position').execute()
 
         return jsonify({
             'success': True,
-            'wallets': wallets,
-            'count': len(wallets)
+            'wallets': result.data,
+            'count': len(result.data)
         }), 200
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @wallets_bp.route('/watchlist/remove', methods=['POST', 'OPTIONS'])
@@ -501,6 +522,37 @@ def get_wallet_watchlist_stats():
         }), 200
 
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+# Add to routes/wallets.py (around line 400, after other watchlist routes)
+
+@wallets_bp.route('/watchlist/rerank', methods=['POST', 'OPTIONS'])
+@require_auth
+def rerank_watchlist():
+    """Manually trigger watchlist rerank"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = getattr(request, 'user_id', None) or request.json.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from services.watchlist_manager import WatchlistLeagueManager
+        manager = WatchlistLeagueManager()
+        
+        watchlist = manager.rerank_user_watchlist(user_id)
+        
+        return jsonify({
+            'success': True,
+            'watchlist': watchlist,
+            'message': 'Watchlist reranked successfully'
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Activity/notification endpoints continue...

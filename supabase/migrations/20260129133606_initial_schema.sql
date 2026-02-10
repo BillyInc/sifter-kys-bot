@@ -13,7 +13,7 @@ GRANT USAGE ON SCHEMA sifter_dev TO service_role;
 GRANT USAGE ON SCHEMA sifter_dev TO anon;
 
 -- ============================================
--- TABLES
+-- TABLE
 -- ============================================
 
 -- Users table (extends Supabase auth.users)
