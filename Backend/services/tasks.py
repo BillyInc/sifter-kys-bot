@@ -1,7 +1,8 @@
 from redis import Redis
+from rq import Queue
 import json
 import asyncio
-import os  # Add this
+import os
 
 
 def perform_wallet_analysis(data):
@@ -20,9 +21,8 @@ def perform_wallet_analysis(data):
 
 def analyze_single_token_parallel(token, user_id, parent_job_id):
     """Split ONE token's analysis across 5 workers"""
-    from flask import current_app
     redis = Redis(host='localhost', port=6379)
-    q = current_app.config['RQ_QUEUE']
+    q = Queue(connection=redis, default_timeout=600)
     
     print(f"\n[PARALLEL ANALYSIS] Splitting {token['ticker']} across workers...")
     
@@ -178,9 +178,8 @@ def analyze_single_token_parallel(token, user_id, parent_job_id):
 
 def analyze_multiple_tokens_parallel(tokens, user_id, parent_job_id):
     """Split multiple tokens - each token gets step-level parallelization"""
-    from flask import current_app
     redis = Redis(host='localhost', port=6379)
-    q = current_app.config['RQ_QUEUE']
+    q = Queue(connection=redis, default_timeout=600)
     
     print(f"\n[MULTI-TOKEN PARALLEL] Analyzing {len(tokens)} tokens...")
     
@@ -544,8 +543,8 @@ def fetch_runner_history_batch(data):
 
 def preload_trending_cache_parallel():
     """Split cache warmup across workers"""
-    from flask import current_app
-    q = current_app.config['RQ_QUEUE']
+    redis = Redis(host='localhost', port=6379)
+    q = Queue(connection=redis, default_timeout=600)
     
     print("\n[CACHE WARMUP] Starting parallel cache preload...")
     
@@ -635,8 +634,7 @@ def monitor_wallet_activity(wallet_address):
     from flask import current_app
     
     monitor = WalletActivityMonitor(
-        birdeye_api_key=os.environ.get('BIRDEYE_API_KEY')
-,
+        birdeye_api_key=os.environ.get('BIRDEYE_API_KEY'),
         telegram_notifier=current_app.config.get('TELEGRAM_NOTIFIER')
     )
     
@@ -887,7 +885,9 @@ def send_weekly_digests():
     """
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     from services.watchlist_manager import WatchlistLeagueManager
-    from flask import current_app
+    
+    redis = Redis(host='localhost', port=6379)
+    q = Queue(connection=redis, default_timeout=600)
     
     print("\n" + "="*80)
     print("WEEKLY DIGEST ALERTS")
@@ -934,7 +934,6 @@ def send_weekly_digests():
     
     # Queue batches across workers
     try:
-        q = current_app.config['RQ_QUEUE']
         for batch in alerts_batches:
             q.enqueue('tasks.send_batch_telegram_alerts', batch)
         
