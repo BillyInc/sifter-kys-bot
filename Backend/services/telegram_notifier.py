@@ -29,6 +29,7 @@ class TelegramNotifier:
         self.supabase = get_supabase_client()
         self.schema = SCHEMA_NAME
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        self.api_url = f"https://api.telegram.org/bot{bot_token}"
         
         print(f"[TELEGRAM] Notifier initialized on schema: {self.schema}")
     
@@ -60,6 +61,10 @@ class TelegramNotifier:
         
         result = self._make_request('sendMessage', data)
         return result.get('ok', False)
+
+    def send_raw_message(self, chat_id: str, text: str, reply_markup: dict = None) -> bool:
+        """Alias for send_message - for backward compatibility."""
+        return self.send_message(chat_id, text, reply_markup)
 
     # =========================================================================
     # USER LINKING & CONNECTION
@@ -154,31 +159,51 @@ class TelegramNotifier:
     # ALERT FORMATTING & DELIVERY
     # =========================================================================
 
-    def send_trade_alert(self, user_id: str, alert_data: Dict) -> bool:
-        """Formatted alert for individual wallet trades."""
+    def send_trade_alert(self, user_id: str, trades: List[Dict]) -> bool:
+        """Sends a single or multi-wallet formatted trade alert."""
         chat_id = self.get_user_chat_id(user_id)
-        if not chat_id: return False
+        if not chat_id:
+            return False
         
-        w, a, t, tr = alert_data['wallet'], alert_data['action'], alert_data['token'], alert_data['trade']
-        emoji = "🟢" if a == 'buy' else "🔴"
+        is_multi = len(trades) > 1
+        t = trades[0]['trade']
+        ca = t.get('token_address')
+        total_usd = sum(item['trade']['amount_usd'] for item in trades)
+        
+        # UI Layout with Single Wallet Fallback
+        header = "🚨 <b>MULTI-WALLET SIGNAL</b>" if is_multi else "🔥 <b>Tier S Wallet Activity</b>"
         
         msg = (
-            f"{emoji} <b>WALLET ALERT - Pos #{w.get('position', '?')}</b>\n\n"
-            f"<b>Wallet:</b> <code>{w['address'][:8]}...{w['address'][-6:]}</code>\n"
-            f"<b>Tier:</b> {w.get('tier', 'C')} | Score: {w.get('professional_score', 0)}\n\n"
-            f"<b>ACTION: {a.upper()} ${t['symbol']}</b>\n"
-            f"<b>Amount:</b> ${tr['amount_usd']:,.2f}\n"
-            f"<b>Price:</b> ${tr['price']:.8f}\n\n"
-            f"📊 ROI (30d): {w.get('roi_30d', 0)}% | {w.get('runners_30d', 0)} runners"
+            f"{header}\n\n"
+            f"<b>Token:</b> ${t.get('symbol')}\n"
+            f"<b>Total Buy:</b> ${total_usd:,.2f}\n"
+            f"<b>CA:</b> <code>{ca}</code>\n\n"
         )
         
-        buttons = {'inline_keyboard': [
-            [{'text': '📋 Copy Photon', 'callback_data': f'copy_photon:{t["address"]}'},
-             {'text': '📋 Copy Bonkbot', 'callback_data': f'copy_bonkbot:{t["address"]}'}],
-            [{'text': '📊 View Chart', 'url': alert_data.get('chart_url', f'https://dexscreener.com/solana/{t["address"]}')},
-             {'text': '❌ Dismiss', 'callback_data': 'dismiss'}]
-        ]}
-        return self.send_message(chat_id, msg, buttons)
+        if is_multi:
+            msg += "<b>Wallets:</b>\n" + "\n".join([
+                f"• {x['wallet']['address'][:6]}... (Tier {x['wallet']['tier']})" 
+                for x in trades
+            ])
+        else:
+            msg += f"<b>Wallet:</b> <code>{trades[0]['wallet']['address']}</code>"
+        
+        buttons = {
+            'inline_keyboard': [
+                [
+                    {'text': '🤖 Photon', 'callback_data': f'cp_p:{ca}'},
+                    {'text': '🤖 Bonkbot', 'callback_data': f'cp_b:{ca}'}
+                ],
+                [{'text': '📊 View Chart', 'url': f'https://dexscreener.com/solana/{ca}'}]
+            ]
+        }
+        
+        return self._make_request('sendMessage', {
+            'chat_id': chat_id,
+            'text': msg,
+            'parse_mode': 'HTML',
+            'reply_markup': buttons
+        }).get('ok', False)
 
     def send_multi_wallet_signal_alert(self, user_id: str, signal: Dict) -> bool:
         """Alert when multiple wallets in your watchlist buy the same token."""
@@ -207,6 +232,117 @@ class TelegramNotifier:
         ]]}
         return self.send_message(chat_id, msg, buttons)
 
+    def send_wallet_alert(self, user_id: str, alert_data: Dict, activity_id: int = None) -> bool:
+        """Formatted alert for individual wallet trades (legacy method for backward compatibility)."""
+        # Convert to new format and use send_trade_alert
+        trades = [{
+            'wallet': alert_data.get('wallet', {}),
+            'trade': alert_data.get('trade', {})
+        }]
+        return self.send_trade_alert(user_id, trades)
+
+    # =========================================================================
+    # SETTINGS MANAGEMENT
+    # =========================================================================
+
+    def get_user_settings(self, user_id: str) -> Dict:
+        """Fetch user settings from database."""
+        try:
+            result = self._table('user_settings').select(
+                'min_buy_usd, preferred_bot'
+            ).eq('user_id', user_id).limit(1).execute()
+            
+            if result.data:
+                return result.data[0]
+            return {'min_buy_usd': 50.0, 'preferred_bot': 'photon'}
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Error fetching user settings: {e}")
+            return {'min_buy_usd': 50.0, 'preferred_bot': 'photon'}
+
+    def update_user_bot_pref(self, user_id: str, bot: str) -> bool:
+        """Update user's preferred bot."""
+        try:
+            # Check if settings exist
+            existing = self._table('user_settings').select('user_id').eq(
+                'user_id', user_id
+            ).limit(1).execute()
+            
+            if existing.data:
+                # Update existing
+                self._table('user_settings').update({
+                    'preferred_bot': bot
+                }).eq('user_id', user_id).execute()
+            else:
+                # Insert new
+                self._table('user_settings').insert({
+                    'user_id': user_id,
+                    'preferred_bot': bot,
+                    'min_buy_usd': 50.0
+                }).execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Error updating bot preference: {e}")
+            return False
+
+    def update_min_buy(self, user_id: str, min_buy_usd: float) -> bool:
+        """Update user's minimum buy threshold."""
+        try:
+            # Check if settings exist
+            existing = self._table('user_settings').select('user_id').eq(
+                'user_id', user_id
+            ).limit(1).execute()
+            
+            if existing.data:
+                # Update existing
+                self._table('user_settings').update({
+                    'min_buy_usd': min_buy_usd
+                }).eq('user_id', user_id).execute()
+            else:
+                # Insert new
+                self._table('user_settings').insert({
+                    'user_id': user_id,
+                    'min_buy_usd': min_buy_usd,
+                    'preferred_bot': 'photon'
+                }).execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Error updating min buy: {e}")
+            return False
+
+    def show_settings(self, chat_id: str, user_id: str) -> bool:
+        """Interactive settings menu with toggle buttons."""
+        settings = self.get_user_settings(user_id)
+        pref = settings.get('preferred_bot', 'photon')
+        
+        # UI Toggles using Emojis
+        p_tick = "✅ " if pref == 'photon' else ""
+        b_tick = "✅ " if pref == 'bonkbot' else ""
+        
+        msg = (
+            f"⚙️ <b>Settings</b>\n\n"
+            f"Min Buy Alert: ${settings.get('min_buy_usd', 50)} USD\n"
+            f"Default Bot: {pref.capitalize()}"
+        )
+        
+        buttons = {
+            'inline_keyboard': [
+                [
+                    {'text': f"{p_tick}Photon", 'callback_data': 'set_bot:photon'},
+                    {'text': f"{b_tick}Bonkbot", 'callback_data': 'set_bot:bonkbot'}
+                ],
+                [{'text': "💰 Change Min Buy", 'callback_data': 'set_min_buy'}]
+            ]
+        }
+        
+        return self._make_request('sendMessage', {
+            'chat_id': chat_id,
+            'text': msg,
+            'parse_mode': 'HTML',
+            'reply_markup': buttons
+        }).get('ok', False)
+
     # =========================================================================
     # BOT UPDATE HANDLERS (MESSAGE & CALLBACK)
     # =========================================================================
@@ -223,10 +359,64 @@ class TelegramNotifier:
         chat_id = str(message['chat']['id'])
         text = message.get('text', '').strip()
         
+        # Handle replies to Min Buy prompt
+        if 'reply_to_message' in message:
+            replied_to_text = message['reply_to_message'].get('text', '')
+            if "Enter new Min Buy" in replied_to_text:
+                try:
+                    # Get user_id from telegram_chat_id
+                    result = self._table('telegram_users').select('user_id').eq(
+                        'telegram_chat_id', chat_id
+                    ).limit(1).execute()
+                    
+                    if result.data:
+                        user_id = result.data[0]['user_id']
+                        new_val = float(text.replace('$', '').replace(',', '').strip())
+                        
+                        if new_val < 0:
+                            self.send_message(chat_id, "❌ <b>Amount must be positive.</b>")
+                            return
+                        
+                        self.update_min_buy(user_id, new_val)
+                        self.send_message(chat_id, f"✅ <b>Threshold set to ${new_val:,.2f}</b>")
+                        self.show_settings(chat_id, user_id)
+                    else:
+                        self.send_message(chat_id, "❌ <b>Not connected.</b>")
+                except ValueError:
+                    self.send_message(chat_id, "❌ <b>Invalid number. Try again.</b>")
+                return
+        
         if text == '/start':
             self.send_message(chat_id, (
                 "👋 <b>Welcome to Sifter KYS!</b>\n\n"
-                "To connect, click 'Generate Code' in your dashboard and paste it here."
+                "To connect, click 'Generate Code' in your dashboard and paste it here.\n\n"
+                "Commands:\n"
+                "/settings - Configure your alerts\n"
+                "/help - Show this message"
+            ))
+        elif text == '/settings':
+            # Get user_id from telegram_chat_id
+            try:
+                result = self._table('telegram_users').select('user_id').eq(
+                    'telegram_chat_id', chat_id
+                ).limit(1).execute()
+                
+                if result.data:
+                    user_id = result.data[0]['user_id']
+                    self.show_settings(chat_id, user_id)
+                else:
+                    self.send_message(chat_id, "❌ <b>Not connected.</b> Please link your account first.")
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Error in /settings: {e}")
+                self.send_message(chat_id, "❌ <b>Error loading settings.</b>")
+        elif text == '/help':
+            self.send_message(chat_id, (
+                "👋 <b>Sifter KYS Bot</b>\n\n"
+                "<b>Commands:</b>\n"
+                "/start - Start the bot\n"
+                "/settings - Configure alerts\n"
+                "/help - Show this message\n\n"
+                "To link your account, generate a code in the dashboard and send it here."
             ))
         elif len(text) == 6 and text.isalnum():
             user_id = self.verify_connection_code(
@@ -235,21 +425,118 @@ class TelegramNotifier:
                 message['from'].get('first_name')
             )
             if user_id:
-                self.send_message(chat_id, "✅ <b>Success!</b> Your account is now linked.")
+                self.send_message(chat_id, "✅ <b>Success!</b> Your account is now linked.\n\nUse /settings to configure your alerts.")
             else:
                 self.send_message(chat_id, "❌ <b>Invalid or Expired Code.</b>")
 
     def _handle_callback(self, query: dict):
-        data = query['data']
+        """The 'Toast' Feedback and Auto-Copy Command."""
+        query_id = query['id']
         chat_id = str(query['from']['id'])
+        data = query['data']
         
-        if data.startswith('copy_photon:'):
+        # Get user_id for settings callbacks
+        user_id = None
+        try:
+            result = self._table('telegram_users').select('user_id').eq(
+                'telegram_chat_id', chat_id
+            ).limit(1).execute()
+            if result.data:
+                user_id = result.data[0]['user_id']
+        except:
+            pass
+        
+        # 1. Handle Trade Copy Buttons
+        if data.startswith('cp_p:') or data.startswith('cp_b:'):
+            ca = data.split(':', 1)[1]
+            bot_type = "Photon" if "cp_p:" in data else "Bonkbot"
+            cmd = f"/buy {ca}" if bot_type == "Photon" else f"{ca}"
+            
+            # Trigger Top-Bar Toast
+            self._make_request('answerCallbackQuery', {
+                'callback_query_id': query_id,
+                'text': f"✅ {bot_type} command ready! Tap below.",
+                'show_alert': False
+            })
+            
+            # Send Tappable Command
+            self._make_request('sendMessage', {
+                'chat_id': chat_id,
+                'text': f"<code>{cmd}</code>",
+                'parse_mode': 'HTML'
+            })
+        
+        # 2. Handle Settings Toggles
+        elif data.startswith('set_bot:'):
+            new_bot = data.split(':')[1]
+            if user_id:
+                self.update_user_bot_pref(user_id, new_bot)
+                self._make_request('answerCallbackQuery', {
+                    'callback_query_id': query_id,
+                    'text': f"✅ Default bot: {new_bot.capitalize()}",
+                    'show_alert': False
+                })
+                # Refresh the settings menu to show the new checkmark
+                self.show_settings(chat_id, user_id)
+            else:
+                self._make_request('answerCallbackQuery', {
+                    'callback_query_id': query_id,
+                    'text': "❌ Not connected",
+                    'show_alert': True
+                })
+        
+        elif data == 'set_min_buy' or data == 'prompt_min_buy':
+            self._make_request('answerCallbackQuery', {'callback_query_id': query_id})
+            # Send message with force reply to capture user's numeric input
+            self._make_request('sendMessage', {
+                'chat_id': chat_id,
+                'text': "⌨️ <b>Enter new Min Buy USD amount</b>\n\nExample: 100",
+                'parse_mode': 'HTML',
+                'reply_markup': {'force_reply': True}
+            })
+        
+        # Handle legacy callback formats
+        elif data.startswith('copy_p:') or data.startswith('copy_b:'):
+            bot_type = "Photon" if data.startswith('copy_p:') else "Bonkbot"
+            ca = data.split(':', 1)[1]
+            cmd = f"/buy {ca}" if bot_type == "Photon" else f"{ca}"
+            
+            self._make_request('answerCallbackQuery', {
+                'callback_query_id': query_id,
+                'text': f"✅ {bot_type} command ready! Tap below to copy.",
+                'show_alert': False
+            })
+            
+            self._make_request('sendMessage', {
+                'chat_id': chat_id,
+                'text': f"<code>{cmd}</code>",
+                'parse_mode': 'HTML'
+            })
+        elif data.startswith('copy_photon:'):
             addr = data.split(':')[1]
+            self._make_request('answerCallbackQuery', {
+                'callback_query_id': query_id,
+                'text': "✅ Photon command ready! Tap below to copy.",
+                'show_alert': False
+            })
             self.send_message(chat_id, f"📋 <b>Photon:</b>\n<code>/buy {addr}</code>")
+        elif data.startswith('copy_token:'):
+            addr = data.split(':')[1]
+            self._make_request('answerCallbackQuery', {
+                'callback_query_id': query_id,
+                'text': "✅ Address copied!",
+                'show_alert': False
+            })
+            self.send_message(chat_id, f"📋 <b>Token Address:</b>\n<code>{addr}</code>")
         elif data == 'dismiss':
             self._make_request('deleteMessage', {
                 'chat_id': chat_id, 
                 'message_id': query['message']['message_id']
             })
-        
-        self._make_request('answerCallbackQuery', {'callback_query_id': query['id']})
+            self._make_request('answerCallbackQuery', {'callback_query_id': query_id})
+        else:
+            self._make_request('answerCallbackQuery', {'callback_query_id': query_id})
+
+    def handle_callback(self, query: Dict):
+        """Public method for handling callbacks (for backward compatibility)."""
+        self._handle_callback(query)

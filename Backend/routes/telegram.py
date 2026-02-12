@@ -273,23 +273,34 @@ def telegram_webhook():
             print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
             return jsonify({'error': 'Unauthorized'}), 401
     
-    # ✅ Queue the update for background processing
-    from flask import current_app
-    q = current_app.config.get('RQ_QUEUE')
-    
-    if q:
-        # Process in background worker
-        q.enqueue('tasks.process_telegram_update', update)
-        print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
-    else:
-        # Fallback: Process in thread (for local dev without Redis)
-        import threading
+    # RECOMMENDATION: Handle Button Clicks (Callback Queries)
+    if 'callback_query' in update:
+        # Pass to notifier to trigger the Toast and copyable command
         threading.Thread(
-            target=telegram_notifier.process_bot_updates,
-            args=([update],),
+            target=telegram_notifier._handle_callback,
+            args=(update['callback_query'],),
             daemon=True
         ).start()
-        print(f"[TELEGRAM WEBHOOK] ✓ Update threaded")
+        return jsonify({'ok': True}), 200
+    
+    # RECOMMENDATION: Handle Standard Messages
+    if 'message' in update:
+        # ✅ Queue the update for background processing
+        from flask import current_app
+        q = current_app.config.get('RQ_QUEUE')
+        
+        if q:
+            # Process in background worker
+            q.enqueue('tasks.process_telegram_update', update)
+            print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
+        else:
+            # Fallback: Process in thread (for local dev without Redis)
+            threading.Thread(
+                target=telegram_notifier.process_bot_updates,
+                args=([update],),
+                daemon=True
+            ).start()
+            print(f"[TELEGRAM WEBHOOK] ✓ Update threaded")
     
     # ✅ Respond immediately (Telegram requires <1s response)
     return jsonify({'ok': True}), 200

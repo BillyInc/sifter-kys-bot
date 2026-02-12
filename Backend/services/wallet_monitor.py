@@ -43,6 +43,10 @@ class WalletActivityMonitor:
         # Telegram notifier for sending alerts
         self.telegram_notifier = telegram_notifier
 
+        # NEW: Multi-wallet signal buffering
+        self.pending_signals = {}  # {token_address: [list_of_trades]}
+        self.buffer_lock = threading.Lock()
+
         telegram_status = "Enabled" if telegram_notifier else "Disabled"
         print(f"""
 ╔══════════════════════════════════════════════════════════════════╗
@@ -160,6 +164,20 @@ class WalletActivityMonitor:
             print(f"[MONITOR] Error getting monitored wallets: {e}")
             return []
 
+    def _get_user_settings(self, user_id: str) -> Dict:
+        """Fetch user settings from database."""
+        try:
+            result = self._table('user_settings').select(
+                'min_buy_usd'
+            ).eq('user_id', user_id).limit(1).execute()
+            
+            if result.data:
+                return result.data[0]
+            return {'min_buy_usd': 50.0}
+        except Exception as e:
+            print(f"[MONITOR] Error fetching user settings: {e}")
+            return {'min_buy_usd': 50.0}
+
     def _check_wallet_activity(self, wallet_info):
         """Check a single wallet for new transactions - ENHANCED"""
         wallet_address = wallet_info['wallet_address']
@@ -216,11 +234,9 @@ class WalletActivityMonitor:
                 if new_activities:
                     self._create_notifications_for_wallet(wallet_address, new_activities)
 
-                # Check for multi-wallet signals
+                # Check for multi-wallet signals using buffering system
                 for token_address, wallets_buying in tokens_bought.items():
-                    signal = self._detect_multi_wallet_signal(token_address, wallets_buying)
-                    if signal:
-                        self._create_signal_alert(signal)
+                    self._buffer_multi_wallet_signal(token_address, wallets_buying, wallet_info)
 
             self._update_monitor_status(
                 wallet_address,
@@ -237,6 +253,45 @@ class WalletActivityMonitor:
                 success=False,
                 error_message=str(e)
             )
+
+    def _buffer_multi_wallet_signal(self, token_address: str, wallets_buying: List[Dict], wallet_info: Dict):
+        """Buffer multi-wallet signals with 60s window for grouping."""
+        with self.buffer_lock:
+            if token_address not in self.pending_signals:
+                self.pending_signals[token_address] = []
+                # Start 60s window to group other watchlist buys
+                threading.Timer(60.0, self._flush_multi_signal, [token_address]).start()
+            
+            for wallet_buy in wallets_buying:
+                self.pending_signals[token_address].append({
+                    'wallet': wallet_buy['wallet'],
+                    'tier': wallet_buy['tier'],
+                    'usd_value': wallet_buy['usd_value']
+                })
+
+    def _flush_multi_signal(self, token_address: str):
+        """Sends the accumulated signals after the 60s window."""
+        with self.buffer_lock:
+            trades = self.pending_signals.pop(token_address, [])
+        
+        if len(trades) >= 2:
+            # Calculate signal strength
+            signal_strength = 0
+            tier_weights = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
+
+            for trade in trades:
+                signal_strength += tier_weights.get(trade['tier'], 1)
+
+            # Strong signal if 2+ wallets AND combined strength ≥ 5
+            if signal_strength >= 5:
+                signal = {
+                    'token_address': token_address,
+                    'signal_strength': signal_strength,
+                    'wallet_count': len(trades),
+                    'wallets': trades,
+                    'timestamp': int(time.time())
+                }
+                self._create_signal_alert(signal)
 
     def _fetch_wallet_all_trades(self, wallet_address, after_time, before_time):
         """Fetch ALL trades (buys AND sells) for a wallet"""
@@ -360,6 +415,13 @@ class WalletActivityMonitor:
         """Queue Telegram alert for background sending"""
         if not self.telegram_notifier:
             return
+        
+        # ✅ Custom Threshold Check
+        if alert_type == 'trade':
+            settings = self._get_user_settings(user_id)
+            if alert_data.get('usd_value', 0) < settings.get('min_buy_usd', 50.0):
+                print(f"    ⏭️ Trade below user threshold: ${alert_data.get('usd_value')}")
+                return
         
         # ✅ Use RQ queue if available (production)
         try:

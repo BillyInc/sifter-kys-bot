@@ -1,4 +1,4 @@
-"""Watchlist database using Supabase."""
+"""Watchlist database using Supabase - FIXED VERSION."""
 from datetime import datetime, timedelta
 import json
 from typing import List, Dict, Optional
@@ -189,6 +189,7 @@ class WatchlistDatabase:
             if isinstance(tokens_hit, str):
                 tokens_hit = tokens_hit.split(',') if tokens_hit else []
 
+            # ✅ FIX: Set default alert settings when adding wallet
             self._table('wallet_watchlist').upsert({
                 'user_id': user_id,
                 'wallet_address': wallet_data['wallet_address'],
@@ -200,6 +201,9 @@ class WatchlistDatabase:
                 'tokens_hit': tokens_hit,
                 'notes': wallet_data.get('notes', ''),
                 'tags': tags,
+                # ✅ ADD: Default alert settings
+                'alert_enabled': wallet_data.get('alert_enabled', True),
+                'alert_threshold_usd': wallet_data.get('alert_threshold_usd', 100),
                 'last_updated': datetime.utcnow().isoformat()
             }, on_conflict='user_id,wallet_address').execute()
 
@@ -208,6 +212,8 @@ class WatchlistDatabase:
 
         except Exception as e:
             print(f"[WATCHLIST DB] Error adding wallet: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def get_wallet_watchlist(self, user_id: str, tier_filter: str = None) -> List[Dict]:
@@ -330,11 +336,11 @@ class WatchlistDatabase:
 
     def get_premier_league_table(self, user_id: str) -> Dict:
         """
-        Get watchlist as Premier League-style table with rankings, form, and status.
-        Returns wallets ranked by professional_score with movement tracking.
+        ✅ FIXED: Get watchlist as Premier League-style table.
+        Now includes ALL wallet fields including alert settings.
         """
         try:
-            # Get current watchlist
+            # Get current watchlist with ALL fields
             result = self._table('wallet_watchlist').select('*').eq('user_id', user_id).execute()
             
             current_wallets = result.data
@@ -346,8 +352,15 @@ class WatchlistDatabase:
                     'stats': {}
                 }
             
-            # Sort by avg_roi_to_peak (or professional score if you add that field)
-            current_wallets.sort(key=lambda x: x.get('avg_roi_to_peak', 0), reverse=True)
+            # ✅ FIX: Sort by consistency_score first, then avg_roi_to_peak
+            # This ensures newly added wallets don't end up at the bottom
+            current_wallets.sort(
+                key=lambda x: (
+                    x.get('consistency_score', 0),
+                    x.get('avg_roi_to_peak', 0)
+                ), 
+                reverse=True
+            )
             
             # Get yesterday's positions for movement tracking
             yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -399,14 +412,13 @@ class WatchlistDatabase:
                     'critical' if any(a.get('severity') == 'critical' for a in degradation_alerts) else 'warning'
                 )
                 
-                table_wallets.append({
+                # ✅ FIX: Include ALL wallet fields plus table-specific fields
+                table_wallet = dict(wallet)  # Copy all original fields
+                table_wallet.update({
                     'position': idx,
-                    'wallet_address': wallet_address,
-                    'tier': wallet.get('tier', 'C'),
-                    'professional_score': wallet.get('avg_roi_to_peak', 0),  # Using ROI as proxy for now
+                    'professional_score': wallet.get('avg_roi_to_peak', 0),
                     'runners_30d': wallet.get('pump_count', 0),
                     'roi_30d': wallet.get('avg_roi_to_peak', 0),
-                    'consistency_score': wallet.get('consistency_score', 0),
                     'movement': movement,
                     'positions_changed': abs(positions_changed),
                     'zone': zone,
@@ -414,16 +426,17 @@ class WatchlistDatabase:
                     'degradation_alerts': degradation_alerts,
                     'form': form
                 })
+                table_wallets.append(table_wallet)
             
             # Calculate stats
             avg_roi = sum(w['roi_30d'] for w in table_wallets) / len(table_wallets) if table_wallets else 0
             
             return {
                 'wallets': table_wallets,
-                'promotion_queue': [],  # Will implement later
+                'promotion_queue': [],
                 'stats': {
                     'avg_watchlist_roi': round(avg_roi, 2),
-                    'platform_avg_roi': 234,  # Get from platform stats
+                    'platform_avg_roi': 234,
                     'performance_vs_platform': round(avg_roi - 234, 2)
                 }
             }
@@ -438,11 +451,8 @@ class WatchlistDatabase:
         """
         Calculate form based on last 5 wallet activities.
         Returns list like: ['win', 'win', 'neutral', 'win', 'loss']
-        
-        Uses wallet_activity table to get recent trades and determine performance.
         """
         try:
-            # Get last 5 activities for this wallet
             result = self._table('wallet_activity').select(
                 'side, usd_value, block_time, token_ticker'
             ).eq('wallet_address', wallet_address).order(
@@ -452,15 +462,10 @@ class WatchlistDatabase:
             activities = result.data
             
             if not activities or len(activities) == 0:
-                # No activity - return neutral
                 return ['neutral'] * 5
             
             form = []
             
-            # Simple heuristic: 
-            # - Large buys (>$1000) = win (🟢)
-            # - Small trades ($100-$1000) = neutral (⚪)
-            # - Very small or sells = loss (🔴)
             for activity in activities:
                 usd_value = activity.get('usd_value', 0) or 0
                 side = activity.get('side', '').lower()
@@ -470,12 +475,10 @@ class WatchlistDatabase:
                 elif side == 'buy' and usd_value > 100:
                     form.append('neutral')
                 elif side == 'sell':
-                    # Could enhance: check if profitable sell
                     form.append('loss')
                 else:
                     form.append('neutral')
             
-            # Pad to 5 if less than 5 activities
             while len(form) < 5:
                 form.append('neutral')
             
@@ -483,34 +486,27 @@ class WatchlistDatabase:
             
         except Exception as e:
             print(f"[WATCHLIST DB] Error calculating form: {e}")
-            # Return neutral form if error
             return ['neutral'] * 5
 
     def _check_degradation(self, current_wallet: Dict, old_data: Dict) -> List[Dict]:
-        """
-        Check if wallet is degrading.
-        Returns list of alert objects with severity and message.
-        """
+        """Check if wallet is degrading."""
         alerts = []
         
         current_score = current_wallet.get('avg_roi_to_peak', 0) or 0
         old_score = old_data.get('score', current_score)
         score_drop = old_score - current_score
         
-        # Red flag: Score dropped significantly
         if score_drop > 20:
             alerts.append({
                 'severity': 'critical',
                 'message': f'ROI dropped from {old_score:.0f}% → {current_score:.0f}%'
             })
-        # Orange flag: Moderate drop
         elif score_drop > 10:
             alerts.append({
                 'severity': 'warning',
                 'message': f'ROI declined by {score_drop:.0f}%'
             })
         
-        # Yellow flag: No runners
         pump_count = current_wallet.get('pump_count', 0) or 0
         if pump_count == 0:
             alerts.append({
@@ -518,7 +514,6 @@ class WatchlistDatabase:
                 'message': 'No runner hits in recent period'
             })
         
-        # Check for dormancy (no recent activity)
         last_updated = current_wallet.get('last_updated')
         if last_updated:
             try:
@@ -536,16 +531,12 @@ class WatchlistDatabase:
         return alerts
 
     def save_position_snapshot(self, user_id: str) -> bool:
-        """
-        Save current positions to history table.
-        Called by daily cron job.
-        """
+        """Save current positions to history table."""
         try:
             table_data = self.get_premier_league_table(user_id)
             
             today = datetime.utcnow().date().isoformat()
             
-            # Insert snapshots for each wallet
             snapshots = []
             for wallet in table_data['wallets']:
                 snapshots.append({
@@ -557,12 +548,11 @@ class WatchlistDatabase:
                     'professional_score': wallet['professional_score'],
                     'runners_30d': wallet['runners_30d'],
                     'roi_30d': wallet['roi_30d'],
-                    'form_score': 0,  # Could calculate average form score
+                    'form_score': 0,
                     'consistency_score': wallet['consistency_score']
                 })
             
             if snapshots:
-                # Upsert to handle duplicates
                 self._table('wallet_performance_history').upsert(
                     snapshots,
                     on_conflict='user_id,wallet_address,date'
