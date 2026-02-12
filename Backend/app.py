@@ -22,12 +22,14 @@ def get_rate_limit_key():
 
 def create_app() -> Flask:
     """Create and configure the Flask application."""
+    
     app = Flask(__name__)
     CORS(app, resources={
         r"/*": {
-            "origins": "*",
+            "origins": ["http://localhost:5173", "http://localhost:3000"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            "allow_headers": ["Content-Type", "Authorization"]
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True
         }
     })
     
@@ -57,7 +59,7 @@ def create_app() -> Flask:
     app.register_blueprint(watchlist_bp)
     app.register_blueprint(wallets_bp)
     app.register_blueprint(health_bp)
-    app.register_blueprint(telegram_bp)
+    app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
     
     # Initialize Redis and RQ
     redis_conn = Redis(host='localhost', port=6379, db=0)

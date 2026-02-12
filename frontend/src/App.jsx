@@ -9,6 +9,7 @@ import WalletReplacementModal from './WalletReplacementModal';
 import Auth from './components/Auth';
 import { useAuth } from './contexts/AuthContext';
 import AnalysisSettings from './Analysis_Setting.jsx';
+import { supabase } from './lib/supabase'; // Adjust path if your lib folder is elsewhere
 
 // ========== WALLET RESULT CARD COMPONENT ==========
 const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
@@ -2381,7 +2382,10 @@ export default function SifterKYS() {
             </div>
 
             {activeSettingsTab === 'telegram' && (
-              <TelegramSettings userId={userId} apiUrl={API_URL} />
+              <TelegramSettings 
+                userId={user?.id} 
+                apiUrl={import.meta.env.VITE_API_URL} 
+              />
             )}
           </div>
         )}
