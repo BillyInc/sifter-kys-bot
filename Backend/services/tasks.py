@@ -1,7 +1,8 @@
 from redis import Redis
+from rq import Queue
 import json
 import asyncio
-import os  # Add this
+import os
 
 
 def perform_wallet_analysis(data):
@@ -20,9 +21,8 @@ def perform_wallet_analysis(data):
 
 def analyze_single_token_parallel(token, user_id, parent_job_id):
     """Split ONE token's analysis across 5 workers"""
-    from flask import current_app
     redis = Redis(host='localhost', port=6379)
-    q = current_app.config['RQ_QUEUE']
+    q = Queue(connection=redis, default_timeout=600)
     
     print(f"\n[PARALLEL ANALYSIS] Splitting {token['ticker']} across workers...")
     
@@ -178,9 +178,8 @@ def analyze_single_token_parallel(token, user_id, parent_job_id):
 
 def analyze_multiple_tokens_parallel(tokens, user_id, parent_job_id):
     """Split multiple tokens - each token gets step-level parallelization"""
-    from flask import current_app
     redis = Redis(host='localhost', port=6379)
-    q = current_app.config['RQ_QUEUE']
+    q = Queue(connection=redis, default_timeout=600)
     
     print(f"\n[MULTI-TOKEN PARALLEL] Analyzing {len(tokens)} tokens...")
     
@@ -544,8 +543,8 @@ def fetch_runner_history_batch(data):
 
 def preload_trending_cache_parallel():
     """Split cache warmup across workers"""
-    from flask import current_app
-    q = current_app.config['RQ_QUEUE']
+    redis = Redis(host='localhost', port=6379)
+    q = Queue(connection=redis, default_timeout=600)
     
     print("\n[CACHE WARMUP] Starting parallel cache preload...")
     
@@ -635,8 +634,7 @@ def monitor_wallet_activity(wallet_address):
     from flask import current_app
     
     monitor = WalletActivityMonitor(
-        birdeye_api_key=os.environ.get('BIRDEYE_API_KEY')
-,
+        birdeye_api_key=os.environ.get('BIRDEYE_API_KEY'),
         telegram_notifier=current_app.config.get('TELEGRAM_NOTIFIER')
     )
     
@@ -754,3 +752,198 @@ def track_weekly_performance():
         }).execute()
     
     print(f"✅ Tracked {len(wallets)} wallets")
+    
+    
+def process_telegram_update(update_data):
+    """
+    Background worker for processing Telegram updates
+    Keeps webhook response time <100ms
+    """
+    from services.telegram_notifier import TelegramNotifier
+    
+    print(f"[TELEGRAM WORKER] Processing update...")
+    
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    if not bot_token:
+        print("[TELEGRAM WORKER] No bot token configured")
+        return
+    
+    notifier = TelegramNotifier(bot_token)
+    
+    try:
+        notifier.process_bot_updates([update_data])
+        print(f"[TELEGRAM WORKER] ✓ Update processed")
+        return {'success': True}
+    except Exception as e:
+        print(f"[TELEGRAM WORKER] ✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'error': str(e)}
+
+
+def send_telegram_alert_async(user_id, alert_type, alert_data):
+    """
+    Background worker for sending Telegram alerts
+    Used by wallet monitor to avoid blocking
+    """
+    from services.telegram_notifier import TelegramNotifier
+    
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    if not bot_token:
+        print("[TELEGRAM ALERT] No bot token configured")
+        return
+    
+    notifier = TelegramNotifier(bot_token)
+    
+    try:
+        if alert_type == 'trade':
+            notifier.send_trade_alert(user_id, alert_data)
+        elif alert_type == 'multi_wallet':
+            notifier.send_multi_wallet_signal_alert(user_id, alert_data)
+        elif alert_type == 'degradation':
+            notifier.send_degradation_warning(user_id, alert_data)
+        elif alert_type == 'replacement':
+            notifier.send_replacement_complete_alert(user_id, alert_data)
+        elif alert_type == 'weekly_digest':
+            notifier.send_weekly_digest(user_id, alert_data)
+        else:
+            print(f"[TELEGRAM ALERT] Unknown alert type: {alert_type}")
+            return {'success': False, 'error': 'Unknown alert type'}
+        
+        print(f"[TELEGRAM ALERT] ✓ Sent {alert_type} alert to {user_id[:8]}...")
+        return {'success': True}
+    except Exception as e:
+        print(f"[TELEGRAM ALERT] ✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'error': str(e)}
+
+
+def send_batch_telegram_alerts(alerts_batch):
+    """
+    Send multiple Telegram alerts in batch
+    Used for daily/weekly digests to all users
+    
+    Args:
+        alerts_batch: [
+            {'user_id': 'xxx', 'type': 'weekly_digest', 'data': {...}},
+            {'user_id': 'yyy', 'type': 'weekly_digest', 'data': {...}},
+        ]
+    """
+    from services.telegram_notifier import TelegramNotifier
+    import time
+    
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    if not bot_token:
+        print("[BATCH ALERTS] No bot token configured")
+        return {'success': 0, 'errors': len(alerts_batch)}
+    
+    notifier = TelegramNotifier(bot_token)
+    
+    success_count = 0
+    error_count = 0
+    
+    print(f"[BATCH ALERTS] Processing {len(alerts_batch)} alerts...")
+    
+    for alert in alerts_batch:
+        try:
+            user_id = alert['user_id']
+            alert_type = alert['type']
+            alert_data = alert['data']
+            
+            if alert_type == 'weekly_digest':
+                notifier.send_weekly_digest(user_id, alert_data)
+            elif alert_type == 'trade':
+                notifier.send_trade_alert(user_id, alert_data)
+            elif alert_type == 'degradation':
+                notifier.send_degradation_warning(user_id, alert_data)
+            elif alert_type == 'replacement':
+                notifier.send_replacement_complete_alert(user_id, alert_data)
+            else:
+                print(f"[BATCH ALERTS] Unknown type: {alert_type}")
+                error_count += 1
+                continue
+            
+            success_count += 1
+            
+            # Rate limit: 30 messages/second to Telegram
+            # Sleep 0.04s = 25 messages/second (safe margin)
+            time.sleep(0.04)
+            
+        except Exception as e:
+            print(f"[BATCH ALERTS] ✗ Failed {user_id[:8]}...: {e}")
+            error_count += 1
+    
+    print(f"[BATCH ALERTS] Complete: {success_count} sent, {error_count} failed")
+    return {'success': success_count, 'errors': error_count}
+
+
+def send_weekly_digests():
+    """
+    Send weekly digest to ALL users with Telegram connected
+    Run this ONCE PER WEEK (Sunday night) via cron job
+    """
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    from services.watchlist_manager import WatchlistLeagueManager
+    
+    redis = Redis(host='localhost', port=6379)
+    q = Queue(connection=redis, default_timeout=600)
+    
+    print("\n" + "="*80)
+    print("WEEKLY DIGEST ALERTS")
+    print("="*80)
+    
+    supabase = get_supabase_client()
+    manager = WatchlistLeagueManager()
+    
+    # Get all users with Telegram enabled
+    result = supabase.schema(SCHEMA_NAME).table('telegram_users').select(
+        'user_id, telegram_chat_id'
+    ).eq('alerts_enabled', True).execute()
+    
+    users = result.data
+    print(f"\n[WEEKLY DIGEST] Sending to {len(users)} users...")
+    
+    if not users:
+        print("[WEEKLY DIGEST] No users with Telegram enabled")
+        return
+    
+    # Split into batches of 100
+    batch_size = 100
+    alerts_batches = []
+    
+    for i in range(0, len(users), batch_size):
+        batch = users[i:i+batch_size]
+        alerts = []
+        
+        for user in batch:
+            try:
+                # Generate digest data for this user
+                digest_data = manager.generate_weekly_digest(user['user_id'])
+                
+                alerts.append({
+                    'user_id': user['user_id'],
+                    'type': 'weekly_digest',
+                    'data': digest_data
+                })
+            except Exception as e:
+                print(f"[WEEKLY DIGEST] ⚠️ Failed to generate for {user['user_id'][:8]}...: {e}")
+        
+        if alerts:
+            alerts_batches.append(alerts)
+    
+    # Queue batches across workers
+    try:
+        for batch in alerts_batches:
+            q.enqueue('tasks.send_batch_telegram_alerts', batch)
+        
+        print(f"[WEEKLY DIGEST] ✓ Queued {len(alerts_batches)} batches")
+    except Exception as e:
+        print(f"[WEEKLY DIGEST] ✗ Queue failed: {e}")
+        print("Falling back to direct send...")
+        
+        # Fallback: Send directly if queue fails
+        for batch in alerts_batches:
+            send_batch_telegram_alerts(batch)
+    
+    print("="*80 + "\n")

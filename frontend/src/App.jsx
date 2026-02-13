@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders, LogOut, Loader2 } from 'lucide-react';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
 import TelegramSettings from './TelegramSettings';
@@ -10,7 +8,328 @@ import WalletLeagueTable from './WalletLeagueTable';
 import WalletReplacementModal from './WalletReplacementModal';
 import Auth from './components/Auth';
 import { useAuth } from './contexts/AuthContext';
+import AnalysisSettings from './Analysis_Setting.jsx';
+import { supabase } from './lib/supabase'; // Adjust path if your lib folder is elsewhere
 
+// ========== WALLET RESULT CARD COMPONENT ==========
+const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
+  const [showRunners, setShowRunners] = useState(false);
+  
+  // ✅ Determine token display
+  const getTokenDisplay = () => {
+    const analyzedTokens = wallet.analyzed_tokens || [];
+    const otherTokens = wallet.other_runners?.map(r => r.symbol) || [];
+    const allTokens = [...new Set([...analyzedTokens, ...otherTokens])];
+    
+    if (allTokens.length === 0) return 'Unknown';
+    if (allTokens.length === 1) return allTokens[0];
+    if (allTokens.length <= 3) return allTokens.join(', ');
+    return `${allTokens.slice(0, 3).join(', ')} +${allTokens.length - 3} more`;
+  };
+  
+  const tokenDisplay = getTokenDisplay();
+  const isSingleToken = (wallet.analyzed_tokens?.length || 0) === 1;
+  
+  return (
+    <div className="bg-black/30 border border-white/10 rounded-xl overflow-hidden">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-purple-400 font-bold text-sm">#{idx + 1}</span>
+              <span className="font-mono text-sm">
+                {wallet.wallet?.slice(0, 8)}...{wallet.wallet?.slice(-4)}
+              </span>
+              {wallet.is_fresh && (
+                <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
+                  ✨ Fresh
+                </span>
+              )}
+              {wallet.professional_grade && wallet.professional_score && (
+                <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
+                  {wallet.professional_grade} • {wallet.professional_score}
+                </span>
+              )}
+            </div>
+            
+            {/* ✅ Token/Tokens display (NO "main token") */}
+            <div className="text-xs text-gray-400">
+              {isSingleToken ? 'Token: ' : 'Tokens: '}
+              {tokenDisplay}
+            </div>
+          </div>
+          
+          <button
+            onClick={() => onAddToWatchlist(wallet)}
+            className="p-2 hover:bg-purple-500/20 rounded-lg text-purple-400 transition"
+            title="Add to Watchlist"
+          >
+            <BookmarkPlus size={16} />
+          </button>
+        </div>
+
+        {/* ✅ Professional Score Breakdown with CORRECT LABELS */}
+        {wallet.score_breakdown && (
+          <div className="mb-3 border-t border-white/10 pt-3">
+            <div className="text-xs font-semibold text-gray-400 mb-2">
+              Professional Score Breakdown (60/30/10):
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              
+              {/* Distance to ATH (60%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-blue-400 mb-1">
+                  {wallet.score_breakdown.distance_to_ath_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Distance to ATH (60%)</div>
+                
+                {wallet.entry_to_ath_multiplier && (
+                  <div className="text-xs">
+                    <div className="text-blue-300">{wallet.entry_to_ath_multiplier}x below</div>
+                    {wallet.distance_to_ath_pct && (
+                      <div className="text-blue-300">{wallet.distance_to_ath_pct.toFixed(1)}% below</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Realized Profit (30%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-green-400 mb-1">
+                  {wallet.score_breakdown.realized_profit_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Realized Profit (30%)</div>
+                
+                {wallet.realized_multiplier && (
+                  <div className="text-xs text-green-300">
+                    {wallet.realized_multiplier}x realized
+                  </div>
+                )}
+              </div>
+              
+              {/* Total Position (10%) */}
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-sm font-bold text-purple-400 mb-1">
+                  {wallet.score_breakdown.total_position_score || 0}
+                </div>
+                <div className="text-xs text-gray-500 mb-2">Total Position (10%)</div>
+                
+                {wallet.total_multiplier && (
+                  <div className="text-xs text-purple-300">
+                    {wallet.total_multiplier}x total
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Stats */}
+        <div className="grid grid-cols-4 gap-3 mb-3">
+          {wallet.entry_to_ath_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-blue-400">
+                {wallet.entry_to_ath_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Entry→ATH</div>
+            </div>
+          )}
+          
+          {wallet.distance_to_ath_pct && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-cyan-400">
+                {wallet.distance_to_ath_pct.toFixed(1)}%
+              </div>
+              <div className="text-xs text-gray-400">Below ATH</div>
+            </div>
+          )}
+          
+          {wallet.realized_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-green-400">
+                {wallet.realized_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Realized</div>
+            </div>
+          )}
+          
+          {wallet.total_multiplier && (
+            <div className="bg-white/5 rounded-lg p-3 text-center">
+              <div className="text-lg font-bold text-purple-400">
+                {wallet.total_multiplier}x
+              </div>
+              <div className="text-xs text-gray-400">Total</div>
+            </div>
+          )}
+        </div>
+
+        {/* ✅ 30-Day Runner Dropdown with Per-Runner Stats */}
+        {wallet.other_runners && wallet.other_runners.length > 0 && (
+          <div className="border-t border-white/10 pt-3">
+            <button
+              onClick={() => setShowRunners(!showRunners)}
+              className="w-full flex items-center justify-between p-2 hover:bg-white/5 rounded transition"
+            >
+              <div className="flex items-center gap-2">
+                <TrendingUp size={14} className="text-purple-400" />
+                <span className="text-sm font-semibold text-purple-400">
+                  Other 5x+ Runners (Last 30 Days)
+                </span>
+                <span className="text-xs bg-purple-500/20 px-2 py-0.5 rounded">
+                  {wallet.runner_hits_30d || wallet.other_runners.length}
+                </span>
+              </div>
+              <ChevronDown 
+                size={16} 
+                className={`text-gray-400 transition-transform ${showRunners ? 'rotate-180' : ''}`}
+              />
+            </button>
+
+            {showRunners && (
+              <div className="mt-3 space-y-3">
+                
+                {/* Summary Stats */}
+                {(wallet.other_runners_stats || wallet.runner_success_rate) && (
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                    <div className="text-xs font-semibold text-purple-400 mb-2">
+                      Summary Stats:
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      {(wallet.other_runners_stats?.avg_entry_to_ath || wallet.runner_avg_roi) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Avg Distance to ATH:</div>
+                          <div className="flex items-center gap-2">
+                            {wallet.other_runners_stats?.avg_entry_to_ath && (
+                              <span className="text-blue-400 font-bold">
+                                {wallet.other_runners_stats.avg_entry_to_ath}x
+                              </span>
+                            )}
+                            {wallet.other_runners_stats?.avg_distance_to_ath_pct && (
+                              <span className="text-cyan-400 font-bold">
+                                ({wallet.other_runners_stats.avg_distance_to_ath_pct.toFixed(1)}%)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {(wallet.other_runners_stats?.avg_roi || wallet.runner_avg_roi) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Avg ROI:</div>
+                          <div className="text-green-400 font-bold">
+                            {(wallet.other_runners_stats?.avg_roi || wallet.runner_avg_roi).toFixed(1)}x
+                          </div>
+                        </div>
+                      )}
+                      
+                      {(wallet.other_runners_stats?.success_rate || wallet.runner_success_rate) && (
+                        <div>
+                          <div className="text-gray-400 mb-1">Success Rate:</div>
+                          <div className="text-green-400 font-bold">
+                            {(wallet.other_runners_stats?.success_rate || wallet.runner_success_rate).toFixed(0)}%
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Individual Runner Cards */}
+                <div className="space-y-2">
+                  {wallet.other_runners.map((runner, ri) => (
+                    <div key={ri} className="bg-black/40 rounded-lg border border-white/5 overflow-hidden">
+                      
+                      {/* Runner Header */}
+                      <div className="p-3 bg-gradient-to-r from-white/5 to-transparent border-b border-white/5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-bold text-white">
+                                {runner.symbol}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
+                                {runner.multiplier}x pump
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-500">{runner.name}</div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Distance to ATH Section */}
+                      {runner.entry_to_ath_multiplier && (
+                        <div className="p-3 border-b border-white/5">
+                          <div className="flex items-center gap-2 mb-2">
+                            <TrendingUp size={12} className="text-blue-400" />
+                            <span className="text-xs font-semibold text-gray-400">
+                              Entry Distance to ATH
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
+                              <div className="text-base font-bold text-blue-400">
+                                {runner.entry_to_ath_multiplier}x
+                              </div>
+                              <div className="text-xs text-gray-500">below ATH</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-cyan-500/20">
+                              <div className="text-base font-bold text-cyan-400">
+                                {runner.distance_to_ath_pct?.toFixed(1)}%
+                              </div>
+                              <div className="text-xs text-gray-500">below ATH</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Profit Performance Section */}
+                      {runner.roi_multiplier && (
+                        <div className="p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <BarChart3 size={12} className="text-green-400" />
+                            <span className="text-xs font-semibold text-gray-400">
+                              Profit Performance
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-green-500/20">
+                              <div className="text-base font-bold text-green-400">
+                                {runner.roi_multiplier}x
+                              </div>
+                              <div className="text-xs text-gray-500">ROI</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-blue-500/20">
+                              <div className="text-sm font-bold text-blue-400">
+                                ${runner.invested}
+                              </div>
+                              <div className="text-xs text-gray-500">Invested</div>
+                            </div>
+                            
+                            <div className="bg-white/5 rounded-lg p-2 text-center border border-purple-500/20">
+                              <div className="text-sm font-bold text-purple-400">
+                                ${runner.realized}
+                              </div>
+                              <div className="text-xs text-gray-500">Realized</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default function SifterKYS() {
   // ========== AUTHENTICATION ==========
@@ -27,16 +346,16 @@ export default function SifterKYS() {
     getAccessToken,
   } = useAuth();
 
-  // ========== WALLET CONNECTION ==========
-  const { publicKey, connected } = useWallet();
-  const walletAddress = publicKey?.toBase58() || null;
-
   // ========== MODE TOGGLE ==========
   const [mode, setMode] = useState('twitter'); // 'twitter' or 'wallet'
   const [isSwitchingMode, setIsSwitchingMode] = useState(false);
-
+  
   // ========== TAB STATE ==========
   const [activeTab, setActiveTab] = useState('analyze');
+  
+  // ========== WALLET CONNECTION ==========
+  const [walletAddress, setWalletAddress] = useState(null);
+  const [showWalletMenu, setShowWalletMenu] = useState(false);
   
   // ========== TOKEN SEARCH ==========
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,7 +366,7 @@ export default function SifterKYS() {
   const searchRef = useRef(null);
   
   // ========== ANALYSIS SETTINGS ==========
-  const [analysisType, setAnalysisType] = useState('pump_window'); // 'pump_window' or 'general'
+  const [analysisType, setAnalysisType] = useState('general'); // 'pump_window' or 'general'
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
   
@@ -74,24 +393,22 @@ export default function SifterKYS() {
   const [newNote, setNewNote] = useState('');
   const [newTags, setNewTags] = useState('');
 
+  // ========== BATCH ANALYSIS ==========
+  const [selectedRunners, setSelectedRunners] = useState([]);
+  const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
+  const [batchResults, setBatchResults] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefreshTime, setLastRefreshTime] = useState(null);
 
-  // Inside your SifterKYS component, add these state variables:
-const [showReplacementModal, setShowReplacementModal] = useState(false);
-const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
-const [replacementSuggestions, setReplacementSuggestions] = useState([]);
-const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
-  
   // ========== WALLET ALERTS ==========
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
-  const [activeSettingsTab, setActiveSettingsTab] = useState('telegram'); // NEW
+  const [activeSettingsTab, setActiveSettingsTab] = useState('telegram');
 
-  
   // ========== TRENDING RUNNERS ==========
   const [trendingRunners, setTrendingRunners] = useState([]);
   const [isLoadingRunners, setIsLoadingRunners] = useState(false);
   const [runnerFilters, setRunnerFilters] = useState({
-    timeframe: '24h',
-    candleTimeframe: '5m',
+    timeframe: '7d',
     minLiquidity: 50000,
     maxLiquidity: 10000000,
     minVolume: 0,
@@ -107,6 +424,12 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   // ========== AUTO DISCOVERY ==========
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
+
+  // ========== WALLET REPLACEMENT ==========
+  const [showReplacementModal, setShowReplacementModal] = useState(false);
+  const [currentDecliningWallet, setCurrentDecliningWallet] = useState(null);
+  const [replacementSuggestions, setReplacementSuggestions] = useState([]);
+  const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
 
   const API_URL = 'http://localhost:5000';
   const userId = user?.id;
@@ -144,6 +467,11 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
     }
   }, [activeTab, mode]);
 
+  useEffect(() => {
+    const saved = localStorage.getItem('sifter_wallet');
+    if (saved) setWalletAddress(saved);
+  }, []);
+
   // Auto-load trending runners when tab is opened
   useEffect(() => {
     if (activeTab === 'trending') {
@@ -152,18 +480,33 @@ const [isLoadingReplacements, setIsLoadingReplacements] = useState(false);
   }, [activeTab]);
 
   // Load watchlist when tab opens
-useEffect(() => {
-  if (activeTab === 'watchlist' && mode === 'wallet') {
-    loadWalletWatchlist();
-  }
-}, [activeTab, mode]);
+  useEffect(() => {
+    if (activeTab === 'watchlist' && mode === 'wallet') {
+      loadWalletWatchlist();
+    }
+  }, [activeTab, mode]);
 
   // Auto-reload trending runners when filters change
   useEffect(() => {
     if (activeTab === 'trending') {
       loadTrendingRunners();
     }
-  }, [runnerFilters.timeframe, runnerFilters.candleTimeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity, runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier, runnerFilters.minTokenAge, runnerFilters.maxTokenAge]);
+  }, [runnerFilters.timeframe, runnerFilters.minLiquidity, runnerFilters.maxLiquidity, 
+      runnerFilters.minVolume, runnerFilters.maxVolume, runnerFilters.minMultiplier, 
+      runnerFilters.minTokenAge, runnerFilters.maxTokenAge]);
+
+  // Auto-refresh trending runners every 60 seconds
+  useEffect(() => {
+    if (!autoRefresh || activeTab !== 'trending') return;
+    
+    const interval = setInterval(() => {
+      console.log('Auto-refreshing trending runners...');
+      loadTrendingRunners();
+      setLastRefreshTime(new Date());
+    }, 60000); // 60 seconds
+    
+    return () => clearInterval(interval);
+  }, [autoRefresh, activeTab]);
 
   // ========== MODE SWITCHING WITH TRANSITION ==========
   const handleModeSwitch = async (newMode) => {
@@ -175,6 +518,29 @@ useEffect(() => {
     
     setMode(newMode);
     setIsSwitchingMode(false);
+  };
+
+  // ========== WALLET CONNECTION ==========
+  const connectWallet = async () => {
+    try {
+      if (window.solana && window.solana.isPhantom) {
+        const response = await window.solana.connect();
+        const address = response.publicKey.toString();
+        setWalletAddress(address);
+        localStorage.setItem('sifter_wallet', address);
+      } else {
+        alert('Please install Phantom wallet');
+        window.open('https://phantom.app/', '_blank');
+      }
+    } catch (error) {
+      console.error('Wallet error:', error);
+    }
+  };
+
+  const disconnectWallet = () => {
+    setWalletAddress(null);
+    localStorage.removeItem('sifter_wallet');
+    setShowWalletMenu(false);
   };
 
   // ========== TOKEN SEARCH ==========
@@ -380,6 +746,61 @@ useEffect(() => {
     setIsAnalyzing(false);
   };
 
+  // ========== BATCH ANALYSIS FUNCTIONS ==========
+  const analyzeBatchRunners = async () => {
+    if (selectedRunners.length === 0) {
+      alert('Please select at least one runner');
+      return;
+    }
+
+    setIsBatchAnalyzing(true);
+
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/trending/analyze-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runners: selectedRunners,
+          user_id: userId,
+          min_roi_multiplier: 3.0,
+          min_runner_hits: 2
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setBatchResults(data);
+        setActiveTab('results'); // Switch to results tab
+      } else {
+        alert('Batch analysis failed');
+      }
+    } catch (error) {
+      console.error('Batch analysis error:', error);
+      alert('Batch analysis failed');
+    }
+
+    setIsBatchAnalyzing(false);
+  };
+
+  const toggleRunnerSelection = (runner) => {
+    const isSelected = selectedRunners.some(r => r.address === runner.address);
+    
+    if (isSelected) {
+      setSelectedRunners(selectedRunners.filter(r => r.address !== runner.address));
+    } else {
+      setSelectedRunners([...selectedRunners, runner]);
+    }
+  };
+
+  const selectAllRunners = () => {
+    setSelectedRunners([...trendingRunners]);
+  };
+
+  const clearRunnerSelection = () => {
+    setSelectedRunners([]);
+  };
+
   // ========== WATCHLIST FUNCTIONS ==========
   const loadTwitterWatchlist = async () => {
     try {
@@ -406,17 +827,17 @@ useEffect(() => {
   };
 
   const loadWalletWatchlist = async () => {
-  try {
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
-    const data = await response.json();
-    if (data.success) {
-      setWalletWatchlist(data.wallets || []);
-      setWalletWatchlistStats(data.stats || null);
+    try {
+      const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setWalletWatchlist(data.wallets || []);
+        setWalletWatchlistStats(data.stats || null);
+      }
+    } catch (error) {
+      console.error('Error loading wallet watchlist:', error);
     }
-  } catch (error) {
-    console.error('Error loading wallet watchlist:', error);
-  }
-};
+  };
 
   const loadWalletWatchlistStats = async () => {
     try {
@@ -448,19 +869,22 @@ useEffect(() => {
 
   const addToWalletWatchlist = async (wallet) => {
     try {
+      // ✅ FIX: Map fields correctly to match backend schema
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           user_id: userId, 
           wallet: {
-            wallet_address: wallet.wallet,
-            tier: wallet.tier,
-            pump_count: wallet.pump_count,
-            avg_distance_to_peak: wallet.avg_distance_to_ath_pct,
-            avg_roi_to_peak: wallet.avg_roi_to_peak_pct,
-            consistency_score: wallet.consistency_score,
-            tokens_hit: wallet.token_list?.join(', ')
+            wallet: wallet.wallet,  // ✅ Backend maps to wallet_address
+            tier: wallet.professional_grade === 'A+' ? 'S' : 
+                  wallet.professional_grade?.startsWith('A') ? 'A' :
+                  wallet.professional_grade?.startsWith('B') ? 'B' : 'C',
+            pump_count: wallet.runner_hits_30d || 0,
+            avg_distance_to_ath_pct: wallet.ath_distance || 0,
+            avg_roi_to_peak_pct: wallet.roi_percent || 0,
+            consistency_score: wallet.professional_score || 0,
+            token_list: wallet.other_runners?.map(r => r.symbol) || []  // ✅ Mapped to tokens_hit
           },
           alert_settings: {
             alert_enabled: true,
@@ -472,11 +896,15 @@ useEffect(() => {
       });
       
       const data = await response.json();
+      
       if (data.success) {
         alert('✅ Added to wallet watchlist with alerts enabled!');
+      } else {
+        alert(`❌ Failed: ${data.error}`);
       }
     } catch (error) {
       console.error('Error adding wallet to watchlist:', error);
+      alert('❌ Error adding to watchlist');
     }
   };
 
@@ -497,9 +925,6 @@ useEffect(() => {
       console.error('Error removing from twitter watchlist:', error);
     }
   };
-
-
-
 
   const removeFromWalletWatchlist = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
@@ -574,73 +999,6 @@ useEffect(() => {
     }
   };
 
-// Around line 550, after your existing watchlist functions:
-
-
-
-const findReplacements = async (walletAddress) => {
-  try {
-    setIsLoadingReplacements(true);
-    setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
-    
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${yourAuthToken}`
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        wallet_address: walletAddress,
-        min_professional_score: 85
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      setReplacementSuggestions(data.replacements || []);
-      setShowReplacementModal(true);
-    }
-  } catch (error) {
-    console.error('Error finding replacements:', error);
-  } finally {
-    setIsLoadingReplacements(false);
-  }
-};
-
-const handleReplaceWallet = async (newWallet) => {
-  try {
-    const response = await authFetch(`${API_URL}/api/wallets/watchlist/replace`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${yourAuthToken}`
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        old_wallet: currentDecliningWallet.wallet_address,
-        new_wallet: newWallet.wallet
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      await loadWalletWatchlist();
-      setShowReplacementModal(false);
-      setCurrentDecliningWallet(null);
-      setReplacementSuggestions([]);
-      alert('Wallet replaced successfully!');
-    }
-  } catch (error) {
-    console.error('Error replacing wallet:', error);
-    alert('Failed to replace wallet');
-  }
-};
-
-
-
   const updateWalletWatchlistTags = async (walletAddress, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
@@ -660,13 +1018,76 @@ const handleReplaceWallet = async (newWallet) => {
     }
   };
 
+  // ========== WALLET REPLACEMENT FUNCTIONS ==========
+  const findReplacements = async (walletAddress) => {
+    try {
+      setIsLoadingReplacements(true);
+      setCurrentDecliningWallet(walletWatchlist.find(w => w.wallet_address === walletAddress));
+      
+      const token = getAccessToken();
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/suggest-replacement`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          wallet_address: walletAddress,
+          min_professional_score: 85
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setReplacementSuggestions(data.replacements || []);
+        setShowReplacementModal(true);
+      }
+    } catch (error) {
+      console.error('Error finding replacements:', error);
+    } finally {
+      setIsLoadingReplacements(false);
+    }
+  };
+
+  const handleReplaceWallet = async (newWallet) => {
+    try {
+      const token = getAccessToken();
+      const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          old_wallet: currentDecliningWallet.wallet_address,
+          new_wallet: newWallet.wallet
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        await loadWalletWatchlist();
+        setShowReplacementModal(false);
+        setCurrentDecliningWallet(null);
+        setReplacementSuggestions([]);
+        alert('Wallet replaced successfully!');
+      }
+    } catch (error) {
+      console.error('Error replacing wallet:', error);
+      alert('Failed to replace wallet');
+    }
+  };
+
   // ========== TRENDING RUNNERS ==========
   const loadTrendingRunners = async () => {
     setIsLoadingRunners(true);
     try {
       const params = new URLSearchParams({
         timeframe: runnerFilters.timeframe,
-        candle_timeframe: runnerFilters.candleTimeframe,
         min_liquidity: runnerFilters.minLiquidity,
         max_liquidity: runnerFilters.maxLiquidity,
         min_volume: runnerFilters.minVolume,
@@ -676,7 +1097,7 @@ const handleReplaceWallet = async (newWallet) => {
         max_age_days: runnerFilters.maxTokenAge
       });
 
-      const response = await authFetch(`${API_URL}/api/trending/runners?${params}`);
+      const response = await authFetch(`${API_URL}/api/wallets/trending/runners?${params}`);
       const data = await response.json();
       
       if (data.success) {
@@ -766,7 +1187,7 @@ const handleReplaceWallet = async (newWallet) => {
     try {
       const endpoint = mode === 'twitter' 
         ? '/api/discover/twitter'
-        : '/api/discover/wallets';
+        : '/api/wallets/discover';
 
       const response = await authFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -826,12 +1247,13 @@ const handleReplaceWallet = async (newWallet) => {
     if (confirm('Clear analysis results?')) {
       setTwitterResults(null);
       setWalletResults(null);
+      setBatchResults(null);
       setExpandedTokens({});
       setExpandedWallets({});
     }
   };
 
-  const hasResults = isAnalyzing || twitterResults || walletResults;
+  const hasResults = isAnalyzing || twitterResults || walletResults || batchResults;
 
   // Show loading spinner while checking auth
   if (authLoading) {
@@ -901,14 +1323,36 @@ const handleReplaceWallet = async (newWallet) => {
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
 
-              <WalletMultiButton
-                style={{
-                  backgroundColor: connected ? '#16a34a' : 'rgba(255, 255, 255, 0.05)',
-                  height: '38px',
-                  fontSize: '14px',
-                  borderRadius: '8px',
-                }}
-              />
+              {walletAddress ? (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowWalletMenu(!showWalletMenu)}
+                    className="px-3 py-2 bg-green-600 rounded-lg hover:bg-green-700 transition text-sm flex items-center gap-2"
+                  >
+                    <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                  </button>
+
+                  {showWalletMenu && (
+                    <div className="absolute right-0 top-12 bg-black border border-white/10 rounded-lg p-3 w-48 shadow-xl">
+                      <button
+                        onClick={disconnectWallet}
+                        className="w-full px-3 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded text-sm"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={connectWallet}
+                  className="px-3 py-2 bg-white/5 rounded-lg hover:bg-white/10 transition text-sm flex items-center gap-2"
+                >
+                  <Wallet size={16} />
+                  Connect Wallet
+                </button>
+              )}
 
               <a
                 href="https://whop.com/sifter"
@@ -949,8 +1393,6 @@ const handleReplaceWallet = async (newWallet) => {
         <div className="flex gap-3 mb-6 border-b border-white/10">
           {[
             { id: 'analyze', label: 'Analyze', icon: Search },
-            
-
             { id: 'results', label: `${mode === 'twitter' ? 'Twitter' : 'Wallet'} Results`, icon: BarChart3 },
             { id: 'trending', label: 'Trending Runners', icon: TrendingUp },
             { id: 'discover', label: 'Auto Discovery', icon: Zap },
@@ -968,7 +1410,7 @@ const handleReplaceWallet = async (newWallet) => {
             >
               <tab.icon size={16} />
               {tab.label}
-              {tab.id === 'results' && isAnalyzing && (
+              {tab.id === 'results' && (isAnalyzing || isBatchAnalyzing) && (
                 <span className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
               )}
             </button>
@@ -993,8 +1435,9 @@ const handleReplaceWallet = async (newWallet) => {
                       backgroundImage: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)'
                     }}
                   >
+                  <option value="general" className="bg-gray-900 text-white py-2">📊 General Analysis</option>
                     <option value="pump_window" className="bg-gray-900 text-white py-2">🎯 Pump Window</option>
-                    <option value="general" className="bg-gray-900 text-white py-2">📊 General Analysis</option>
+                    
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" size={16} />
                 </div>
@@ -1081,138 +1524,47 @@ const handleReplaceWallet = async (newWallet) => {
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {selectedTokens.map((token) => {
-                    const key = `${token.chain}-${token.address}`;
-                    const settings = tokenSettings[key] || {
-                      days_back: daysBack,
-                      candle_size: candleSize,
-                      t_minus: tMinusWindow,
-                      t_plus: tPlusWindow
-                    };
-
-                    return (
-                      <div key={key} className="bg-black/30 rounded-lg p-3">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <div className="font-semibold text-sm">{token.ticker}</div>
-                            <div className="text-xs text-gray-400">{token.chain.toUpperCase()}</div>
-                          </div>
-                          <button
-                            onClick={() => removeToken(token.address, token.chain)}
-                            className="p-1 hover:bg-white/10 rounded transition"
-                          >
-                            <X size={14} />
-                          </button>
+                {/* Token List */}
+                <div className="space-y-2 mb-4">
+                  {selectedTokens.map((token) => (
+                    <div key={`${token.chain}-${token.address}`} className="bg-black/30 rounded-lg p-3">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">{token.ticker}</div>
+                          <div className="text-xs text-gray-400">{token.chain.toUpperCase()}</div>
                         </div>
-
-                        {!useGlobalSettings && (
-                          <div className="mt-3 pt-3 border-t border-white/10">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-xs font-medium mb-1">Days Back</label>
-                                <input
-                                  type="number"
-                                  value={settings.days_back}
-                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'days_back', parseInt(e.target.value))}
-                                  className="w-full bg-black/50 border border-white/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500 transition"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium mb-1">Candle</label>
-                                <select
-                                  value={settings.candle_size}
-                                  onChange={(e) => updateTokenSetting(token.address, token.chain, 'candle_size', e.target.value)}
-                                  className="w-full bg-black/50 border border-white/10 rounded px-2 py-1 text-xs appearance-none cursor-pointer focus:outline-none focus:border-purple-500 transition"
-                                >
-                                  <option value="1m">1m</option>
-                                  <option value="5m">5m</option>
-                                  <option value="15m">15m</option>
-                                  <option value="1h">1h</option>
-                                  <option value="4h">4h</option>
-                                  <option value="1d">1d</option>
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                        <button
+                          onClick={() => removeToken(token.address, token.chain)}
+                          className="p-1 hover:bg-white/10 rounded transition"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
-                    );
-                  })}
-                </div>
-
-                {/* Global Settings Toggle */}
-                <div className="mt-4 pt-4 border-t border-white/10">
-                  <div className="flex items-center gap-2 mb-3">
-                    <button
-                      onClick={() => setUseGlobalSettings(!useGlobalSettings)}
-                      className={`w-12 h-6 rounded-full transition-all duration-300 ${
-                        useGlobalSettings ? 'bg-purple-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-all duration-300 transform ${
-                        useGlobalSettings ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                    <span className="font-semibold text-sm">
-                      {useGlobalSettings ? 'Global Settings' : 'Per-Token Customization'}
-                    </span>
-                  </div>
-
-                  {useGlobalSettings && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Days Back</label>
-                        <input
-                          type="number"
-                          value={daysBack}
-                          onChange={(e) => setDaysBack(parseInt(e.target.value))}
-                          className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Candle Size</label>
-                        <div className="relative">
-                          <select
-                            value={candleSize}
-                            onChange={(e) => setCandleSize(e.target.value)}
-                            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm appearance-none cursor-pointer focus:outline-none focus:border-purple-500 transition"
-                          >
-                            <option value="1m">1m</option>
-                            <option value="5m">5m</option>
-                            <option value="15m">15m</option>
-                            <option value="1h">1h</option>
-                            <option value="4h">4h</option>
-                            <option value="1d">1d</option>
-                          </select>
-                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400" size={14} />
-                        </div>
-                      </div>
-                      {analysisType === 'pump_window' && (
-                        <>
-                          <div>
-                            <label className="block text-xs font-medium mb-1">T-Minus (min)</label>
-                            <input
-                              type="number"
-                              value={tMinusWindow}
-                              onChange={(e) => setTMinusWindow(parseInt(e.target.value))}
-                              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium mb-1">T-Plus (min)</label>
-                            <input
-                              type="number"
-                              value={tPlusWindow}
-                              onChange={(e) => setTPlusWindow(parseInt(e.target.value))}
-                              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition"
-                            />
-                          </div>
-                        </>
-                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
+
+                {/* ✅ USE THE AnalysisSettings COMPONENT */}
+                <AnalysisSettings
+                  analysisType={analysisType}
+                  selectedTokens={selectedTokens}
+                  useGlobalSettings={useGlobalSettings}
+                  setUseGlobalSettings={setUseGlobalSettings}
+                  tokenSettings={tokenSettings}
+                  updateTokenSetting={updateTokenSetting}
+                  globalSettings={{
+                    daysBack,
+                    candleSize,
+                    tMinusWindow,
+                    tPlusWindow
+                  }}
+                  onGlobalSettingsChange={(settings) => {
+                    if (settings.daysBack !== undefined) setDaysBack(settings.daysBack);
+                    if (settings.candleSize !== undefined) setCandleSize(settings.candleSize);
+                    if (settings.tMinusWindow !== undefined) setTMinusWindow(settings.tMinusWindow);
+                    if (settings.tPlusWindow !== undefined) setTPlusWindow(settings.tPlusWindow);
+                  }}
+                />
 
                 {/* Run Analysis Button */}
                 <button
@@ -1250,11 +1602,12 @@ const handleReplaceWallet = async (newWallet) => {
               </div>
             )}
 
-            {(mode === 'twitter' ? twitterResults : walletResults) && (
+            {(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">
-                    {mode === 'twitter' ? 'Twitter' : 'Wallet'} Analysis Results
+                    {batchResults ? '🔥 Batch Analysis Results' : 
+                     mode === 'twitter' ? 'Twitter Analysis Results' : 'Wallet Analysis Results'}
                   </h3>
                   <button
                     onClick={clearResults}
@@ -1289,233 +1642,97 @@ const handleReplaceWallet = async (newWallet) => {
                   </div>
                 )}
 
-                {mode === 'wallet' && walletResults && (
+                {mode === 'wallet' && (walletResults || batchResults) && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
-                      <div>
-                        <div className="text-2xl font-bold text-green-400">
-                          {walletResults.summary?.qualified_wallets || walletResults.top_wallets?.length || 0}
+                    {/* Batch Results Summary */}
+                    {batchResults && (
+                      <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg p-4">
+                        <div className="grid grid-cols-4 gap-4">
+                          <div>
+                            <div className="text-2xl font-bold text-green-400">
+                              {batchResults.wallets_discovered}
+                            </div>
+                            <div className="text-xs text-gray-400">Smart Money Wallets</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-yellow-400">
+                              {batchResults.runners_analyzed}
+                            </div>
+                            <div className="text-xs text-gray-400">Runners Analyzed</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-blue-400">
+                              {batchResults.consistency_summary?.avg_runner_hits || 0}
+                            </div>
+                            <div className="text-xs text-gray-400">Avg Runner Hits</div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold text-purple-400">
+                              {batchResults.consistency_summary?.a_plus_consistency || 0}
+                            </div>
+                            <div className="text-xs text-gray-400">A+ Consistency</div>
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-400">Qualified Wallets</div>
                       </div>
-                      <div>
-                        <div className="text-2xl font-bold text-yellow-400">
-                          {walletResults.summary?.real_winners || 0}
+                    )}
+
+                    {/* Wallet Results Summary */}
+                    {walletResults && !batchResults && (
+                      <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
+                        <div>
+                          <div className="text-2xl font-bold text-green-400">
+                            {walletResults.summary?.qualified_wallets || walletResults.top_wallets?.length || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Qualified Wallets</div>
                         </div>
-                        <div className="text-xs text-gray-400">S-Tier Wallets</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-blue-400">
-                          {walletResults.summary?.total_rallies || 0}
+                        <div>
+                          <div className="text-2xl font-bold text-yellow-400">
+                            {walletResults.summary?.real_winners || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">S-Tier Wallets</div>
                         </div>
-                        <div className="text-xs text-gray-400">Total Rallies</div>
-                      </div>
-                      <div>
-                        <div className="text-2xl font-bold text-purple-400">
-                          {walletResults.summary?.tokens_analyzed || 0}
+                        <div>
+                          <div className="text-2xl font-bold text-blue-400">
+                            {walletResults.summary?.total_rallies || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Total Rallies</div>
                         </div>
-                        <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                        <div>
+                          <div className="text-2xl font-bold text-purple-400">
+                            {walletResults.summary?.tokens_analyzed || 0}
+                          </div>
+                          <div className="text-xs text-gray-400">Tokens Analyzed</div>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="space-y-3">
-                      {walletResults.top_wallets?.map((wallet, idx) => {
-                        const isExpanded = expandedWallets[idx];
-
-                        return (
-                          <div key={idx} className="bg-black/30 border border-white/10 rounded-xl overflow-hidden">
-                            <div
-                              className="p-4 cursor-pointer hover:bg-white/5 transition"
-                              onClick={() => toggleWalletExpansion(idx)}
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-3 mb-1">
-                                    <span className="text-purple-400 font-bold text-sm">#{idx + 1}</span>
-                                    <span className="font-mono text-sm">
-                                      {wallet.wallet?.slice(0, 8)}...{wallet.wallet?.slice(-4)}
-                                    </span>
-                                    {wallet.is_fresh && (
-                                      <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-semibold">
-                                        ✨ Fresh
-                                      </span>
-                                    )}
-                                    {wallet.professional_grade && wallet.professional_score && (
-                                      <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                                        {wallet.professional_grade} • {wallet.professional_score}
-                                      </span>
-                                    )}
-                                    {wallet.entry_to_ath_multiplier && (
-                                      <span className="text-xs text-gray-400">
-                                        {wallet.entry_to_ath_multiplier}x to ATH
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-xs text-gray-400">
-                                    {(wallet.avg_roi_to_peak_pct || wallet.avg_realized_roi_pct || 0).toLocaleString()}% ROI • {wallet.pump_count || 0} pumps
-                                    {wallet.runner_hits_30d > 0 && ` • 🎯 ${wallet.runner_hits_30d} runner hits`}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      addToWalletWatchlist(wallet);
-                                    }}
-                                    className="p-2 hover:bg-purple-500/20 rounded-lg text-purple-400 transition"
-                                    title="Add to Watchlist"
-                                  >
-                                    <BookmarkPlus size={16} />
-                                  </button>
-                                  <div className="text-gray-500">
-                                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {isExpanded && (
-                              <div className="border-t border-white/10 bg-black/20">
-                                <div className="px-4 pt-3 pb-2">
-                                  <div className="font-mono text-xs text-gray-300 break-all">
-                                    {wallet.wallet}
-                                  </div>
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    Tokens: {wallet.token_list?.join(', ') || 'N/A'}
-                                  </div>
-                                </div>
-
-                                {wallet.score_breakdown && (
-                                  <div className="px-4 pb-3 border-b border-white/10">
-                                    <div className="text-xs font-semibold text-gray-400 mb-2">Professional Score Breakdown:</div>
-                                    <div className="grid grid-cols-3 gap-2">
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-blue-400">
-                                          {wallet.score_breakdown.timing_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Timing (60%)</div>
-                                      </div>
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-green-400">
-                                          {wallet.score_breakdown.profit_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Profit (30%)</div>
-                                      </div>
-                                      <div className="bg-white/5 rounded p-2 text-center">
-                                        <div className="text-sm font-bold text-purple-400">
-                                          {wallet.score_breakdown.overall_score}
-                                        </div>
-                                        <div className="text-xs text-gray-500">Overall (10%)</div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div className="px-4 pb-3 grid grid-cols-4 gap-3">
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-white">
-                                      {wallet.pump_count || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-400">Pumps Hit</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-green-400">
-                                      {(wallet.avg_roi_to_peak_pct || wallet.avg_realized_roi_pct || 0).toLocaleString()}%
-                                    </div>
-                                    <div className="text-xs text-gray-400">Avg ROI</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-blue-400">
-                                      {(wallet.avg_distance_to_ath_pct || 0).toFixed(2)}%
-                                    </div>
-                                    <div className="text-xs text-gray-400">Dist to ATH</div>
-                                  </div>
-                                  <div className="bg-white/5 rounded-lg p-3 text-center">
-                                    <div className="text-lg font-bold text-purple-400">
-                                      {wallet.in_window_count || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-400">In Window</div>
-                                  </div>
-                                </div>
-
-                                {wallet.rally_history && wallet.rally_history.length > 0 && (
-                                  <div className="px-4 pb-4">
-                                    <div className="text-xs font-semibold text-gray-400 mb-2">Rally History:</div>
-                                    <div className="space-y-2">
-                                      {wallet.rally_history.slice(0, 5).map((rally, ri) => (
-                                        <div key={ri} className="bg-black/40 rounded-lg p-3">
-                                          <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-semibold">{rally.token}</span>
-                                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                                              rally.in_pump_window
-                                                ? 'bg-green-500/20 text-green-400'
-                                                : 'bg-gray-600/30 text-gray-400'
-                                            }`}>
-                                              {rally.in_pump_window ? '✓ IN WINDOW' : 'OUT WINDOW'}
-                                            </span>
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            {rally.rally_date && <span>{rally.rally_date}</span>}
-                                            {rally.rally_date && rally.buy_time && <span> • </span>}
-                                            {rally.buy_time && <span>Buy: {rally.buy_time}</span>}
-                                            {(rally.roi !== undefined || rally.realized_roi_pct !== undefined) && (
-                                              <span className="ml-2 text-green-400 font-semibold">
-                                                ROI: {(rally.roi ?? rally.realized_roi_pct ?? 0).toLocaleString()}%
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {wallet.other_runners && wallet.other_runners.length > 0 && (
-                                  <div className="px-4 pb-4 border-t border-white/10 pt-3">
-                                    <div className="flex items-center justify-between mb-2">
-                                      <div className="text-xs font-semibold text-gray-400">
-                                        Other 5x+ Runners (Last 30 Days): {wallet.runner_hits_30d}
-                                      </div>
-                                      {wallet.runner_success_rate > 0 && (
-                                        <span className="text-xs text-green-400">
-                                          {wallet.runner_success_rate}% success rate
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="space-y-2">
-                                      {wallet.other_runners.map((runner, ri) => (
-                                        <div key={ri} className="bg-black/40 rounded-lg p-2">
-                                          <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-semibold">{runner.symbol}</span>
-                                            <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
-                                              {runner.multiplier}x
-                                            </span>
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            {runner.roi_multiplier && (
-                                              <span className="text-green-400 font-semibold">
-                                                ROI: {runner.roi_multiplier}x • 
-                                              </span>
-                                            )}
-                                            <span> Invested: ${runner.invested} • Realized: ${runner.realized}</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {/* ✅ UPDATED: Use WalletResultCard component */}
+                      {walletResults && !batchResults && walletResults.top_wallets?.map((wallet, idx) => (
+                        <WalletResultCard
+                          key={wallet.wallet}
+                          wallet={wallet}
+                          idx={idx}
+                          onAddToWatchlist={addToWalletWatchlist}
+                        />
+                      ))}
+                      
+                      {/* Batch results display */}
+                      {batchResults?.smart_money_wallets?.map((wallet, idx) => (
+                        <WalletResultCard
+                          key={wallet.wallet}
+                          wallet={wallet}
+                          idx={idx}
+                          onAddToWatchlist={addToWalletWatchlist}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {!isAnalyzing && !(mode === 'twitter' ? twitterResults : walletResults) && (
+            {!isAnalyzing && !isBatchAnalyzing && !(mode === 'twitter' ? twitterResults : walletResults || batchResults) && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-12 text-center">
                 <BarChart3 className="mx-auto mb-4 text-gray-600" size={48} />
                 <h3 className="text-lg font-semibold mb-2">No Results Yet</h3>
@@ -1536,16 +1753,18 @@ const handleReplaceWallet = async (newWallet) => {
         {/* ========== TRENDING RUNNERS TAB ========== */}
         {activeTab === 'trending' && (
           <div className="space-y-4">
+            {/* ✅ UPDATED FILTER BAR - REMOVED CANDLE BUTTONS */}
             <div className="bg-gradient-to-r from-gray-900/50 to-gray-800/50 border border-white/10 rounded-xl p-3">
               <div className="flex items-center gap-3 flex-wrap">
+                {/* Timeframe Selector - 7d/14d/30d only */}
                 <div className="relative">
                   <select
                     value={runnerFilters.timeframe}
                     onChange={(e) => setRunnerFilters({...runnerFilters, timeframe: e.target.value})}
                     className="appearance-none flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 rounded-lg font-semibold text-sm transition-all duration-300 shadow-lg shadow-blue-500/30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/40 pr-8"
                   >
-                    <option value="24h" className="bg-gray-900">24 Hours</option>
                     <option value="7d" className="bg-gray-900">7 Days</option>
+                    <option value="14d" className="bg-gray-900">14 Days</option>
                     <option value="30d" className="bg-gray-900">30 Days</option>
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white" size={14} />
@@ -1553,6 +1772,7 @@ const handleReplaceWallet = async (newWallet) => {
 
                 <div className="h-8 w-px bg-white/10" />
 
+                {/* Multiplier Buttons */}
                 <div className="flex items-center gap-2">
                   {[5, 10, 20, 50].map(mult => (
                     <button
@@ -1571,24 +1791,7 @@ const handleReplaceWallet = async (newWallet) => {
 
                 <div className="h-8 w-px bg-white/10" />
 
-                <div className="flex items-center gap-2">
-                  {['5m', '15m', '1h', '4h', '1d'].map(candle => (
-                    <button
-                      key={candle}
-                      onClick={() => setRunnerFilters({...runnerFilters, candleTimeframe: candle})}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        runnerFilters.candleTimeframe === candle
-                          ? 'bg-green-600 text-white shadow-lg shadow-green-500/30'
-                          : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {candle}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="h-8 w-px bg-white/10" />
-
+                {/* Advanced Filters Button */}
                 <button
                   onClick={() => {
                     setTempFilters(runnerFilters);
@@ -1597,7 +1800,18 @@ const handleReplaceWallet = async (newWallet) => {
                   className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-lg text-sm font-medium transition-all duration-200"
                 >
                   <Sliders size={14} />
-                  Filters
+                  Advanced Filters
+                </button>
+
+                {/* Manual Refresh Button */}
+                <button
+                  onClick={loadTrendingRunners}
+                  disabled={isLoadingRunners}
+                  className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm transition-all duration-200"
+                  title="Refresh now"
+                >
+                  <RotateCcw size={14} className={isLoadingRunners ? 'animate-spin' : ''} />
+                  {isLoadingRunners ? 'Loading...' : 'Refresh'}
                 </button>
               </div>
             </div>
@@ -1612,117 +1826,218 @@ const handleReplaceWallet = async (newWallet) => {
             )}
 
             {!isLoadingRunners && trendingRunners.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-white/10">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">#</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Token</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Price</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Multiplier</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Liquidity</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Age</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trendingRunners.map((runner, idx) => {
-                        const runnerKey = `${runner.chain}-${runner.address}`;
-                        const runnerState = expandedRunners[runnerKey] || {};
+              <div className="space-y-3">
+                {/* Batch Selection Controls */}
+                {mode === 'wallet' && (
+                  <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="text-sm font-semibold">
+                          {selectedRunners.length} selected
+                        </div>
+                        {selectedRunners.length > 0 && (
+                          <button
+                            onClick={clearRunnerSelection}
+                            className="text-xs text-gray-400 hover:text-white"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          onClick={selectAllRunners}
+                          className="text-xs text-purple-400 hover:text-purple-300"
+                        >
+                          Select All ({trendingRunners.length})
+                        </button>
+                      </div>
 
-                        return (
-                          <React.Fragment key={runnerKey}>
-                            <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                              <td className="px-4 py-3 text-sm text-gray-400">#{idx + 1}</td>
-                              <td className="px-4 py-3">
-                                <div>
-                                  <div className="font-semibold text-sm">{runner.ticker}</div>
-                                  <div className="text-xs text-gray-400">{runner.chain?.toUpperCase()}</div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-right text-sm font-mono">{formatPrice(runner.price)}</td>
-                              <td className="px-4 py-3 text-right">
-                                <span className="inline-flex items-center px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm font-bold">
-                                  {runner.multiplier}x
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-right text-sm">{formatNumber(runner.liquidity)}</td>
-                              <td className="px-4 py-3 text-right text-xs text-gray-400">{runner.age || 'N/A'}</td>
-                              <td className="px-4 py-3 text-right">
-                                <button
-                                  onClick={() => analyzeRunner(runner)}
-                                  disabled={runnerState.loading}
-                                  className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-xs font-medium transition-all duration-200"
-                                >
-                                  {runnerState.loading ? 'Analyzing...' : 'Analyze'}
-                                </button>
-                              </td>
-                            </tr>
+                      <div className="flex items-center gap-3">
+                        {/* Auto-refresh toggle */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setAutoRefresh(!autoRefresh)}
+                            className={`w-10 h-5 rounded-full transition-all duration-300 ${
+                              autoRefresh ? 'bg-green-600' : 'bg-gray-600'
+                            }`}
+                          >
+                            <div className={`w-4 h-4 bg-white rounded-full transition-all duration-300 transform ${
+                              autoRefresh ? 'translate-x-5' : 'translate-x-1'
+                            }`} />
+                          </button>
+                          <span className="text-xs text-gray-400">
+                            Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
+                          </span>
+                        </div>
 
-                            {runnerState.expanded && (
-                              <tr className="bg-black/30 border-b border-white/5">
-                                <td colSpan="7" className="px-4 py-3">
-                                  <div className="text-sm">
-                                    <div className="font-semibold mb-2 text-purple-400">
-                                      {mode === 'twitter' ? 'Twitter Accounts:' : 'Smart Money Wallets:'}
-                                    </div>
-                                    {runnerState.data && runnerState.data.length === 0 ? (
-                                      <div className="text-xs text-gray-500">No data found</div>
-                                    ) : (
-                                      <div className="grid grid-cols-1 gap-2">
-                                        {runnerState.data?.slice(0, 5).map((item, i) => (
-                                          <div key={i} className="p-3 bg-white/5 rounded">
-                                            {mode === 'twitter' ? (
-                                              <div className="text-xs flex justify-between items-center">
-                                                <span>@{item.username}</span>
-                                                <span className="text-gray-400">Influence: {item.influence_score}</span>
-                                              </div>
-                                            ) : (
-                                              <>
-                                                <div className="flex justify-between items-center mb-2">
-                                                  <span className="font-mono text-sm">{item.wallet?.slice(0, 16)}...</span>
-                                                  <div className="flex items-center gap-2">
-                                                    {item.professional_grade && item.professional_score && (
-                                                      <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                                                        {item.professional_grade} • {item.professional_score}
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                                
-                                                <div className="text-xs text-gray-400 mb-2">
-                                                  {item.roi_percent}% ROI • {item.runner_hits_30d} runners (30d)
-                                                </div>
-                                                
-                                                {item.other_runners && item.other_runners.length > 0 && (
-                                                  <div className="mt-3 space-y-2">
-                                                    <div className="text-xs font-semibold text-gray-400">
-                                                      Other 5x+ Runners (Last 30 Days):
-                                                    </div>
-                                                    {item.other_runners.map((r, ri) => (
-                                                      <div key={ri} className="text-xs bg-black/40 rounded p-2">
-                                                        <span className="font-semibold">{r.symbol}</span>
-                                                        <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
-                                                      </div>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
+                        {lastRefreshTime && (
+                          <div className="text-xs text-gray-500">
+                            Last: {lastRefreshTime.toLocaleTimeString()}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={analyzeBatchRunners}
+                          disabled={selectedRunners.length === 0 || isBatchAnalyzing}
+                          className="px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold text-sm transition-all duration-300 flex items-center gap-2 shadow-lg shadow-purple-500/30"
+                        >
+                          {isBatchAnalyzing ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Analyzing {selectedRunners.length}...
+                            </>
+                          ) : (
+                            <>
+                              <BarChart3 size={16} />
+                              Batch Analyze ({selectedRunners.length})
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-white/10">
+                        <tr>
+                          {mode === 'wallet' && (
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                              <input
+                                type="checkbox"
+                                checked={selectedRunners.length === trendingRunners.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    selectAllRunners();
+                                  } else {
+                                    clearRunnerSelection();
+                                  }
+                                }}
+                                className="w-4 h-4 rounded bg-white/10 border-white/20 cursor-pointer"
+                              />
+                            </th>
+                          )}
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">#</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Token</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Price</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Multiplier</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Liquidity</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Age</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trendingRunners.map((runner, idx) => {
+                          const runnerKey = `${runner.chain}-${runner.address}`;
+                          const runnerState = expandedRunners[runnerKey] || {};
+                          const isSelected = selectedRunners.some(r => r.address === runner.address);
+
+                          return (
+                            <React.Fragment key={runnerKey}>
+                              <tr className={`border-b border-white/5 hover:bg-white/5 transition-colors ${
+                                isSelected ? 'bg-purple-500/10' : ''
+                              }`}>
+                                {mode === 'wallet' && (
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleRunnerSelection(runner)}
+                                      className="w-4 h-4 rounded bg-white/10 border-white/20 cursor-pointer"
+                                    />
+                                  </td>
+                                )}
+                                <td className="px-4 py-3 text-sm text-gray-400">#{idx + 1}</td>
+                                <td className="px-4 py-3">
+                                  <div>
+                                    <div className="font-semibold text-sm">{runner.ticker}</div>
+                                    <div className="text-xs text-gray-400">{runner.chain?.toUpperCase()}</div>
                                   </div>
                                 </td>
+                                <td className="px-4 py-3 text-right text-sm font-mono">{formatPrice(runner.current_price)}</td>
+                                <td className="px-4 py-3 text-right">
+                                  <span className="inline-flex items-center px-2 py-1 bg-green-500/20 text-green-400 rounded text-sm font-bold">
+                                    {runner.multiplier}x
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right text-sm">{formatNumber(runner.liquidity)}</td>
+                                <td className="px-4 py-3 text-right text-xs text-gray-400">{runner.age || 'N/A'}</td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    onClick={() => analyzeRunner(runner)}
+                                    disabled={runnerState.loading}
+                                    className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-xs font-medium transition-all duration-200"
+                                  >
+                                    {runnerState.loading ? 'Analyzing...' : 'Analyze'}
+                                  </button>
+                                </td>
                               </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+
+                              {runnerState.expanded && (
+                                <tr className="bg-black/30 border-b border-white/5">
+                                  <td colSpan={mode === 'wallet' ? 8 : 7} className="px-4 py-3">
+                                    <div className="text-sm">
+                                      <div className="font-semibold mb-2 text-purple-400">
+                                        {mode === 'twitter' ? 'Twitter Accounts:' : 'Smart Money Wallets:'}
+                                      </div>
+                                      {runnerState.data && runnerState.data.length === 0 ? (
+                                        <div className="text-xs text-gray-500">No data found</div>
+                                      ) : (
+                                        <div className="grid grid-cols-1 gap-2">
+                                          {runnerState.data?.slice(0, 5).map((item, i) => (
+                                            <div key={i} className="p-3 bg-white/5 rounded">
+                                              {mode === 'twitter' ? (
+                                                <div className="text-xs flex justify-between items-center">
+                                                  <span>@{item.username}</span>
+                                                  <span className="text-gray-400">Influence: {item.influence_score}</span>
+                                                </div>
+                                              ) : (
+                                                <>
+                                                  <div className="flex justify-between items-center mb-2">
+                                                    <span className="font-mono text-sm">{item.wallet?.slice(0, 16)}...</span>
+                                                    <div className="flex items-center gap-2">
+                                                      {item.professional_grade && item.professional_score && (
+                                                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
+                                                          {item.professional_grade} • {item.professional_score}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                  
+                                                  <div className="text-xs text-gray-400 mb-2">
+                                                    {item.roi_percent}% ROI • {item.runner_hits_30d} runners (30d)
+                                                  </div>
+                                                  
+                                                  {item.other_runners && item.other_runners.length > 0 && (
+                                                    <div className="mt-3 space-y-2">
+                                                      <div className="text-xs font-semibold text-gray-400">
+                                                        Other 5x+ Runners (Last 30 Days):
+                                                      </div>
+                                                      {item.other_runners.map((r, ri) => (
+                                                        <div key={ri} className="text-xs bg-black/40 rounded p-2">
+                                                          <span className="font-semibold">{r.symbol}</span>
+                                                          <span className="ml-2">{r.multiplier}x • ROI: {r.roi_multiplier}x</span>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -1994,60 +2309,60 @@ const handleReplaceWallet = async (newWallet) => {
             )}
           </div>
         )}
-{/* ========== WATCHLIST TAB ========== */}
+
         {/* ========== WATCHLIST TAB ========== */}
-{activeTab === 'watchlist' && (
-  <div className="space-y-4">
-    {/* Health Dashboard */}
-    <WalletHealthDashboard
-      wallets={walletWatchlist}
-      stats={walletWatchlistStats}
-      onViewWallet={(wallet) => {
-        console.log('View wallet:', wallet);
-      }}
-      onFindReplacements={(walletAddress, autoReplace) => {
-        findReplacements(walletAddress);
-      }}
-      onRefresh={() => {
-        loadWalletWatchlist();
-      }}
-    />
+        {activeTab === 'watchlist' && (
+          <div className="space-y-4">
+            {/* Health Dashboard */}
+            <WalletHealthDashboard
+              wallets={walletWatchlist}
+              stats={walletWatchlistStats}
+              onViewWallet={(wallet) => {
+                console.log('View wallet:', wallet);
+              }}
+              onFindReplacements={(walletAddress, autoReplace) => {
+                findReplacements(walletAddress);
+              }}
+              onRefresh={() => {
+                loadWalletWatchlist();
+              }}
+            />
 
-    {/* Premier League Table */}
-    <WalletLeagueTable
-      wallets={walletWatchlist}
-      promotionQueue={walletWatchlistStats?.promotion_queue || []}
-      onReplace={(oldWallet, newWallet) => {
-        if (oldWallet) {
-          setCurrentDecliningWallet(oldWallet);
-          findReplacements(oldWallet.wallet_address);
-        } else {
-          handleReplaceWallet(newWallet);
-        }
-      }}
-      onExpand={(wallet) => {
-        console.log('Expanded wallet:', wallet);
-      }}
-      onConfigure={(wallet) => {
-        setAlertSettingsWallet(wallet.wallet_address);
-      }}
-    />
+            {/* Premier League Table */}
+            <WalletLeagueTable
+              wallets={walletWatchlist}
+              promotionQueue={walletWatchlistStats?.promotion_queue || []}
+              onReplace={(oldWallet, newWallet) => {
+                if (oldWallet) {
+                  setCurrentDecliningWallet(oldWallet);
+                  findReplacements(oldWallet.wallet_address);
+                } else {
+                  handleReplaceWallet(newWallet);
+                }
+              }}
+              onExpand={(wallet) => {
+                console.log('Expanded wallet:', wallet);
+              }}
+              onConfigure={(wallet) => {
+                setAlertSettingsWallet(wallet.wallet_address);
+              }}
+            />
 
-    {/* Replacement Modal */}
-    {showReplacementModal && (
-      <WalletReplacementModal
-        currentWallet={currentDecliningWallet}
-        suggestions={replacementSuggestions}
-        onReplace={handleReplaceWallet}
-        onDismiss={() => {
-          setShowReplacementModal(false);
-          setCurrentDecliningWallet(null);
-          setReplacementSuggestions([]);
-        }}
-      />
-    )}
-  </div>
-)}
+            {/* Replacement Modal */}
+            {showReplacementModal && (
+              <WalletReplacementModal
+                currentWallet={currentDecliningWallet}
+                suggestions={replacementSuggestions}
+                onReplace={handleReplaceWallet}
+                onDismiss={() => {
+                  setShowReplacementModal(false);
+                  setCurrentDecliningWallet(null);
+                  setReplacementSuggestions([]);
+                }}
+              />
+            )}
+          </div>
+        )}
 
         {/* ========== SETTINGS TAB ========== */}
         {activeTab === 'settings' && (
@@ -2067,7 +2382,10 @@ const handleReplaceWallet = async (newWallet) => {
             </div>
 
             {activeSettingsTab === 'telegram' && (
-              <TelegramSettings userId={userId} apiUrl={API_URL} />
+              <TelegramSettings 
+                userId={user?.id} 
+                apiUrl={import.meta.env.VITE_API_URL} 
+              />
             )}
           </div>
         )}
