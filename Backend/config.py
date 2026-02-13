@@ -16,14 +16,14 @@ class Config:
     # Rate limiting
     RATELIMIT_STORAGE_URI = "memory://"
     RATELIMIT_STRATEGY = "fixed-window"
-    RATELIMIT_DEFAULT = ["200 per day", "50 per hour"]
+    RATELIMIT_DEFAULT = ["10000 per day", "1000 per hour"]  # ✅ Much higher
 
     # Analysis rate limits
     ANALYZE_RATE_LIMIT_HOUR = "5 per hour"
     ANALYZE_RATE_LIMIT_DAY = "20 per day"
 
     # Watchlist rate limits
-    WATCHLIST_WRITE_LIMIT = "30 per hour"
+    WATCHLIST_WRITE_LIMIT = "1000 per hour"
     WATCHLIST_READ_LIMIT = "60 per hour"
 
     # Supabase Configuration
