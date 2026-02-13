@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookmarkPlus, Trash2, Tag, StickyNote, TrendingUp, Users, Search, Wallet, Settings, Bell, BellOff, Plus } from 'lucide-react';
+import { BookmarkPlus, Trash2, Tag, StickyNote, Users, Wallet, Settings, Bell, BellOff } from 'lucide-react';
 import WalletAlertSettings from './WalletAlertSettings';
 import { supabase } from './lib/supabase';
 
@@ -232,45 +232,6 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  // Quick Add Handler
-  const handleQuickAdd = async () => {
-    const input = document.getElementById('quickAddInput');
-    const address = input.value.trim();
-    
-    if (!address) {
-      alert('Please enter a wallet address');
-      return;
-    }
-    
-    try {
-      const headers = await getHeaders();
-      const response = await fetch(`${apiUrl}/api/wallets/watchlist/add-quick`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          user_id: userId,
-          wallet_address: address,
-          notes: 'Stress test - monitoring 100 txs',
-          tags: ['stress-test', 'exchange', 'high-volume']
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        alert(`✅ ${address.slice(0, 8)}... added!\n\nAlerts: ENABLED\nBuys: ON\nSells: ON\nMin Trade: $10\n\nMonitoring will start in 2 minutes.`);
-        input.value = '';
-        loadWalletWatchlist();
-        loadWalletStats();
-      } else {
-        alert(`❌ ${data.error || 'Failed to add wallet'}`);
-      }
-    } catch (error) {
-      console.error('Error adding wallet:', error);
-      alert('Error adding wallet');
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="text-center py-12">
@@ -369,6 +330,110 @@ export default function Watchlist({ userId, apiUrl }) {
                         </button>
                       </div>
                     </div>
+
+                    {/* Tags */}
+                    <div className="mb-2">
+                      {editingTags === account.author_id ? (
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={newTags}
+                            onChange={(e) => setNewTags(e.target.value)}
+                            placeholder="Enter tags (comma separated)"
+                            className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-1 text-sm"
+                          />
+                          <button
+                            onClick={() => updateTags(account.author_id, newTags)}
+                            className="px-3 py-1 bg-purple-600 rounded text-sm"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingTags(null);
+                              setNewTags('');
+                            }}
+                            className="px-3 py-1 bg-white/10 rounded text-sm"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Tag size={14} className="text-gray-400" />
+                          {account.tags && account.tags.length > 0 ? (
+                            account.tags.map((tag, idx) => (
+                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-gray-500">No tags</span>
+                          )}
+                          <button
+                            onClick={() => {
+                              setEditingTags(account.author_id);
+                              setNewTags(account.tags ? account.tags.join(', ') : '');
+                            }}
+                            className="text-xs text-purple-400 hover:text-purple-300"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Notes */}
+                    <div>
+                      {editingNotes === account.author_id ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={newNote}
+                            onChange={(e) => setNewNote(e.target.value)}
+                            placeholder="Add notes about this account..."
+                            className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                            rows={3}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => updateNotes(account.author_id, newNote)}
+                              className="px-3 py-1 bg-purple-600 rounded text-sm"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingNotes(null);
+                                setNewNote('');
+                              }}
+                              className="px-3 py-1 bg-white/10 rounded text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2">
+                          <StickyNote size={14} className="text-gray-400 mt-0.5" />
+                          <div className="flex-1">
+                            {account.notes ? (
+                              <p className="text-sm text-gray-300">{account.notes}</p>
+                            ) : (
+                              <span className="text-xs text-gray-500">No notes</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => {
+                              setEditingNotes(account.author_id);
+                              setNewNote(account.notes || '');
+                            }}
+                            className="text-xs text-purple-400 hover:text-purple-300"
+                          >
+                            {account.notes ? 'Edit' : 'Add'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -380,31 +445,6 @@ export default function Watchlist({ userId, apiUrl }) {
       {/* Wallet Watchlist Tab */}
       {activeWatchlistTab === 'wallets' && (
         <>
-          {/* QUICK ADD TEST WALLET SECTION */}
-          <div className="mb-4 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
-            <h3 className="text-sm font-semibold text-purple-300 mb-3">
-              🧪 Quick Add Test Wallet (Stress Test)
-            </h3>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                placeholder="Paste wallet address..."
-                className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
-                id="quickAddInput"
-              />
-              <button
-                onClick={handleQuickAdd}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition flex items-center gap-2"
-              >
-                <Plus size={18} />
-                Add to Watchlist
-              </button>
-            </div>
-            <div className="mt-2 text-xs text-gray-400">
-              💡 Try: <code className="bg-black/30 px-2 py-0.5 rounded">5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9</code> (Binance hot wallet - high volume)
-            </div>
-          </div>
-
           {/* Stats Grid */}
           {walletStats && (
             <div className="grid grid-cols-4 gap-4">
@@ -433,7 +473,7 @@ export default function Watchlist({ userId, apiUrl }) {
               <Wallet className="mx-auto mb-4 text-gray-400" size={48} />
               <h3 className="text-lg font-semibold mb-2">No Wallets in Watchlist</h3>
               <p className="text-sm text-gray-400">
-                Use the Quick Add above to add a test wallet, or run wallet analysis to find smart money wallets
+                Run wallet analysis and add high-performing wallets here
               </p>
             </div>
           ) : (
@@ -648,8 +688,7 @@ export default function Watchlist({ userId, apiUrl }) {
         <WalletAlertSettings
           walletAddress={alertSettingsWallet}
           onClose={() => setAlertSettingsWallet(null)}
-          onSave={(settings) => {
-            console.log('Alert settings saved:', settings);
+          onSave={() => {
             loadWalletWatchlist();
           }}
         />
