@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders, LogOut, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef,  useCallback } from 'react';
+import { Search, CheckSquare, Square, TrendingUp, Clock, Settings, Wallet, BarChart3, BookmarkPlus, X, ExternalLink, Users, Trash2, Tag, StickyNote, ChevronDown, ChevronUp, RotateCcw, AlertCircle, Zap, Filter, Sliders, LogOut, Loader2, Plus } from 'lucide-react';
 import WalletActivityMonitor from './WalletActivityMonitor.jsx';
 import WalletAlertSettings from './WalletAlertSettings.jsx';
 import TelegramSettings from './TelegramSettings';
@@ -26,7 +26,12 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
     if (allTokens.length <= 3) return allTokens.join(', ');
     return `${allTokens.slice(0, 3).join(', ')} +${allTokens.length - 3} more`;
   };
+
+  const [isAddingWallet, setIsAddingWallet] = useState(false);
   
+
+
+
   const tokenDisplay = getTokenDisplay();
   const isSingleToken = (wallet.analyzed_tokens?.length || 0) === 1;
   
@@ -69,7 +74,7 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
           </button>
         </div>
 
-        {/* ✅ Professional Score Breakdown with CORRECT LABELS */}
+        {/* Professional Score Breakdown with CORRECT LABELS */}
         {wallet.score_breakdown && (
           <div className="mb-3 border-t border-white/10 pt-3">
             <div className="text-xs font-semibold text-gray-400 mb-2">
@@ -122,6 +127,18 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
                 )}
               </div>
             </div>
+            
+            {/* ✅ ONLY SHOW CONSISTENCY FOR MULTI-TOKEN */}
+            {wallet.consistency_score !== undefined && (
+              <div className="mt-2 p-2 bg-purple-500/10 rounded border border-purple-500/20">
+                <div className="text-xs font-semibold text-purple-400 mb-1">
+                  Consistency Score: {wallet.consistency_score}
+                </div>
+                <div className="text-xs text-gray-500">
+                  How consistently this wallet enters at similar price points across multiple tokens
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -383,11 +400,16 @@ export default function SifterKYS() {
   const [expandedTokens, setExpandedTokens] = useState({});
   const [expandedWallets, setExpandedWallets] = useState({});
   
+  // ========== ANALYSIS PROGRESS ==========
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisPhase, setAnalysisPhase] = useState('');
+  
   // ========== WATCHLIST ==========
   const [twitterWatchlist, setTwitterWatchlist] = useState([]);
   const [twitterWatchlistStats, setTwitterWatchlistStats] = useState(null);
   const [walletWatchlist, setWalletWatchlist] = useState([]);
   const [walletWatchlistStats, setWalletWatchlistStats] = useState(null);
+  const [isLoadingWatchlist, setIsLoadingWatchlist] = useState(false);  
   const [editingNotes, setEditingNotes] = useState(null);
   const [editingTags, setEditingTags] = useState(null);
   const [newNote, setNewNote] = useState('');
@@ -464,8 +486,11 @@ export default function SifterKYS() {
         loadWalletWatchlist();
         loadWalletWatchlistStats();
       }
-    }
-  }, [activeTab, mode]);
+    } 
+  }, [activeTab, mode, userId]);
+
+
+  
 
   useEffect(() => {
     const saved = localStorage.getItem('sifter_wallet');
@@ -707,9 +732,8 @@ export default function SifterKYS() {
           throw new Error(data.error || 'Analysis failed');
         }
       } else {
-        const endpoint = '/api/wallets/analyze';
-
-        const response = await authFetch(`${API_URL}${endpoint}`, {
+        // ✅ Use Realtime - Submit job and listen for updates
+        const response = await authFetch(`${API_URL}/api/wallets/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -727,13 +751,41 @@ export default function SifterKYS() {
 
         const data = await response.json();
 
-        if (response.ok && data.success) {
+        if (response.status === 202 && data.job_id) {
+          // Listen for completion via Realtime
+          const subscription = supabase
+            .channel('analysis_updates')
+            .on('postgres_changes', {
+              event: 'UPDATE',
+              schema: 'sifter_dev',
+              table: 'analysis_jobs',
+              filter: `job_id=eq.${data.job_id}`
+            }, (payload) => {
+              console.log('Analysis update:', payload.new);
+              
+              // ✅ Update progress
+              setAnalysisProgress(payload.new.progress || 0);
+              setAnalysisPhase(payload.new.phase || '');
+              
+              if (payload.new.status === 'completed') {
+                setWalletResults(payload.new.results);
+                setIsAnalyzing(false);
+                subscription.unsubscribe();
+              } else if (payload.new.status === 'failed') {
+                alert('Analysis failed: ' + payload.new.results?.error);
+                setIsAnalyzing(false);
+                subscription.unsubscribe();
+              }
+            })
+            .subscribe();
+        } else if (response.ok && data.success) {
           setWalletResults(data);
           const expanded = {};
           data.top_wallets?.forEach((_, idx) => {
             expanded[idx] = true;
           });
           setExpandedWallets(expanded);
+          setIsAnalyzing(false);
         } else {
           throw new Error(data.error || 'Wallet analysis failed');
         }
@@ -741,9 +793,57 @@ export default function SifterKYS() {
     } catch (error) {
       console.error('Analysis error:', error);
       alert(`Analysis failed: ${error.message}`);
+      setIsAnalyzing(false);
+    }
+  };
+
+  // ========== STREAMING ANALYSIS FUNCTION ==========
+  const handleAnalysisStreaming = async () => {
+    if (selectedTokens.length === 0) {
+      alert('Please select at least one token');
+      return;
     }
 
-    setIsAnalyzing(false);
+    setIsAnalyzing(true);
+    setActiveTab('results');
+    setWalletResults({ top_wallets: [] });  // Initialize empty
+
+    const tokensToAnalyze = selectedTokens.map(token => ({
+      address: token.address,
+      ticker: token.ticker,
+      name: token.name,
+      chain: token.chain,
+      pair_address: token.pairAddress
+    }));
+
+    // ✅ Use EventSource for streaming
+    const eventSource = new EventSource(
+      `${API_URL}/api/wallets/analyze/stream?` + 
+      new URLSearchParams({ tokens: JSON.stringify(tokensToAnalyze), user_id: userId })
+    );
+
+    eventSource.onmessage = (event) => {
+      const tokenResult = JSON.parse(event.data);
+      
+      if (tokenResult.done) {
+        eventSource.close();
+        setIsAnalyzing(false);
+        return;
+      }
+
+      // ✅ Append results progressively
+      setWalletResults(prev => ({
+        ...prev,
+        top_wallets: [...(prev.top_wallets || []), ...tokenResult.top_wallets]
+      }));
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('Stream error:', error);
+      eventSource.close();
+      setIsAnalyzing(false);
+      alert('Analysis stream failed');
+    };
   };
 
   // ========== BATCH ANALYSIS FUNCTIONS ==========
@@ -826,18 +926,30 @@ export default function SifterKYS() {
     }
   };
 
-  const loadWalletWatchlist = async () => {
-    try {
-      const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
-      const data = await response.json();
-      if (data.success) {
-        setWalletWatchlist(data.wallets || []);
-        setWalletWatchlistStats(data.stats || null);
-      }
-    } catch (error) {
-      console.error('Error loading wallet watchlist:', error);
+ const loadWalletWatchlist = useCallback(async () => {
+   if (isLoadingWatchlist) return;  // ← Prevent duplicate calls
+  
+ setIsLoadingWatchlist(true);
+  try {
+    const response = await authFetch(`${API_URL}/api/wallets/watchlist/table?user_id=${userId}`);
+    const data = await response.json();
+    
+    if (response.status === 429) {
+      console.warn('Rate limited - will retry in 5 seconds');
+      setTimeout(loadWalletWatchlist, 5000);
+      return;
     }
-  };
+    
+    if (data.success) {
+      setWalletWatchlist(data.wallets || []);
+      setWalletWatchlistStats(data.stats || null);
+    }
+  } catch (error) {
+    console.error('Error loading wallet watchlist:', error);
+  } finally {
+    setIsLoadingWatchlist(false);
+  }
+}, [userId, isLoadingWatchlist, authFetch]);  // ← Add dependencies
 
   const loadWalletWatchlistStats = async () => {
     try {
@@ -869,29 +981,13 @@ export default function SifterKYS() {
 
   const addToWalletWatchlist = async (wallet) => {
     try {
-      // ✅ FIX: Map fields correctly to match backend schema
+      // ✅ Let backend handle the mapping - send the whole object
       const response = await authFetch(`${API_URL}/api/wallets/watchlist/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           user_id: userId, 
-          wallet: {
-            wallet: wallet.wallet,  // ✅ Backend maps to wallet_address
-            tier: wallet.professional_grade === 'A+' ? 'S' : 
-                  wallet.professional_grade?.startsWith('A') ? 'A' :
-                  wallet.professional_grade?.startsWith('B') ? 'B' : 'C',
-            pump_count: wallet.runner_hits_30d || 0,
-            avg_distance_to_ath_pct: wallet.ath_distance || 0,
-            avg_roi_to_peak_pct: wallet.roi_percent || 0,
-            consistency_score: wallet.professional_score || 0,
-            token_list: wallet.other_runners?.map(r => r.symbol) || []  // ✅ Mapped to tokens_hit
-          },
-          alert_settings: {
-            alert_enabled: true,
-            alert_on_buy: true,
-            alert_on_sell: false,
-            min_trade_usd: 100
-          }
+          wallet: wallet  // ✅ Just send the whole object
         })
       });
       
@@ -899,6 +995,7 @@ export default function SifterKYS() {
       
       if (data.success) {
         alert('✅ Added to wallet watchlist with alerts enabled!');
+        loadWalletWatchlist();
       } else {
         alert(`❌ Failed: ${data.error}`);
       }
@@ -1250,6 +1347,8 @@ export default function SifterKYS() {
       setBatchResults(null);
       setExpandedTokens({});
       setExpandedWallets({});
+      setAnalysisProgress(0);
+      setAnalysisPhase('');
     }
   };
 
@@ -1568,7 +1667,7 @@ export default function SifterKYS() {
 
                 {/* Run Analysis Button */}
                 <button
-                  onClick={handleAnalysis}
+                  onClick={handleAnalysisStreaming}  // Changed from handleAnalysis to handleAnalysisStreaming
                   disabled={isAnalyzing}
                   className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30"
                 >
@@ -1580,7 +1679,7 @@ export default function SifterKYS() {
                   ) : (
                     <>
                       <BarChart3 size={18} />
-                      Run {mode === 'twitter' ? 'Twitter' : 'Wallet'} Analysis
+                      Run Analysis (Streaming)
                     </>
                   )}
                 </button>
@@ -1596,9 +1695,13 @@ export default function SifterKYS() {
               <div className="bg-white/5 border border-white/10 rounded-xl p-12 flex flex-col items-center justify-center gap-4">
                 <div className="w-10 h-10 border-4 border-white/20 border-t-purple-500 rounded-full animate-spin" />
                 <div className="text-base text-gray-300 font-semibold">
-                  Running {mode === 'twitter' ? 'Twitter' : 'Wallet'} Analysis…
+                  Analyzing... {analysisProgress}%
                 </div>
-                <div className="text-xs text-gray-500">This may take a moment</div>
+                {analysisPhase && (
+                  <div className="text-xs text-gray-500">
+                    {analysisPhase.replace('_', ' ')}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2313,6 +2416,75 @@ export default function SifterKYS() {
         {/* ========== WATCHLIST TAB ========== */}
         {activeTab === 'watchlist' && (
           <div className="space-y-4">
+            
+            {/* 🧪 QUICK ADD TEST WALLET - ADD THIS SECTION */}
+            <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                <Plus size={16} />
+                🧪 Quick Add Test Wallet (Stress Test)
+              </h3>
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  placeholder="Paste wallet address..."
+                  className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  id="quickAddInput"
+                />
+                <button
+                  onClick={async () => {if (isAddingWallet) return;setIsAddingWallet(true);
+
+
+
+
+                    const input = document.getElementById('quickAddInput');
+                    const address = input.value.trim();
+                    
+                    if (!address) {
+                      alert('Please enter a wallet address');
+                      return;
+                    }
+                    
+                    try {
+                      const token = getAccessToken();
+                      const response = await fetch(`${API_URL}/api/wallets/watchlist/add-quick`, {
+                        method: 'POST',
+                        headers: { 
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                          user_id: userId,
+                          wallet_address: address,
+                          notes: 'Stress test - monitoring 100 txs',
+                          tags: ['stress-test', 'exchange', 'high-volume']
+                        })
+                      });
+                      
+                      const data = await response.json();
+                      
+                      if (data.success) {
+                        alert(`✅ ${address.slice(0, 8)}... added!\n\nAlerts: ENABLED\nBuys: ON\nSells: ON\nMin Trade: $10\n\nMonitoring will start in 2 minutes.`);
+                        input.value = '';
+                        loadWalletWatchlist(); // Refresh the table
+                      } else {
+                        alert(`❌ ${data.error || 'Failed to add wallet'}`);
+                      }
+                    } catch (error) {
+                      console.error('Error adding wallet:', error);
+                      alert('Error adding wallet');
+                    }
+                  }}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition flex items-center gap-2"
+                >
+                  <Plus size={18} />
+                  Add to Watchlist
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-gray-400">
+                💡 Try: <code className="bg-black/30 px-2 py-0.5 rounded">5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9</code> (Binance hot wallet - high volume)
+              </div>
+            </div>
+
             {/* Health Dashboard */}
             <WalletHealthDashboard
               wallets={walletWatchlist}

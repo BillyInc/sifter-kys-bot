@@ -177,43 +177,30 @@ class WatchlistDatabase:
     # =========================================================================
 
     def add_wallet_to_watchlist(self, user_id: str, wallet_data: Dict) -> bool:
-        """Add a wallet to user's watchlist."""
         try:
             self.create_user(user_id)
-
+            
+            # Ensure tags and tokens are lists
             tags = wallet_data.get('tags', [])
-            if isinstance(tags, str):
-                tags = json.loads(tags) if tags else []
-
             tokens_hit = wallet_data.get('tokens_hit', [])
-            if isinstance(tokens_hit, str):
-                tokens_hit = tokens_hit.split(',') if tokens_hit else []
-
-            # ✅ FIX: Set default alert settings when adding wallet
             self._table('wallet_watchlist').upsert({
                 'user_id': user_id,
                 'wallet_address': wallet_data['wallet_address'],
                 'tier': wallet_data.get('tier', 'C'),
                 'pump_count': wallet_data.get('pump_count', 0),
-                'avg_distance_to_peak': wallet_data.get('avg_distance_to_peak', 0),
-                'avg_roi_to_peak': wallet_data.get('avg_roi_to_peak', 0),
+                'avg_distance_to_peak': wallet_data.get('avg_distance_to_peak', 0), # Now matches SQL
+                'avg_roi_to_peak': wallet_data.get('avg_roi_to_peak', 0),           # Now matches SQL
                 'consistency_score': wallet_data.get('consistency_score', 0),
                 'tokens_hit': tokens_hit,
                 'notes': wallet_data.get('notes', ''),
                 'tags': tags,
-                # ✅ ADD: Default alert settings
                 'alert_enabled': wallet_data.get('alert_enabled', True),
                 'alert_threshold_usd': wallet_data.get('alert_threshold_usd', 100),
                 'last_updated': datetime.utcnow().isoformat()
             }, on_conflict='user_id,wallet_address').execute()
-
-            print(f"[WATCHLIST DB] Added wallet {wallet_data['wallet_address'][:8]}... to watchlist")
             return True
-
         except Exception as e:
-            print(f"[WATCHLIST DB] Error adding wallet: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[WATCHLIST DB] Error: {e}")
             return False
 
     def get_wallet_watchlist(self, user_id: str, tier_filter: str = None) -> List[Dict]:
@@ -531,10 +518,8 @@ class WatchlistDatabase:
         return alerts
 
     def save_position_snapshot(self, user_id: str) -> bool:
-        """Save current positions to history table."""
         try:
             table_data = self.get_premier_league_table(user_id)
-            
             today = datetime.utcnow().date().isoformat()
             
             snapshots = []
@@ -545,28 +530,20 @@ class WatchlistDatabase:
                     'date': today,
                     'position': wallet['position'],
                     'tier': wallet['tier'],
-                    'professional_score': wallet['professional_score'],
-                    'runners_30d': wallet['runners_30d'],
-                    'roi_30d': wallet['roi_30d'],
-                    'form_score': 0,
-                    'consistency_score': wallet['consistency_score']
+                    'avg_distance_to_peak': wallet.get('avg_distance_to_peak', 0), # Added to history
+                    'professional_score': wallet.get('professional_score', 0),
+                    'runners_30d': wallet.get('runners_30d', 0),
+                    'roi_30d': wallet.get('roi_30d', 0),
+                    'form_score': 0, 
+                    'consistency_score': wallet.get('consistency_score', 0)
                 })
             
             if snapshots:
-                self._table('wallet_performance_history').upsert(
-                    snapshots,
-                    on_conflict='user_id,wallet_address,date'
-                ).execute()
-                
-                print(f"[WATCHLIST DB] Saved position snapshot for {len(snapshots)} wallets")
+                self._table('wallet_performance_history').upsert(snapshots, on_conflict='user_id,wallet_address,date').execute()
                 return True
-            
             return False
-            
         except Exception as e:
-            print(f"[WATCHLIST DB] Error saving position snapshot: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[WATCHLIST DB] Snapshot Error: {e}")
             return False
 
     # =========================================================================
