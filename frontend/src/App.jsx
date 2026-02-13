@@ -68,62 +68,73 @@ const WalletResultCard = ({ wallet, idx, onAddToWatchlist }) => {
             <BookmarkPlus size={16} />
           </button>
         </div>
-
-        {/* ✅ Professional Score Breakdown with CORRECT LABELS */}
-        {wallet.score_breakdown && (
-          <div className="mb-3 border-t border-white/10 pt-3">
-            <div className="text-xs font-semibold text-gray-400 mb-2">
-              Professional Score Breakdown (60/30/10):
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              
-              {/* Distance to ATH (60%) */}
-              <div className="bg-white/5 rounded p-2">
-                <div className="text-sm font-bold text-blue-400 mb-1">
-                  {wallet.score_breakdown.distance_to_ath_score || 0}
-                </div>
-                <div className="text-xs text-gray-500 mb-2">Distance to ATH (60%)</div>
-                
-                {wallet.entry_to_ath_multiplier && (
-                  <div className="text-xs">
-                    <div className="text-blue-300">{wallet.entry_to_ath_multiplier}x below</div>
-                    {wallet.distance_to_ath_pct && (
-                      <div className="text-blue-300">{wallet.distance_to_ath_pct.toFixed(1)}% below</div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Realized Profit (30%) */}
-              <div className="bg-white/5 rounded p-2">
-                <div className="text-sm font-bold text-green-400 mb-1">
-                  {wallet.score_breakdown.realized_profit_score || 0}
-                </div>
-                <div className="text-xs text-gray-500 mb-2">Realized Profit (30%)</div>
-                
-                {wallet.realized_multiplier && (
-                  <div className="text-xs text-green-300">
-                    {wallet.realized_multiplier}x realized
-                  </div>
-                )}
-              </div>
-              
-              {/* Total Position (10%) */}
-              <div className="bg-white/5 rounded p-2">
-                <div className="text-sm font-bold text-purple-400 mb-1">
-                  {wallet.score_breakdown.total_position_score || 0}
-                </div>
-                <div className="text-xs text-gray-500 mb-2">Total Position (10%)</div>
-                
-                {wallet.total_multiplier && (
-                  <div className="text-xs text-purple-300">
-                    {wallet.total_multiplier}x total
-                  </div>
-                )}
-              </div>
-            </div>
+{/* Professional Score Breakdown with CORRECT LABELS */}
+{wallet.score_breakdown && (
+  <div className="mb-3 border-t border-white/10 pt-3">
+    <div className="text-xs font-semibold text-gray-400 mb-2">
+      Professional Score Breakdown (60/30/10):
+    </div>
+    <div className="grid grid-cols-3 gap-2">
+      
+      {/* Distance to ATH (60%) */}
+      <div className="bg-white/5 rounded p-2">
+        <div className="text-sm font-bold text-blue-400 mb-1">
+          {wallet.score_breakdown.distance_to_ath_score || 0}
+        </div>
+        <div className="text-xs text-gray-500 mb-2">Distance to ATH (60%)</div>
+        
+        {wallet.entry_to_ath_multiplier && (
+          <div className="text-xs">
+            <div className="text-blue-300">{wallet.entry_to_ath_multiplier}x below</div>
+            {wallet.distance_to_ath_pct && (
+              <div className="text-blue-300">{wallet.distance_to_ath_pct.toFixed(1)}% below</div>
+            )}
           </div>
         )}
+      </div>
+      
+      {/* Realized Profit (30%) */}
+      <div className="bg-white/5 rounded p-2">
+        <div className="text-sm font-bold text-green-400 mb-1">
+          {wallet.score_breakdown.realized_profit_score || 0}
+        </div>
+        <div className="text-xs text-gray-500 mb-2">Realized Profit (30%)</div>
+        
+        {wallet.realized_multiplier && (
+          <div className="text-xs text-green-300">
+            {wallet.realized_multiplier}x realized
+          </div>
+        )}
+      </div>
+      
+      {/* Total Position (10%) */}
+      <div className="bg-white/5 rounded p-2">
+        <div className="text-sm font-bold text-purple-400 mb-1">
+          {wallet.score_breakdown.total_position_score || 0}
+        </div>
+        <div className="text-xs text-gray-500 mb-2">Total Position (10%)</div>
+        
+        {wallet.total_multiplier && (
+          <div className="text-xs text-purple-300">
+            {wallet.total_multiplier}x total
+          </div>
+        )}
+      </div>
+    </div>
+    
+    {/* ✅ ONLY SHOW CONSISTENCY FOR MULTI-TOKEN */}
+    {wallet.consistency_score !== undefined && (
+      <div className="mt-2 p-2 bg-purple-500/10 rounded border border-purple-500/20">
+        <div className="text-xs font-semibold text-purple-400 mb-1">
+          Consistency Score: {wallet.consistency_score}
+        </div>
+        <div className="text-xs text-gray-500">
+          How consistently this wallet enters at similar price points across multiple tokens
+        </div>
+      </div>
+    )}
+  </div>
+)}
 
         {/* Main Stats */}
         <div className="grid grid-cols-4 gap-3 mb-3">

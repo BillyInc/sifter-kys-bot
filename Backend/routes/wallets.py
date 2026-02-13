@@ -61,13 +61,71 @@ def analyze_wallets():
     if request.method == 'OPTIONS':
         return '', 204
     
-    data = request.json
-    # ... (your validation)
-    
-    from flask import current_app
-    q = current_app.config['RQ_QUEUE']
-    job = q.enqueue('tasks.perform_wallet_analysis', data, job_timeout=600)  # tasks.py function
-    return jsonify({'job_id': job.id, 'status': 'queued'}), 202
+    try:
+        data = request.json
+        if not data.get('tokens'):
+            return jsonify({'error': 'tokens array required'}), 400
+
+        tokens = data['tokens']
+        min_roi_multiplier = data.get('global_settings', {}).get('min_roi_multiplier', 3.0)
+        user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+
+        wallet_analyzer = get_wallet_analyzer()
+
+        # If single token, use single analysis
+        if len(tokens) == 1:
+            token = tokens[0]
+            wallets = wallet_analyzer.analyze_token_professional(
+                token_address=token['address'],
+                token_symbol=token.get('ticker', 'UNKNOWN'),
+                min_roi_multiplier=min_roi_multiplier,
+                user_id=user_id
+            )
+            
+            # ✅ ADD analyzed_tokens and remove consistency_score
+            for wallet in wallets:
+                wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
+                if 'consistency_score' in wallet:
+                    del wallet['consistency_score']
+            
+            top_wallets = wallets[:20]
+            
+            return jsonify({
+                'success': True,
+                'top_wallets': top_wallets,
+                'tokens_analyzed': [token.get('ticker', 'UNKNOWN')],
+                'summary': {
+                    'qualified_wallets': len(wallets),
+                    'tokens_analyzed': 1,
+                }
+            }), 200
+
+        # Multiple tokens - use batch analysis
+        smart_money = wallet_analyzer.batch_analyze_tokens(
+            tokens=tokens,
+            min_roi_multiplier=min_roi_multiplier,
+            user_id=user_id
+        )
+        
+        # ✅ ADD analyzed_tokens for batch
+        for wallet in smart_money:
+            wallet['analyzed_tokens'] = wallet.get('tokens_hit', [])
+        
+        return jsonify({
+            'success': True,
+            'top_wallets': smart_money[:50],
+            'tokens_analyzed': [t.get('ticker', 'UNKNOWN') for t in tokens],
+            'summary': {
+                'qualified_wallets': len(smart_money),
+                'tokens_analyzed': len(tokens),
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"\n[ANALYZE ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @wallets_bp.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
@@ -127,12 +185,21 @@ def analyze_single_token():
             min_roi_multiplier=min_roi_multiplier,
             user_id=user_id
         )
+        
+        # ✅ ADD analyzed_tokens and remove consistency_score
+        for wallet in wallets:
+            wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
+            if 'consistency_score' in wallet:
+                del wallet['consistency_score']
+        
         top_wallets = wallets[:20]
+        
         return jsonify({
             'success': True,
             'token': token,
             'wallets': top_wallets,
             'total_wallets': len(wallets),
+            'tokens_analyzed': [token.get('ticker', 'UNKNOWN')],
             'mode': 'professional_single_6step',
             'data_source': 'TokenAnalyzer Relative Scoring',
             'summary': {
@@ -144,7 +211,7 @@ def analyze_single_token():
                 'total_roi': round(sum(w.get('roi_percent', 0) for w in top_wallets), 2) if top_wallets else 0,
                 'avg_roi': round(sum(w.get('roi_percent', 0) for w in top_wallets) / len(top_wallets), 2) if top_wallets else 0,
                 'avg_professional_score': round(sum(w.get('professional_score', 0) for w in top_wallets) / len(top_wallets), 2) if top_wallets else 0,
-                'avg_variance': 0,  # Single token has no variance
+                'avg_variance': 0,
                 'avg_runner_hits_30d': round(sum(w.get('runner_hits_30d', 0) for w in top_wallets) / len(top_wallets), 1) if top_wallets else 0,
                 'a_plus_consistency': sum(1 for w in top_wallets if w.get('professional_grade') == 'A+')
 
@@ -231,12 +298,19 @@ def analyze_trending_runner():
             min_roi_multiplier=min_roi_multiplier,
             user_id=user_id
         )
+        
+        # ✅ ADD analyzed_tokens and remove consistency_score
+        for wallet in wallets:
+            wallet['analyzed_tokens'] = [runner.get('symbol', 'UNKNOWN')]
+            if 'consistency_score' in wallet:
+                del wallet['consistency_score']
 
         return jsonify({
             'success': True,
             'runner': runner,
             'wallets': wallets[:20],
             'total_wallets': len(wallets),
+            'tokens_analyzed': [runner.get('symbol', 'UNKNOWN')],
         }), 200
 
     except Exception as e:
@@ -279,12 +353,17 @@ def analyze_trending_runners_batch():
             min_roi_multiplier=min_roi_multiplier,
             user_id=user_id
         )
+        
+        # ✅ ADD analyzed_tokens for batch
+        for wallet in smart_money:
+            wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
 
         return jsonify({
             'success': True,
             'runners_analyzed': len(runners),
             'wallets_discovered': len(smart_money),
             'smart_money_wallets': smart_money[:50],
+            'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners],
             'mode': 'batch_trending_token_overlap',
         }), 200
 
@@ -332,6 +411,10 @@ def auto_discover_wallets():
             min_roi_multiplier=min_roi_multiplier,
             user_id=user_id
         )
+        
+        # ✅ ADD analyzed_tokens for batch
+        for wallet in smart_money:
+            wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
 
         return jsonify({
             'success': True,
@@ -339,6 +422,7 @@ def auto_discover_wallets():
             'wallets_discovered': len(smart_money),
             'top_wallets': smart_money[:50],
             'smart_money_wallets': smart_money[:50],
+            'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners[:10]],
         }), 200
 
     except Exception as e:
@@ -395,8 +479,6 @@ def add_wallet_to_watchlist():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
-# Find this function in routes/wallets.py and REPLACE it:
 
 @wallets_bp.route('/watchlist/get', methods=['GET', 'OPTIONS'])
 @optional_auth
@@ -523,8 +605,6 @@ def get_wallet_watchlist_stats():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
-# Add to routes/wallets.py (around line 400, after other watchlist routes)
 
 @wallets_bp.route('/watchlist/rerank', methods=['POST', 'OPTIONS'])
 @require_auth
@@ -555,7 +635,6 @@ def rerank_watchlist():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-# Activity/notification endpoints continue...
 @wallets_bp.route('/activity/recent', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_wallet_activity():
@@ -830,7 +909,6 @@ def replace_wallet():
 
         db.remove_wallet_from_watchlist(user_id, old_wallet)
 
-        # Build wallet_data dict for add_wallet_to_watchlist
         wallet_data = {
             'wallet_address': new_wallet_data['wallet'],
             'tier': new_wallet_data.get('tier', 'C'),
@@ -846,6 +924,87 @@ def replace_wallet():
             'message': 'Wallet replaced successfully',
             'old_wallet': old_wallet,
             'new_wallet': new_wallet_data['wallet']
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@wallets_bp.route('/watchlist/add-quick', methods=['POST', 'OPTIONS'])
+@optional_auth
+def add_wallet_quick():
+    """Quick add wallet for testing - bypasses analysis"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        data = request.json
+        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        wallet_address = data.get('wallet_address')
+        
+        if not user_id or not wallet_address:
+            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from datetime import datetime
+        
+        supabase = get_supabase_client()
+        
+        existing = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'wallet_address'
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+        
+        if existing.data:
+            return jsonify({
+                'success': False,
+                'error': 'Wallet already in watchlist'
+            }), 400
+        
+        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').insert({
+            'user_id': user_id,
+            'wallet_address': wallet_address,
+            'tier': 'S',
+            'position': 1,
+            'movement': 'new',
+            'positions_changed': 0,
+            'form': ['neutral'] * 5,
+            'status': 'healthy',
+            'degradation_alerts': [],
+            'roi_7d': 0,
+            'roi_30d': 0,
+            'runners_7d': 0,
+            'runners_30d': 0,
+            'win_rate_7d': 0,
+            'professional_score': 0,
+            'consistency_score': 0,
+            'pump_count': 0,
+            'avg_distance_to_peak': 0,
+            'avg_roi_to_peak': 0,
+            'tokens_hit': [],
+            'alert_enabled': True,
+            'alert_on_buy': True,
+            'alert_on_sell': True,
+            'min_trade_usd': 10,
+            'tags': data.get('tags', ['stress-test', 'exchange']),
+            'notes': data.get('notes', 'Stress test wallet - monitoring 100 transactions'),
+            'added_at': datetime.utcnow().isoformat(),
+            'last_updated': datetime.utcnow().isoformat(),
+            'last_trade_time': None
+        }).execute()
+        
+        print(f"[QUICK ADD] ✅ {wallet_address[:8]}... added to {user_id[:8]}... watchlist")
+        print(f"[QUICK ADD] Alert settings: BUY=True, SELL=True, MIN=$10")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Wallet {wallet_address[:8]}... added to watchlist',
+            'alert_config': {
+                'enabled': True,
+                'on_buy': True,
+                'on_sell': True,
+                'min_usd': 10
+            }
         }), 200
         
     except Exception as e:

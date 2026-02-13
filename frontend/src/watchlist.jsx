@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { BookmarkPlus, Trash2, Tag, StickyNote, TrendingUp, Users, Search, Wallet, Settings, Bell, BellOff } from 'lucide-react';
-import WalletAlertSettings from './WalletAlertSettings'; // NEW IMPORT
+import { BookmarkPlus, Trash2, Tag, StickyNote, TrendingUp, Users, Search, Wallet, Settings, Bell, BellOff, Plus } from 'lucide-react';
+import WalletAlertSettings from './WalletAlertSettings';
+import { supabase } from './lib/supabase';
 
 export default function Watchlist({ userId, apiUrl }) {
   // Tab state
@@ -21,8 +22,17 @@ export default function Watchlist({ userId, apiUrl }) {
   const [walletWatchlist, setWalletWatchlist] = useState([]);
   const [walletStats, setWalletStats] = useState(null);
 
-  // NEW: Alert settings modal state
+  // Alert settings modal state
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
+
+  // Helper function to get auth headers
+  const getHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      'Content-Type': 'application/json',
+      ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+    };
+  };
 
   useEffect(() => {
     if (activeWatchlistTab === 'accounts') {
@@ -35,11 +45,12 @@ export default function Watchlist({ userId, apiUrl }) {
     loadGroups();
   }, [userId, activeWatchlistTab]);
 
-  // [Previous Twitter watchlist functions remain the same...]
+  // Twitter watchlist functions
   const loadWatchlist = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/watchlist/get?user_id=${userId}`);
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/watchlist/get?user_id=${userId}`, { headers });
       const data = await response.json();
       if (data.success) {
         setWatchlist(data.accounts);
@@ -52,7 +63,8 @@ export default function Watchlist({ userId, apiUrl }) {
 
   const loadGroups = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/watchlist/groups?user_id=${userId}`);
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/watchlist/groups?user_id=${userId}`, { headers });
       const data = await response.json();
       if (data.success) {
         setGroups(data.groups);
@@ -64,7 +76,8 @@ export default function Watchlist({ userId, apiUrl }) {
 
   const loadStats = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/watchlist/stats?user_id=${userId}`);
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/watchlist/stats?user_id=${userId}`, { headers });
       const data = await response.json();
       if (data.success) {
         setStats(data.stats);
@@ -77,9 +90,10 @@ export default function Watchlist({ userId, apiUrl }) {
   const removeAccount = async (authorId) => {
     if (!confirm('Remove this account from watchlist?')) return;
     try {
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId })
       });
       const data = await response.json();
@@ -94,9 +108,10 @@ export default function Watchlist({ userId, apiUrl }) {
 
   const updateNotes = async (authorId, notes) => {
     try {
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId, notes })
       });
       const data = await response.json();
@@ -113,9 +128,10 @@ export default function Watchlist({ userId, apiUrl }) {
   const updateTags = async (authorId, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId, tags: tagsArray })
       });
       const data = await response.json();
@@ -133,7 +149,8 @@ export default function Watchlist({ userId, apiUrl }) {
   const loadWalletWatchlist = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/wallets/watchlist/get?user_id=${userId}`);
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/wallets/watchlist/get?user_id=${userId}`, { headers });
       const data = await response.json();
       if (data.success) {
         setWalletWatchlist(data.wallets);
@@ -146,7 +163,8 @@ export default function Watchlist({ userId, apiUrl }) {
 
   const loadWalletStats = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/wallets/watchlist/stats?user_id=${userId}`);
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/wallets/watchlist/stats?user_id=${userId}`, { headers });
       const data = await response.json();
       if (data.success) {
         setWalletStats(data.stats);
@@ -159,9 +177,10 @@ export default function Watchlist({ userId, apiUrl }) {
   const removeWallet = async (walletAddress) => {
     if (!confirm('Remove this wallet from watchlist?')) return;
     try {
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress })
       });
       const data = await response.json();
@@ -176,9 +195,10 @@ export default function Watchlist({ userId, apiUrl }) {
 
   const updateWalletNotes = async (walletAddress, notes) => {
     try {
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, notes })
       });
       const data = await response.json();
@@ -195,9 +215,10 @@ export default function Watchlist({ userId, apiUrl }) {
   const updateWalletTags = async (walletAddress, tags) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
+      const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, tags: tagsArray })
       });
       const data = await response.json();
@@ -208,6 +229,45 @@ export default function Watchlist({ userId, apiUrl }) {
       }
     } catch (error) {
       console.error('Error updating wallet tags:', error);
+    }
+  };
+
+  // Quick Add Handler
+  const handleQuickAdd = async () => {
+    const input = document.getElementById('quickAddInput');
+    const address = input.value.trim();
+    
+    if (!address) {
+      alert('Please enter a wallet address');
+      return;
+    }
+    
+    try {
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/wallets/watchlist/add-quick`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          user_id: userId,
+          wallet_address: address,
+          notes: 'Stress test - monitoring 100 txs',
+          tags: ['stress-test', 'exchange', 'high-volume']
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        alert(`✅ ${address.slice(0, 8)}... added!\n\nAlerts: ENABLED\nBuys: ON\nSells: ON\nMin Trade: $10\n\nMonitoring will start in 2 minutes.`);
+        input.value = '';
+        loadWalletWatchlist();
+        loadWalletStats();
+      } else {
+        alert(`❌ ${data.error || 'Failed to add wallet'}`);
+      }
+    } catch (error) {
+      console.error('Error adding wallet:', error);
+      alert('Error adding wallet');
     }
   };
 
@@ -288,7 +348,6 @@ export default function Watchlist({ userId, apiUrl }) {
               <div className="space-y-3">
                 {watchlist.map((account) => (
                   <div key={account.author_id} className="bg-black/30 border border-white/10 rounded-lg p-4">
-                    {/* [Previous Twitter account display code - unchanged] */}
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
@@ -310,7 +369,6 @@ export default function Watchlist({ userId, apiUrl }) {
                         </button>
                       </div>
                     </div>
-                    {/* ... rest of Twitter account card ... */}
                   </div>
                 ))}
               </div>
@@ -319,9 +377,35 @@ export default function Watchlist({ userId, apiUrl }) {
         </>
       )}
 
-      {/* Wallet Watchlist Tab - ENHANCED WITH ALERT SETTINGS */}
+      {/* Wallet Watchlist Tab */}
       {activeWatchlistTab === 'wallets' && (
         <>
+          {/* QUICK ADD TEST WALLET SECTION */}
+          <div className="mb-4 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+            <h3 className="text-sm font-semibold text-purple-300 mb-3">
+              🧪 Quick Add Test Wallet (Stress Test)
+            </h3>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                placeholder="Paste wallet address..."
+                className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                id="quickAddInput"
+              />
+              <button
+                onClick={handleQuickAdd}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition flex items-center gap-2"
+              >
+                <Plus size={18} />
+                Add to Watchlist
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-400">
+              💡 Try: <code className="bg-black/30 px-2 py-0.5 rounded">5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9</code> (Binance hot wallet - high volume)
+            </div>
+          </div>
+
+          {/* Stats Grid */}
           {walletStats && (
             <div className="grid grid-cols-4 gap-4">
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
@@ -329,26 +413,27 @@ export default function Watchlist({ userId, apiUrl }) {
                 <div className="text-xs text-gray-400">Total Wallets</div>
               </div>
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                <div className="text-2xl font-bold text-yellow-400">{walletStats.s_tier_count || 0}</div>
+                <div className="text-2xl font-bold text-yellow-400">{walletStats.s_tier || 0}</div>
                 <div className="text-xs text-gray-400">S-Tier Wallets</div>
               </div>
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                <div className="text-2xl font-bold text-green-400">{walletStats.avg_distance?.toFixed(1) || 0}%</div>
-                <div className="text-xs text-gray-400">Avg Distance</div>
+                <div className="text-2xl font-bold text-green-400">{walletStats.avg_pump_count?.toFixed(1) || 0}</div>
+                <div className="text-xs text-gray-400">Avg Pumps</div>
               </div>
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                <div className="text-2xl font-bold text-blue-400">{walletStats.total_pumps || 0}</div>
+                <div className="text-2xl font-bold text-blue-400">{walletStats.total_pumps_tracked || 0}</div>
                 <div className="text-xs text-gray-400">Total Pumps</div>
               </div>
             </div>
           )}
 
+          {/* Wallet List or Empty State */}
           {walletWatchlist.length === 0 ? (
             <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">
               <Wallet className="mx-auto mb-4 text-gray-400" size={48} />
               <h3 className="text-lg font-semibold mb-2">No Wallets in Watchlist</h3>
               <p className="text-sm text-gray-400">
-                Run wallet analysis and add high-performing wallets here
+                Use the Quick Add above to add a test wallet, or run wallet analysis to find smart money wallets
               </p>
             </div>
           ) : (
@@ -372,7 +457,7 @@ export default function Watchlist({ userId, apiUrl }) {
                             Tier {wallet.tier}
                           </span>
 
-                          {/* NEW: Alert Status Indicator */}
+                          {/* Alert Status Indicator */}
                           {wallet.alert_enabled ? (
                             <span className="flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
                               <Bell size={12} />
@@ -388,14 +473,14 @@ export default function Watchlist({ userId, apiUrl }) {
                         <div className="text-xs font-mono text-gray-400 mb-2">
                           {wallet.wallet_address}
                         </div>
-                        {wallet.tokens_hit && (
+                        {wallet.tokens_hit && wallet.tokens_hit.length > 0 && (
                           <div className="text-xs text-gray-500">
-                            <strong>Tokens:</strong> {wallet.tokens_hit}
+                            <strong>Tokens:</strong> {wallet.tokens_hit.join(', ')}
                           </div>
                         )}
                       </div>
 
-                      {/* NEW: Alert Settings + Remove Buttons */}
+                      {/* Action Buttons */}
                       <div className="flex gap-2">
                         <button
                           onClick={() => setAlertSettingsWallet(wallet.wallet_address)}
@@ -417,24 +502,24 @@ export default function Watchlist({ userId, apiUrl }) {
                     {/* Performance Stats */}
                     <div className="grid grid-cols-4 gap-3 mb-3 text-sm">
                       <div className="bg-white/5 rounded p-2 text-center">
-                        <div className="font-bold text-green-400">{wallet.pump_count}</div>
+                        <div className="font-bold text-green-400">{wallet.pump_count || 0}</div>
                         <div className="text-xs text-gray-400">Pumps</div>
                       </div>
                       <div className="bg-white/5 rounded p-2 text-center">
-                        <div className="font-bold text-yellow-400">{wallet.avg_distance_to_peak?.toFixed(1)}%</div>
+                        <div className="font-bold text-yellow-400">{wallet.avg_distance_to_peak?.toFixed(1) || 0}%</div>
                         <div className="text-xs text-gray-400">Distance</div>
                       </div>
                       <div className="bg-white/5 rounded p-2 text-center">
-                        <div className="font-bold text-blue-400">{wallet.avg_roi_to_peak?.toFixed(1)}%</div>
+                        <div className="font-bold text-blue-400">{wallet.avg_roi_to_peak?.toFixed(1) || 0}%</div>
                         <div className="text-xs text-gray-400">Avg ROI</div>
                       </div>
                       <div className="bg-white/5 rounded p-2 text-center">
-                        <div className="font-bold text-purple-400">{wallet.consistency_score?.toFixed(1)}</div>
+                        <div className="font-bold text-purple-400">{wallet.consistency_score?.toFixed(1) || 0}</div>
                         <div className="text-xs text-gray-400">Consistency</div>
                       </div>
                     </div>
 
-                    {/* NEW: Alert Settings Summary */}
+                    {/* Alert Settings Summary */}
                     {wallet.alert_enabled && (
                       <div className="mb-3 p-2 bg-purple-500/10 border border-purple-500/30 rounded text-xs">
                         <span className="text-purple-400 font-semibold">Alert Config:</span>
@@ -447,7 +532,7 @@ export default function Watchlist({ userId, apiUrl }) {
                       </div>
                     )}
 
-                    {/* Tags - unchanged */}
+                    {/* Tags Section */}
                     <div className="mb-2">
                       {editingTags === wallet.wallet_address ? (
                         <div className="flex gap-2">
@@ -499,7 +584,7 @@ export default function Watchlist({ userId, apiUrl }) {
                       )}
                     </div>
 
-                    {/* Notes - unchanged */}
+                    {/* Notes Section */}
                     <div>
                       {editingNotes === wallet.wallet_address ? (
                         <div className="space-y-2">
@@ -558,14 +643,14 @@ export default function Watchlist({ userId, apiUrl }) {
         </>
       )}
 
-      {/* NEW: Alert Settings Modal */}
+      {/* Alert Settings Modal */}
       {alertSettingsWallet && (
         <WalletAlertSettings
           walletAddress={alertSettingsWallet}
           onClose={() => setAlertSettingsWallet(null)}
           onSave={(settings) => {
             console.log('Alert settings saved:', settings);
-            loadWalletWatchlist(); // Refresh to show new settings
+            loadWalletWatchlist();
           }}
         />
       )}
