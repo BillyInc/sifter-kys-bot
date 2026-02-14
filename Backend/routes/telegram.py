@@ -4,11 +4,14 @@ import os
 import threading
 import time
 import requests
+import secrets
+from datetime import datetime, timedelta, timezone
 
-from auth import require_auth
+from auth import require_auth, optional_auth
 from services.telegram_notifier import TelegramNotifier
+from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
-telegram_bp = Blueprint('telegram', __name__, url_prefix='/api/telegram')
+telegram_bp = Blueprint('telegram', __name__)
 
 # Initialize Telegram notifier
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -20,8 +23,8 @@ def _get_user_id() -> str | None:
     return getattr(request, 'user_id', None)
 
 
-@telegram_bp.route('/status', methods=['GET'])
-@require_auth
+@telegram_bp.route('/status', methods=['GET', 'OPTIONS'])
+@optional_auth
 def get_telegram_status():
     """Check if user has Telegram connected."""
     if not telegram_notifier:
@@ -42,10 +45,10 @@ def get_telegram_status():
     }), 200
 
 
-@telegram_bp.route('/connect/code', methods=['POST'])
-@require_auth
-def generate_connection_code():
-    """Generate connection code for linking Telegram account."""
+@telegram_bp.route('/connect/link', methods=['POST', 'OPTIONS'])
+@optional_auth
+def generate_connection_link():
+    """Generate Telegram deep link for one-click connection."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
     
@@ -55,24 +58,50 @@ def generate_connection_code():
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
     
-    # Generate code
-    code = telegram_notifier.generate_connection_code(user_id)
-    
-    return jsonify({
-        'success': True,
-        'code': code,
-        'expires_in': 600,  # 10 minutes
-        'instructions': [
-            'Open Telegram',
-            'Search for @SifterDueDiligenceBot',
-            'Send /start',
-            'Send this code'
-        ]
-    }), 200
+    try:
+        # Generate unique connection token
+        connection_token = secrets.token_urlsafe(32)
+        
+        # Store token in database with 15-minute expiry
+        supabase = get_supabase_client()
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        
+        # Clean up old unused tokens for this user
+        supabase.schema(SCHEMA_NAME).table('telegram_connection_tokens').delete().eq(
+            'user_id', user_id
+        ).eq('used', False).execute()
+        
+        # Insert new token
+        supabase.schema(SCHEMA_NAME).table('telegram_connection_tokens').insert({
+            'user_id': user_id,
+            'token': connection_token,
+            'expires_at': expires_at,
+            'used': False
+        }).execute()
+        
+        # Get bot username from environment or config
+        bot_username = os.environ.get('TELEGRAM_BOT_USERNAME', 'SifterDueDiligenceBot')
+        
+        # Create Telegram deep link
+        telegram_link = f"https://t.me/{bot_username}?start={connection_token}"
+        
+        print(f"[TELEGRAM] Generated connection link for user {user_id[:8]}...")
+        
+        return jsonify({
+            'success': True,
+            'telegram_link': telegram_link,
+            'connection_token': connection_token,
+            'expires_in': 900  # 15 minutes in seconds
+        }), 200
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
-@telegram_bp.route('/disconnect', methods=['POST'])
-@require_auth
+@telegram_bp.route('/disconnect', methods=['POST', 'OPTIONS'])
+@optional_auth
 def disconnect_telegram():
     """Disconnect Telegram account."""
     if not telegram_notifier:
@@ -87,6 +116,7 @@ def disconnect_telegram():
     success = telegram_notifier.disconnect_user(user_id)
     
     if success:
+        print(f"[TELEGRAM] Disconnected user {user_id[:8]}...")
         return jsonify({
             'success': True,
             'message': 'Telegram disconnected'
@@ -98,8 +128,8 @@ def disconnect_telegram():
         }), 404
 
 
-@telegram_bp.route('/alerts/toggle', methods=['POST'])
-@require_auth
+@telegram_bp.route('/alerts/toggle', methods=['POST', 'OPTIONS'])
+@optional_auth
 def toggle_telegram_alerts():
     """Enable/disable Telegram alerts."""
     if not telegram_notifier:
@@ -126,8 +156,8 @@ def toggle_telegram_alerts():
         }), 500
 
 
-@telegram_bp.route('/test', methods=['POST'])
-@require_auth
+@telegram_bp.route('/test', methods=['POST', 'OPTIONS'])
+@optional_auth
 def send_test_alert():
     """Send test alert to user's Telegram."""
     if not telegram_notifier:
@@ -185,6 +215,51 @@ def send_test_alert():
         }), 500
 
 
+@telegram_bp.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    """
+    Ultra-fast webhook handler - queues processing immediately
+    Responds to Telegram in <50ms
+    """
+    if not telegram_notifier:
+        return jsonify({'error': 'Telegram not configured'}), 503
+    
+    update = request.json
+    
+    if not update:
+        return jsonify({'error': 'No update data'}), 400
+    
+    # Verify secret token (if set)
+    secret_token = os.environ.get('TELEGRAM_SECRET_TOKEN')
+    if secret_token:
+        header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
+        if header_token != secret_token:
+            print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
+            return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Handle callback queries (button clicks)
+    if 'callback_query' in update:
+        threading.Thread(
+            target=telegram_notifier._handle_callback,
+            args=(update['callback_query'],),
+            daemon=True
+        ).start()
+        return jsonify({'ok': True}), 200
+    
+    # Handle messages
+    if 'message' in update:
+        # Process in background thread
+        threading.Thread(
+            target=telegram_notifier.process_bot_updates,
+            args=([update],),
+            daemon=True
+        ).start()
+        print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
+    
+    # Respond immediately (Telegram requires <1s response)
+    return jsonify({'ok': True}), 200
+
+
 @telegram_bp.route('/bot/info', methods=['GET'])
 def get_bot_info():
     """Get information about the Telegram bot."""
@@ -210,97 +285,8 @@ def get_bot_info():
             'success': False,
             'error': 'Failed to fetch bot info'
         }), 500
-
-
-@telegram_bp.route('/start-polling', methods=['POST'])
-def start_polling():
-    """Start polling for Telegram updates (local dev without ngrok)"""
-    def poll_updates():
-        last_update_id = 0
-        TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
-        print("[TELEGRAM POLLING] Started")
-        
-        while True:
-            try:
-                response = requests.get(
-                    f"{TELEGRAM_API_BASE}/getUpdates",
-                    params={'offset': last_update_id + 1, 'timeout': 10},
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('ok') and data.get('result'):
-                        updates = data['result']
-                        
-                        if updates and telegram_notifier:
-                            telegram_notifier.process_bot_updates(updates)
-                            last_update_id = max(u['update_id'] for u in updates)
-                
-                time.sleep(1)
-                
-            except Exception as e:
-                print(f"[TELEGRAM POLLING] Error: {e}")
-                time.sleep(5)
-    
-    # Start polling thread
-    thread = threading.Thread(target=poll_updates, daemon=True)
-    thread.start()
-    
-    return jsonify({'success': True, 'message': 'Polling started'})
-
-
-@telegram_bp.route('/webhook', methods=['POST'])
-def telegram_webhook():
-    """
-    Ultra-fast webhook handler - queues processing immediately
-    Responds to Telegram in <50ms
-    """
-    if not telegram_notifier:
-        return jsonify({'error': 'Telegram not configured'}), 503
-    
-    update = request.json
-    
-    if not update:
-        return jsonify({'error': 'No update data'}), 400
-    
-    # ✅ PRODUCTION: Verify secret token (if set)
-    secret_token = os.environ.get('TELEGRAM_SECRET_TOKEN')
-    if secret_token:
-        header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
-        if header_token != secret_token:
-            print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
-            return jsonify({'error': 'Unauthorized'}), 401
-    
-    # RECOMMENDATION: Handle Button Clicks (Callback Queries)
-    if 'callback_query' in update:
-        # Pass to notifier to trigger the Toast and copyable command
-        threading.Thread(
-            target=telegram_notifier._handle_callback,
-            args=(update['callback_query'],),
-            daemon=True
-        ).start()
-        return jsonify({'ok': True}), 200
-    
-    # RECOMMENDATION: Handle Standard Messages
-    if 'message' in update:
-        # ✅ Queue the update for background processing
-        from flask import current_app
-        q = current_app.config.get('RQ_QUEUE')
-        
-        if q:
-            # Process in background worker
-            q.enqueue('tasks.process_telegram_update', update)
-            print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
-        else:
-            # Fallback: Process in thread (for local dev without Redis)
-            threading.Thread(
-                target=telegram_notifier.process_bot_updates,
-                args=([update],),
-                daemon=True
-            ).start()
-            print(f"[TELEGRAM WEBHOOK] ✓ Update threaded")
-    
-    # ✅ Respond immediately (Telegram requires <1s response)
-    return jsonify({'ok': True}), 200
+@telegram_bp.route('/ping', methods=['GET'])
+def ping():
+    """Simple test endpoint"""
+    return jsonify({"pong": True, "message": "Telegram blueprint is alive!"})

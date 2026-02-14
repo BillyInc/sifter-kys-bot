@@ -177,31 +177,56 @@ class WatchlistDatabase:
     # =========================================================================
 
     def add_wallet_to_watchlist(self, user_id: str, wallet_data: Dict) -> bool:
+        """
+        Add wallet to watchlist with automatic field normalization.
+        Accepts raw wallet object from analysis results.
+        """
         try:
             self.create_user(user_id)
             
-            # Ensure tags and tokens are lists
-            tags = wallet_data.get('tags', [])
-            tokens_hit = wallet_data.get('tokens_hit', [])
-            self._table('wallet_watchlist').upsert({
+            # ✅ Sub-point 3-4: Backend normalizes inputs
+            normalized = {
                 'user_id': user_id,
-                'wallet_address': wallet_data['wallet_address'],
-                'tier': wallet_data.get('tier', 'C'),
-                'pump_count': wallet_data.get('pump_count', 0),
-                'avg_distance_to_peak': wallet_data.get('avg_distance_to_peak', 0), # Now matches SQL
-                'avg_roi_to_peak': wallet_data.get('avg_roi_to_peak', 0),           # Now matches SQL
-                'consistency_score': wallet_data.get('consistency_score', 0),
-                'tokens_hit': tokens_hit,
+                'wallet_address': wallet_data.get('wallet', wallet_data.get('wallet_address')),
+                'tier': self._calculate_tier(wallet_data.get('professional_grade', 'C')),
+                'pump_count': wallet_data.get('runner_hits_30d', wallet_data.get('pump_count', 0)),
+                'avg_distance_to_peak': wallet_data.get('distance_to_ath_pct', 
+                                                        wallet_data.get('avg_distance_to_peak', 0)),
+                'avg_roi_to_peak': wallet_data.get('roi_percent', 
+                                                   wallet_data.get('avg_roi_30d', 
+                                                   wallet_data.get('avg_roi_to_peak', 0))),
+                'professional_score': wallet_data.get('professional_score', 0),
+                'consistency_score': wallet_data.get('consistency_score'),  # May be None
+                'tokens_hit': [r.get('symbol', '') for r in wallet_data.get('other_runners', [])] if wallet_data.get('other_runners') else wallet_data.get('tokens_hit', []),
                 'notes': wallet_data.get('notes', ''),
-                'tags': tags,
+                'tags': wallet_data.get('tags', []),
                 'alert_enabled': wallet_data.get('alert_enabled', True),
                 'alert_threshold_usd': wallet_data.get('alert_threshold_usd', 100),
                 'last_updated': datetime.utcnow().isoformat()
-            }, on_conflict='user_id,wallet_address').execute()
+            }
+            
+            self._table('wallet_watchlist').upsert(
+                normalized, 
+                on_conflict='user_id,wallet_address'
+            ).execute()
             return True
         except Exception as e:
             print(f"[WATCHLIST DB] Error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
+
+    def _calculate_tier(self, grade):
+        """✅ Sub-point 4: Helper function to convert grade to tier"""
+        if not grade:
+            return 'C'
+        if grade == 'A+':
+            return 'S'
+        if grade.startswith('A'):
+            return 'A'
+        if grade.startswith('B'):
+            return 'B'
+        return 'C'
 
     def get_wallet_watchlist(self, user_id: str, tier_filter: str = None) -> List[Dict]:
         """Get user's watched wallets, optionally filtered by tier."""

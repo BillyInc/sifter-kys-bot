@@ -5,24 +5,67 @@ import asyncio
 import os
 
 
+def _calculate_grade(score):
+    """Convert numeric score to letter grade"""
+    if score >= 90: return 'A+'
+    if score >= 85: return 'A'
+    if score >= 80: return 'A-'
+    if score >= 75: return 'B+'
+    if score >= 70: return 'B'
+    if score >= 65: return 'B-'
+    return 'C'
+
+
 def perform_wallet_analysis(data):
     """Main coordinator - splits work by STEPS, not just tokens"""
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    
     tokens = data.get('tokens', [])
     user_id = data.get('user_id', 'default_user')
+    job_id = data.get('job_id')  # Get from RQ context if available
     
-    if len(tokens) == 1:
-        # SINGLE TOKEN - Split the 6 steps across workers
-        return analyze_single_token_parallel(tokens[0], user_id, data.get('job_id'))
+    supabase = get_supabase_client()
     
-    else:
-        # MULTIPLE TOKENS - Split by token AND steps
-        return analyze_multiple_tokens_parallel(tokens, user_id, data.get('job_id'))
+    # ✅ Sub-point 2: Update status throughout
+    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+        'status': 'processing',
+        'phase': 'fetching_data',
+        'progress': 10
+    }).eq('job_id', job_id).execute()
+    
+    try:
+        if len(tokens) == 1:
+            # SINGLE TOKEN - Split the 6 steps across workers
+            result = analyze_single_token_parallel(tokens[0], user_id, job_id)
+        else:
+            # MULTIPLE TOKENS - Split by token AND steps
+            result = analyze_multiple_tokens_parallel(tokens, user_id, job_id)
+        
+        # After completion:
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+            'status': 'completed',
+            'progress': 100,
+            'results': result
+        }).eq('job_id', job_id).execute()
+        
+        return result
+        
+    except Exception as e:
+        # On failure:
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+            'status': 'failed',
+            'results': {'error': str(e)}
+        }).eq('job_id', job_id).execute()
+        raise
 
 
 def analyze_single_token_parallel(token, user_id, parent_job_id):
     """Split ONE token's analysis across 5 workers"""
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    
     redis = Redis(host='localhost', port=6379)
     q = Queue(connection=redis, default_timeout=600)
+    supabase = get_supabase_client()
     
     print(f"\n[PARALLEL ANALYSIS] Splitting {token['ticker']} across workers...")
     
@@ -62,24 +105,46 @@ def analyze_single_token_parallel(token, user_id, parent_job_id):
     wallet_data = {}
     
     import time
+    from rq.job import Job
+    
+    start_time = time.time()
+    timeout = 300  # 5 minutes
+    
+    jobs = [Job.fetch(job_id, connection=redis) for _, job_id in data_jobs]
+    
     while True:
-        completed = 0
-        for data_type, job_id in data_jobs:
-            result = redis.get(f"job_result:{job_id}")
-            if result:
-                completed += 1
-                data = json.loads(result)
-                
-                # Merge wallets from each source
-                all_wallets.update(data['wallets'])
-                wallet_data.update(data['wallet_data'])
+        # ✅ Sub-point 2: Add timeout
+        if time.time() - start_time > timeout:
+            raise TimeoutError(f"Analysis took too long (>5 min)")
         
-        if completed == len(data_jobs):
+        # ✅ Sub-point 1: Use RQ native tracking
+        if all(j.is_finished for j in jobs):
             break
         
-        time.sleep(1)
+        # ✅ Sub-point 3: Handle failures
+        failed_jobs = [j for j in jobs if j.is_failed]
+        if len(failed_jobs) > len(jobs) / 2:
+            raise Exception(f"Too many workers failed: {[j.id for j in failed_jobs]}")
+        
+        time.sleep(0.1)  # ✅ 10x faster polling
+    
+    # Collect results after all jobs complete
+    for data_type, job_id in data_jobs:
+        result = redis.get(f"job_result:{job_id}")
+        if result:
+            data = json.loads(result)
+            
+            # Merge wallets from each source
+            all_wallets.update(data['wallets'])
+            wallet_data.update(data['wallet_data'])
     
     print(f"  ✓ Data fetching complete: {len(all_wallets)} wallets found")
+    
+    # Update progress after Phase 1 (data fetching):
+    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+        'phase': 'fetching_pnl',
+        'progress': 40
+    }).eq('job_id', parent_job_id).execute()
     
     # ✅ STEP 5: Fetch PnL in parallel batches (use remaining workers)
     wallet_list = list(all_wallets)
@@ -98,20 +163,41 @@ def analyze_single_token_parallel(token, user_id, parent_job_id):
     
     # Wait for PnL fetching
     qualified_wallets = []
+    
+    start_time = time.time()
+    timeout = 300  # 5 minutes
+    
+    jobs = [Job.fetch(job_id, connection=redis) for job_id in pnl_jobs]
+    
     while True:
-        completed = 0
-        for job_id in pnl_jobs:
-            result = redis.get(f"job_result:{job_id}")
-            if result:
-                completed += 1
-                qualified_wallets.extend(json.loads(result))
+        # ✅ Sub-point 2: Add timeout
+        if time.time() - start_time > timeout:
+            raise TimeoutError(f"PnL fetching took too long (>5 min)")
         
-        if completed == len(pnl_jobs):
+        # ✅ Sub-point 1: Use RQ native tracking
+        if all(j.is_finished for j in jobs):
             break
         
-        time.sleep(1)
+        # ✅ Sub-point 3: Handle failures
+        failed_jobs = [j for j in jobs if j.is_failed]
+        if len(failed_jobs) > len(jobs) / 2:
+            raise Exception(f"Too many PnL workers failed: {[j.id for j in failed_jobs]}")
+        
+        time.sleep(0.1)  # ✅ 10x faster polling
+    
+    # Collect results after all jobs complete
+    for job_id in pnl_jobs:
+        result = redis.get(f"job_result:{job_id}")
+        if result:
+            qualified_wallets.extend(json.loads(result))
     
     print(f"  ✓ PnL fetching complete: {len(qualified_wallets)} qualified")
+    
+    # Update progress after Phase 2 (PnL):
+    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+        'phase': 'fetching_history',
+        'progress': 70
+    }).eq('job_id', parent_job_id).execute()
     
     # ✅ STEP 6: Fetch 30-day history in parallel batches
     history_jobs = []
@@ -128,18 +214,33 @@ def analyze_single_token_parallel(token, user_id, parent_job_id):
     
     # Wait for history fetching
     final_wallets = []
+    
+    start_time = time.time()
+    timeout = 300  # 5 minutes
+    
+    jobs = [Job.fetch(job_id, connection=redis) for job_id in history_jobs]
+    
     while True:
-        completed = 0
-        for job_id in history_jobs:
-            result = redis.get(f"job_result:{job_id}")
-            if result:
-                completed += 1
-                final_wallets.extend(json.loads(result))
+        # ✅ Sub-point 2: Add timeout
+        if time.time() - start_time > timeout:
+            raise TimeoutError(f"Runner history fetching took too long (>5 min)")
         
-        if completed == len(history_jobs):
+        # ✅ Sub-point 1: Use RQ native tracking
+        if all(j.is_finished for j in jobs):
             break
         
-        time.sleep(1)
+        # ✅ Sub-point 3: Handle failures
+        failed_jobs = [j for j in jobs if j.is_failed]
+        if len(failed_jobs) > len(jobs) / 2:
+            raise Exception(f"Too many history workers failed: {[j.id for j in failed_jobs]}")
+        
+        time.sleep(0.1)  # ✅ 10x faster polling
+    
+    # Collect results after all jobs complete
+    for job_id in history_jobs:
+        result = redis.get(f"job_result:{job_id}")
+        if result:
+            final_wallets.extend(json.loads(result))
     
     # ✅ Final scoring and ranking
     from routes.wallets import get_wallet_analyzer
@@ -180,6 +281,15 @@ def analyze_multiple_tokens_parallel(tokens, user_id, parent_job_id):
     """Split multiple tokens - each token gets step-level parallelization"""
     redis = Redis(host='localhost', port=6379)
     q = Queue(connection=redis, default_timeout=600)
+    
+    # ✅ Sub-point 1-3: Add caching
+    token_addresses = sorted([t['address'] for t in tokens])
+    cache_key = f"batch_analysis:{':'.join(token_addresses)}"
+    
+    cached = redis.get(cache_key)
+    if cached:
+        print(f"[CACHE HIT] Returning cached batch analysis")
+        return json.loads(cached)
     
     print(f"\n[MULTI-TOKEN PARALLEL] Analyzing {len(tokens)} tokens...")
     
@@ -228,19 +338,37 @@ def analyze_multiple_tokens_parallel(tokens, user_id, parent_job_id):
             wallet_hits[addr]['performances'].append({
                 'token': token['ticker'],
                 'professional_score': wallet['professional_score'],
-                'roi_multiplier': wallet['roi_multiplier']
+                'roi_multiplier': wallet.get('roi_multiplier', wallet.get('total_multiplier', 0))
             })
             wallet_hits[addr]['professional_scores'].append(wallet['professional_score'])
     
     # Rank by token overlap + score
     ranked = []
     for addr, data in wallet_hits.items():
+        avg_score = sum(data['professional_scores']) / len(data['professional_scores'])
+        
         ranked.append({
             'wallet': addr,
             'token_count': len(data['tokens_hit']),
             'tokens_hit': data['tokens_hit'],
-            'avg_score': sum(data['professional_scores']) / len(data['professional_scores']),
-            'performances': data['performances']
+            'avg_score': avg_score,
+            'performances': data['performances'],
+            
+            # ✅ ADD FOR FRONTEND COMPATIBILITY:
+            'analyzed_tokens': data['tokens_hit'],  # Frontend expects this
+            'professional_score': avg_score,
+            'professional_grade': _calculate_grade(avg_score),
+            
+            # Transform performances → other_runners format:
+            'other_runners': [
+                {
+                    'symbol': p['token'],
+                    'multiplier': p.get('roi_multiplier', 0),
+                    'roi_multiplier': p.get('roi_multiplier', 0),
+                    'professional_score': p['professional_score'],
+                }
+                for p in data['performances']
+            ]
         })
     
     ranked.sort(key=lambda x: (x['token_count'], x['avg_score']), reverse=True)
@@ -250,6 +378,9 @@ def analyze_multiple_tokens_parallel(tokens, user_id, parent_job_id):
         'wallets': ranked[:50],
         'total': len(ranked)
     }
+    
+    # Cache for 30 minutes
+    redis.setex(cache_key, 1800, json.dumps(final_result))
     
     redis.set(f"job_result:{parent_job_id}", json.dumps(final_result), ex=3600)
     return final_result

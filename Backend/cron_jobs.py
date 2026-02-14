@@ -39,3 +39,15 @@ if __name__ == '__main__':
     else:
         print(f"Unknown job type: {job_type}")
         sys.exit(1)
+        
+        
+def refresh_ath_cache_hourly():
+    """Run hourly to update token ATH cache"""
+    from services.supabase_client import get_supabase_client
+    
+    supabase = get_supabase_client()
+    supabase.rpc('refresh_ath_cache').execute()
+    print("[CRON] ATH cache refreshed")
+
+# Schedule with system cron:
+# 0 * * * * python /path/to/backend/cron_jobs.py refresh_ath

@@ -1,5 +1,6 @@
 """Wallet analysis routes - CORRECTLY FIXED for TOKEN OVERLAP ranking."""
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
+import json
 
 from config import Config
 from auth import require_auth, optional_auth
@@ -52,7 +53,7 @@ wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 
 
 # =============================================================================
-# ✅ CORRECTLY FIXED: TOKEN OVERLAP BATCH ANALYSIS
+# ✅ UPDATED: ASYNC JOB QUEUEING WITH PROGRESS TRACKING
 # =============================================================================
 
 @wallets_bp.route('/analyze', methods=['POST', 'OPTIONS'])
@@ -67,59 +68,46 @@ def analyze_wallets():
             return jsonify({'error': 'tokens array required'}), 400
 
         tokens = data['tokens']
-        min_roi_multiplier = data.get('global_settings', {}).get('min_roi_multiplier', 3.0)
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        wallet_analyzer = get_wallet_analyzer()
-
-        # If single token, use single analysis
-        if len(tokens) == 1:
-            token = tokens[0]
-            wallets = wallet_analyzer.analyze_token_professional(
-                token_address=token['address'],
-                token_symbol=token.get('ticker', 'UNKNOWN'),
-                min_roi_multiplier=min_roi_multiplier,
-                user_id=user_id
-            )
-            
-            # ✅ ADD analyzed_tokens and remove consistency_score
-            for wallet in wallets:
-                wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
-                if 'consistency_score' in wallet:
-                    del wallet['consistency_score']
-            
-            top_wallets = wallets[:20]
-            
-            return jsonify({
-                'success': True,
-                'top_wallets': top_wallets,
-                'tokens_analyzed': [token.get('ticker', 'UNKNOWN')],
-                'summary': {
-                    'qualified_wallets': len(wallets),
-                    'tokens_analyzed': 1,
-                }
-            }), 200
-
-        # Multiple tokens - use batch analysis
-        smart_money = wallet_analyzer.batch_analyze_tokens(
-            tokens=tokens,
-            min_roi_multiplier=min_roi_multiplier,
-            user_id=user_id
-        )
+        # ✅ Sub-point 1: Return 202 immediately
+        from flask import current_app
+        q = current_app.config['RQ_QUEUE']
         
-        # ✅ ADD analyzed_tokens for batch
-        for wallet in smart_money:
-            wallet['analyzed_tokens'] = wallet.get('tokens_hit', [])
+        job = q.enqueue('tasks.perform_wallet_analysis', {
+            'tokens': tokens,
+            'user_id': user_id,
+            'global_settings': data.get('global_settings', {}),
+            'job_id': None  # Will be set to job.id after creation
+        })
+        
+        # Update job data with actual job_id
+        from redis import Redis
+        redis = Redis(host='localhost', port=6379)
+        job_data = {
+            'tokens': tokens,
+            'user_id': user_id,
+            'global_settings': data.get('global_settings', {}),
+            'job_id': job.id
+        }
+        redis.set(f"job_data:{job.id}", json.dumps(job_data), ex=3600)
+        
+        # Insert into analysis_jobs table
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
+            'job_id': job.id,
+            'user_id': user_id,
+            'status': 'pending',
+            'progress': 0,
+            'phase': 'queued'
+        }).execute()
         
         return jsonify({
             'success': True,
-            'top_wallets': smart_money[:50],
-            'tokens_analyzed': [t.get('ticker', 'UNKNOWN') for t in tokens],
-            'summary': {
-                'qualified_wallets': len(smart_money),
-                'tokens_analyzed': len(tokens),
-            }
-        }), 200
+            'job_id': job.id,
+            'status': 'pending'
+        }), 202  # ✅ Accepted, not completed
 
     except Exception as e:
         print(f"\n[ANALYZE ERROR] {str(e)}")
@@ -139,7 +127,6 @@ def get_job_status(job_id):
         # Get result from Redis
         from redis import Redis
         redis = Redis(host='localhost', port=6379)
-        import json
         result = redis.get(f"job_result:{job_id}")
         if result:
             return jsonify(json.loads(result)), 200
@@ -147,6 +134,59 @@ def get_job_status(job_id):
     elif job.is_failed:
         return jsonify({'status': 'failed', 'error': str(job.exc_info)}), 500
     return jsonify({'status': job.get_status()}), 200
+
+
+@wallets_bp.route('/jobs/<job_id>/progress', methods=['GET'])
+def get_job_progress(job_id):
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+    
+    supabase = get_supabase_client()
+    result = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select('*').eq('job_id', job_id).execute()
+    
+    if not result.data:
+        return jsonify({'error': 'Job not found'}), 404
+    
+    job = result.data[0]
+    return jsonify({
+        'success': True,
+        'status': job['status'],
+        'progress': job['progress'],
+        'phase': job.get('phase', '')
+    })
+
+
+@wallets_bp.route('/analyze/stream', methods=['POST', 'OPTIONS'])
+@optional_auth
+def analyze_stream():
+    """
+    Stream analysis results as each token completes.
+    Uses Server-Sent Events (SSE).
+    """
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    data = request.json
+    tokens = data.get('tokens', [])
+    user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+    
+    def generate():
+        from tasks import analyze_single_token_parallel
+        
+        for token in tokens:
+            try:
+                # Analyze one token
+                result = analyze_single_token_parallel(token, user_id, f"stream_{token['address']}")
+                
+                # Stream result
+                yield f"data: {json.dumps(result)}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e), 'token': token})}\n\n"
+        
+        # Send completion signal
+        yield f"event: complete\ndata: {json.dumps({'done': True})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
 
 
 # =============================================================================

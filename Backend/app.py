@@ -26,20 +26,27 @@ def create_app() -> Flask:
     app = Flask(__name__)
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:5173", "http://localhost:3000"],
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            "allow_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True
-        }
+        "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True,
+        "expose_headers": ["Content-Type", "Authorization"]
+    }
     })
     
+    
+    
+    import os
+
     # Initialize rate limiter
     limiter = Limiter(
         key_func=get_rate_limit_key,
         app=app,
         default_limits=Config.RATELIMIT_DEFAULT,
         storage_uri=Config.RATELIMIT_STORAGE_URI,
-        strategy=Config.RATELIMIT_STRATEGY
+        strategy=Config.RATELIMIT_STRATEGY,
+        enabled=False
+        
     )
     
     # Initialize Telegram

@@ -64,6 +64,10 @@ def require_auth(f):
     """Decorator to require authentication for routes."""
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Handle OPTIONS requests before authentication
+        if request.method == 'OPTIONS':
+            return '', 204
+        
         # Skip auth in development if not configured
         if not is_supabase_available():
             return f(*args, **kwargs)
@@ -88,6 +92,10 @@ def optional_auth(f):
     """Decorator for optional authentication - doesn't fail if no token."""
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Handle OPTIONS requests before authentication
+        if request.method == 'OPTIONS':
+            return '', 204
+        
         user = AuthService.get_current_user()
 
         if user:
