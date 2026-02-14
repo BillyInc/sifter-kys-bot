@@ -1,5 +1,6 @@
 """Flask application factory and entry point."""
 import os
+import threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -11,7 +12,6 @@ from redis import Redis
 
 telegram_polling_started = False
 
-
 def get_rate_limit_key():
     """Get rate limit key - prefer user ID from auth, fallback to IP."""
     user_id = getattr(request, 'user_id', None)
@@ -19,24 +19,19 @@ def get_rate_limit_key():
         return f"user:{user_id}"
     return get_remote_address()
 
-
 def create_app() -> Flask:
     """Create and configure the Flask application."""
-    
     app = Flask(__name__)
+    
     CORS(app, resources={
         r"/*": {
-        "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com"],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True,
-        "expose_headers": ["Content-Type", "Authorization"]
-    }
+            "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True,
+            "expose_headers": ["Content-Type", "Authorization"]
+        }
     })
-    
-    
-    
-    import os
 
     # Initialize rate limiter
     limiter = Limiter(
@@ -46,7 +41,6 @@ def create_app() -> Flask:
         storage_uri=Config.RATELIMIT_STORAGE_URI,
         strategy=Config.RATELIMIT_STRATEGY,
         enabled=False
-        
     )
     
     # Initialize Telegram
@@ -57,7 +51,6 @@ def create_app() -> Flask:
     
     if telegram_notifier:
         print("\n[TELEGRAM] ✅ Notifier initialized")
-        print("[TELEGRAM] Bot: @SifterDueDiligenceBot")
     else:
         print("\n[TELEGRAM] ⚠️ Notifier disabled (no token)")
 
@@ -76,51 +69,74 @@ def create_app() -> Flask:
     _apply_rate_limits(limiter)
     _register_error_handlers(app)
 
+    # --- THE PRODUCTION FIX ---
+    # Start background services in a separate thread
+    def run_startup_tasks(app_instance):
+        """Internal helper to run startup tasks with app context."""
+        with app_instance.app_context():
+            print("\n[SYSTEM] 🚀 Bootstrapping background services...")
+            preload_trending_cache()
+            start_wallet_monitoring()
+
+    # Guard: Don't start the thread twice during local 'debug' reload
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        startup_thread = threading.Thread(target=run_startup_tasks, args=(app,), daemon=True)
+        startup_thread.start()
+
     return app
 
+# --- SUPPORTING FUNCTIONS ---
 
 def preload_trending_cache():
     """Preload trending runners cache"""
     try:
-        print("\n[CACHE WARMUP] Preloading trending runners...")
+        print("[CACHE WARMUP] Preloading trending runners...")
         from services import preload_trending_cache_parallel
-        
-        # Start parallel cache warmup using RQ workers
         preload_trending_cache_parallel()
-        
-        print("  ✅ Cache warmup jobs queued\n")
+        print("  ✅ Cache warmup jobs queued")
     except Exception as e:
-        print(f"  ⚠️ Cache warmup failed: {e}\n")
-
+        print(f"  ⚠️ Cache warmup failed: {e}")
 
 def start_wallet_monitoring():
-    """Start background wallet monitoring (every 30-60 seconds)"""
+    """Start background wallet monitoring"""
     try:
         print("\n[WALLET MONITORING] Starting real-time monitoring...")
+        
+        # Import inside function to avoid circular imports
+        from services.wallet_monitor import WalletActivityMonitor
+        from config import Config
+        
+        # Get Telegram notifier from app config
         from flask import current_app
-        from db.watchlist_db import WatchlistDatabase
+        telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
         
-        db = WatchlistDatabase()
-        q = current_app.config['RQ_QUEUE']
+        # Create monitor instance
+        monitor = WalletActivityMonitor(
+            birdeye_api_key=Config.BIRDEYE_API_KEY,
+            poll_interval=120,  # 2 minutes
+            telegram_notifier=telegram_notifier
+        )
         
-        # Schedule monitoring jobs for all active wallets
-        # This runs every 30-60 seconds via a separate scheduler
-        # (You'll need to set up APScheduler or similar)
+        # Store in app config so we can access it later
+        current_app.config['WALLET_MONITOR'] = monitor
         
-        print("  ✅ Wallet monitoring started\n")
+        # Start monitoring in background thread
+        monitor.start()
+        
+        print("  ✅ Wallet monitoring started (polling every 2 minutes)\n")
     except Exception as e:
         print(f"  ⚠️ Monitoring start failed: {e}\n")
-
+        import traceback
+        traceback.print_exc()
 
 def _apply_rate_limits(limiter: Limiter):
     """Apply rate limits to endpoints."""
-    limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR, error_message="Analysis rate limit exceeded.")(analyze_bp)
-    limiter.limit(Config.ANALYZE_RATE_LIMIT_DAY, error_message="Daily analysis limit exceeded.")(analyze_bp)
+    limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(analyze_bp)
+    limiter.limit(Config.ANALYZE_RATE_LIMIT_DAY)(analyze_bp)
     limiter.limit(Config.WATCHLIST_WRITE_LIMIT)(watchlist_bp)
     limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(wallets_bp)
     limiter.exempt(health_bp)
     limiter.exempt(telegram_bp)
-
 
 def _register_error_handlers(app: Flask):
     """Register error handlers."""
@@ -132,37 +148,19 @@ def _register_error_handlers(app: Flask):
     def internal_error(e):
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
-
 def print_startup_banner():
     """Print startup banner."""
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
-║   SIFTER KYS API SERVER v7.0 - AUTH + WALLET + TELEGRAM         ║
+║   SIFTER KYS API SERVER v7.0 - AUTH + WALLET + TELEGRAM          ║
 ╚══════════════════════════════════════════════════════════════════╝
     """)
 
-
-# Create app instance
+# Create the global app instance
 app = create_app()
 
-
-@app.before_request
-def setup_telegram():
-    """Setup Telegram but don't auto-start polling"""
-    global telegram_polling_started
-    if not telegram_polling_started and app.config.get('TELEGRAM_NOTIFIER'):
-        telegram_polling_started = True
-        print("[TELEGRAM] ✅ Notifier ready (polling disabled for now)")
-
-        
 if __name__ == '__main__':
     print_startup_banner()
-    
-    # ✅ Only preload cache if NOT in reloader process
-    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        preload_trending_cache()
-        start_wallet_monitoring()
-    
     port = int(os.environ.get("PORT", 5000))
     print(f"\nStarting server on http://localhost:{port}\n")
     app.run(debug=True, host='0.0.0.0', port=port)
