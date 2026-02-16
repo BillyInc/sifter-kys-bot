@@ -156,7 +156,7 @@ class WalletActivityMonitor:
                     })
 
             # Sort by last_checked_at (oldest first)
-            wallets.sort(key=lambda x: x.get('last_checked_at') or '1970-01-01')
+            wallets.sort(key=lambda x: x.get('last_checked_at') or 0)
 
             return wallets
 
@@ -183,7 +183,7 @@ class WalletActivityMonitor:
         wallet_address = wallet_info['wallet_address']
         last_checked = wallet_info.get('last_checked_at')
 
-        # Convert ISO timestamp to epoch if needed
+        # ✅ FIX: Handle both ISO strings and Unix timestamps
         if last_checked:
             try:
                 if isinstance(last_checked, str):
@@ -238,10 +238,11 @@ class WalletActivityMonitor:
                 for token_address, wallets_buying in tokens_bought.items():
                     self._buffer_multi_wallet_signal(token_address, wallets_buying, wallet_info)
 
+            # ✅ FIX: Pass Unix timestamps
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=datetime.utcnow().isoformat(),
-                last_activity_at=datetime.utcnow().isoformat() if transactions else None,
+                last_checked_at=int(time.time()),  # ✅ Unix timestamp
+                last_activity_at=int(time.time()) if transactions else None,  # ✅ Unix timestamp
                 success=True
             )
 
@@ -249,7 +250,7 @@ class WalletActivityMonitor:
             print(f"  ❌ Error checking {wallet_address[:8]}...: {e}")
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=datetime.utcnow().isoformat(),
+                last_checked_at=int(time.time()),  # ✅ Unix timestamp
                 success=False,
                 error_message=str(e)
             )
@@ -563,6 +564,13 @@ class WalletActivityMonitor:
                                last_activity_at=None, success=True, error_message=None):
         """Update monitoring status for a wallet"""
         try:
+            # ✅ FIX: Convert ISO strings to Unix timestamps
+            if isinstance(last_checked_at, str):
+                last_checked_at = int(datetime.fromisoformat(last_checked_at.replace('Z', '+00:00')).timestamp())
+            
+            if last_activity_at and isinstance(last_activity_at, str):
+                last_activity_at = int(datetime.fromisoformat(last_activity_at.replace('Z', '+00:00')).timestamp())
+            
             # Check if status exists
             existing = self._table('wallet_monitor_status').select('wallet_address').eq(
                 'wallet_address', wallet_address
@@ -572,7 +580,7 @@ class WalletActivityMonitor:
                 # Update existing status
                 update_data = {
                     'last_checked_at': last_checked_at,
-                    'updated_at': datetime.utcnow().isoformat()
+                    'updated_at': int(datetime.utcnow().timestamp())  # ✅ FIX: Unix timestamp
                 }
 
                 if success:

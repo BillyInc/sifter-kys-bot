@@ -74,13 +74,75 @@ class WatchlistLeagueManager:
         # Get 30-day context for ROI calculation
         trades_30d = self._get_recent_trades(wallet_address, days=30)
         
+        # Calculate average distance to ATH and entry quality
+        distance_to_ath_values = []
+        entry_quality_values = []
+        
+        # Group trades by token to calculate per-token metrics
+        by_token = defaultdict(lambda: {'buys': [], 'sells': [], 'ath_price': 0})
+        
+        for trade in trades_30d:
+            token = trade.get('token_address')
+            if not token:
+                continue
+            
+            price = float(trade.get('price_per_token', 0))
+            if price == 0:
+                continue
+            
+            if trade.get('side') == 'buy':
+                by_token[token]['buys'].append(price)
+            else:
+                by_token[token]['sells'].append(price)
+            
+            # Track highest price seen (proxy for ATH)
+            if price > by_token[token]['ath_price']:
+                by_token[token]['ath_price'] = price
+        
+        # Calculate metrics for each token
+        for token, data in by_token.items():
+            if data['buys'] and data['ath_price'] > 0:
+                avg_entry = sum(data['buys']) / len(data['buys'])
+                
+                # Distance to ATH multiplier (ATH / entry)
+                distance_to_ath_mult = data['ath_price'] / avg_entry if avg_entry > 0 else 0
+                if distance_to_ath_mult > 0:
+                    distance_to_ath_values.append(distance_to_ath_mult)
+                
+                # Entry quality: use minimum buy price as proxy
+                min_entry = min(data['buys'])
+                entry_quality_mult = avg_entry / min_entry if min_entry > 0 else 1
+                if entry_quality_mult > 0:
+                    entry_quality_values.append(entry_quality_mult)
+        
+        # Calculate averages
+        avg_distance_to_ath = sum(distance_to_ath_values) / len(distance_to_ath_values) if distance_to_ath_values else 0
+        avg_entry_quality = sum(entry_quality_values) / len(entry_quality_values) if entry_quality_values else 0
+        
+        # Calculate ROI multipliers
+        total_invested_7d = sum(float(t.get('usd_value', 0)) for t in recent_trades if t.get('side') == 'buy')
+        total_realized_7d = sum(float(t.get('usd_value', 0)) for t in recent_trades if t.get('side') == 'sell')
+        roi_7d_mult = (total_realized_7d / total_invested_7d) if total_invested_7d > 0 else 1
+        
+        total_invested_30d = sum(float(t.get('usd_value', 0)) for t in trades_30d if t.get('side') == 'buy')
+        total_realized_30d = sum(float(t.get('usd_value', 0)) for t in trades_30d if t.get('side') == 'sell')
+        roi_30d_mult = (total_realized_30d / total_invested_30d) if total_invested_30d > 0 else 1
+        
+        # Calculate win rates (both 7d and 30d)
+        win_rate_7d = self._calculate_win_rate(recent_trades)
+        win_rate_30d = self._calculate_win_rate(trades_30d)
+        
         # Calculate metrics
         metrics = {
             'roi_7d': self._calculate_roi_from_trades(recent_trades),
             'roi_30d': self._calculate_roi_from_trades(trades_30d),
+            'roi_30d_multiplier': roi_30d_mult,
             'runners_7d': self._count_runners(recent_trades, min_multiplier=5.0),
             'runners_30d': self._count_runners(trades_30d, min_multiplier=5.0),
-            'win_rate_7d': self._calculate_win_rate(recent_trades),
+            'win_rate_7d': win_rate_7d,
+            'win_rate_30d': win_rate_30d,
+            'avg_distance_to_ath_multiplier': avg_distance_to_ath,
+            'avg_entry_quality_multiplier': avg_entry_quality,
             'consistency_score': self._calculate_consistency(trades_30d),
             'professional_score': 0,  # Will calculate below
             'last_trade_time': recent_trades[0]['block_time'] if recent_trades else None
@@ -146,7 +208,7 @@ class WatchlistLeagueManager:
         if total_wallets <= 5:
             # Small watchlist: simpler zones
             if position == 1:
-                return 'champions'      # #1 only
+                return 'Elite'      # #1 only
             elif position <= 3:
                 return 'midtable'       # #2-3
             else:
@@ -155,7 +217,7 @@ class WatchlistLeagueManager:
         elif total_wallets <= 10:
             # Standard watchlist
             if position <= 3:
-                return 'champions'      # Top 3
+                return 'Elite'      # Top 3
             elif position <= 6:
                 return 'midtable'       # #4-6
             elif position <= 8:
@@ -168,7 +230,7 @@ class WatchlistLeagueManager:
             percentage = position / total_wallets
             
             if percentage <= 0.3:
-                return 'champions'      # Top 30%
+                return 'Elite'      # Top 30%
             elif percentage <= 0.6:
                 return 'midtable'       # 30-60%
             elif percentage <= 0.8:
@@ -200,8 +262,8 @@ class WatchlistLeagueManager:
     def _calculate_form(self, wallet_address: str) -> List[Dict]:
         """
         Last 5 trades as Win/Draw/Loss
-        Win = ROI > 50%
-        Draw = ROI 0-50%
+        Win = ROI > 3x (300%)
+        Draw = ROI 0-3x
         Loss = ROI < 0%
         
         Form = outcome of last 5 TRADES (not time-based)
@@ -213,7 +275,8 @@ class WatchlistLeagueManager:
             # Get ROI from trade
             roi = trade.get('roi_percent', 0)
             
-            if roi > 50:
+            # Win = >3x (300% ROI)
+            if roi > 300:
                 result = 'win'
             elif roi > 0:
                 result = 'draw'
@@ -357,6 +420,7 @@ class WatchlistLeagueManager:
             for wallet in watchlist:
                 self._table('wallet_watchlist').update({
                     'position': wallet.get('position'),
+                    'zone': wallet.get('zone'),
                     'movement': wallet.get('movement'),
                     'positions_changed': wallet.get('positions_changed', 0),
                     'form': wallet.get('form', []),
@@ -364,9 +428,13 @@ class WatchlistLeagueManager:
                     'degradation_alerts': wallet.get('degradation_alerts', []),
                     'roi_7d': wallet.get('roi_7d', 0),
                     'roi_30d': wallet.get('roi_30d', 0),
+                    'roi_30d_multiplier': wallet.get('roi_30d_multiplier', 1),
                     'runners_7d': wallet.get('runners_7d', 0),
                     'runners_30d': wallet.get('runners_30d', 0),
                     'win_rate_7d': wallet.get('win_rate_7d', 0),
+                    'win_rate_30d': wallet.get('win_rate_30d', 0),
+                    'avg_distance_to_ath_multiplier': wallet.get('avg_distance_to_ath_multiplier', 0),
+                    'avg_entry_quality_multiplier': wallet.get('avg_entry_quality_multiplier', 0),
                     'last_trade_time': wallet.get('last_trade_time'),
                     'professional_score': wallet.get('professional_score', 0),
                     'consistency_score': wallet.get('consistency_score', 0),

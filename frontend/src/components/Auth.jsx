@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowLeft } from 'lucide-react'
 
 export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePassword, isPasswordRecovery }) {
-  const [mode, setMode] = useState(isPasswordRecovery ? 'update-password' : 'signin') // signin, signup, forgot, update-password
+  const [mode, setMode] = useState(isPasswordRecovery ? 'update-password' : 'signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -10,6 +10,27 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [message, setMessage] = useState(null)
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+
+  // ========== REFERRAL CODE CAPTURE ==========
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const refCode = urlParams.get('ref')
+    
+    if (refCode) {
+      // Track click
+      fetch(`${API_URL}/api/referral-points/track-click/${refCode}`, {
+        method: 'POST'
+      }).catch(err => console.error('Referral tracking error:', err))
+      
+      // Store for signup
+      sessionStorage.setItem('referral_code', refCode)
+      
+      // Show message to user
+      setMessage(`🎁 You're signing up with referral code: ${refCode}`)
+    }
+  }, [API_URL])
 
   const resetForm = () => {
     setEmail('')
@@ -63,8 +84,16 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
         if (password !== confirmPassword) {
           throw new Error('Passwords do not match')
         }
-        const { error } = await onSignUp(email, password)
+        
+        // ========== GET REFERRAL CODE FROM SESSION ==========
+        const refCode = sessionStorage.getItem('referral_code')
+        
+        const { error } = await onSignUp(email, password, refCode)
         if (error) throw error
+        
+        // Clear referral code after successful signup
+        sessionStorage.removeItem('referral_code')
+        
         setMessage('Check your email for the confirmation link!')
         resetForm()
       } else {

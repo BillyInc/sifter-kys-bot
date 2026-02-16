@@ -26,3 +26,6 @@ python-louvain==0.16
 pandas>=2.1.0
 gunicorn==21.2.0
 gevent==23.9.1
+# Celery for async tasks
+celery[redis]==5.3.6
+redis==5.0.1
