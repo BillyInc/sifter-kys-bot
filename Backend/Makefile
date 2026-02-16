@@ -1,6 +1,6 @@
 .PHONY: help venv install install-dev run run-prod clean lint test \
         docker-build docker-run docker-stop docker-logs docker-shell docker-restart \
-        pm2-start pm2-stop pm2-restart pm2-logs pm2-status pm2-setup
+        systemd-install systemd-start systemd-stop systemd-restart systemd-logs systemd-status
 
 PYTHON := python3
 VENV := .venv
@@ -102,41 +102,45 @@ docker-shell: ## Open shell in running container
 
 docker-restart: docker-stop docker-run ## Restart Docker container
 
-# PM2 targets
-pm2-setup: install ## Setup PM2 and create logs directory
-	@echo "Setting up PM2..."
+# Systemd targets (production)
+systemd-install: ## Install systemd service files (requires sudo)
+	@echo "Installing systemd service files..."
 	@mkdir -p logs
-	@if ! command -v pm2 &> /dev/null; then \
-		echo "PM2 not found. Install with: sudo npm install -g pm2"; \
-		exit 1; \
-	fi
-	@echo "PM2 setup complete. Run 'make pm2-start' to start the server."
+	sudo cp systemd/*.service /etc/systemd/system/
+	sudo systemctl daemon-reload
+	sudo systemctl enable sifter-backend rq-worker@{1..5} wallet-monitor
+	@echo "Systemd services installed. Run 'make systemd-start' to start."
 
-pm2-start: ## Start server with PM2
-	@if [ ! -d "$(VENV)" ]; then \
-		echo "Error: Virtual environment not found. Run 'make install' first."; \
-		exit 1; \
-	fi
-	@mkdir -p logs
-	pm2 start ecosystem.config.js
-	@echo "Server started. Run 'make pm2-logs' to view logs."
+systemd-start: ## Start all services
+	@echo "Starting services..."
+	sudo systemctl start sifter-backend
+	sudo systemctl start rq-worker@{1..5}
+	sudo systemctl start wallet-monitor
+	@echo "Services started."
 
-pm2-stop: ## Stop PM2 server
-	pm2 stop sifter-backend
+systemd-stop: ## Stop all services
+	@echo "Stopping services..."
+	sudo systemctl stop wallet-monitor
+	sudo systemctl stop rq-worker@{1..5}
+	sudo systemctl stop sifter-backend
+	@echo "Services stopped."
 
-pm2-restart: ## Restart PM2 server
-	pm2 restart sifter-backend
+systemd-restart: ## Restart all services
+	@echo "Restarting services..."
+	sudo systemctl reload-or-restart sifter-backend
+	sudo systemctl restart rq-worker@{1..5}
+	sudo systemctl restart wallet-monitor
+	@echo "Services restarted."
 
-pm2-logs: ## View PM2 logs
-	pm2 logs sifter-backend
+systemd-logs: ## View service logs
+	sudo journalctl -u sifter-backend -u 'rq-worker@*' -u wallet-monitor -f
 
-pm2-status: ## Show PM2 status
-	pm2 list
-
-pm2-delete: ## Remove from PM2
-	pm2 delete sifter-backend
-
-pm2-startup: ## Enable PM2 to start on boot
-	pm2 startup
-	pm2 save
-	@echo "PM2 will now start on boot."
+systemd-status: ## Show service status
+	@echo "=== Sifter Backend ==="
+	@sudo systemctl status sifter-backend --no-pager || true
+	@echo ""
+	@echo "=== RQ Workers ==="
+	@sudo systemctl status 'rq-worker@*' --no-pager || true
+	@echo ""
+	@echo "=== Wallet Monitor ==="
+	@sudo systemctl status wallet-monitor --no-pager || true
