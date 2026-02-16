@@ -407,7 +407,7 @@ class WatchlistDatabase:
                 
                 # Determine zone based on position
                 if idx <= 3:
-                    zone = 'champions'
+                    zone = 'Elite'
                 elif idx <= 6:
                     zone = 'midtable'
                 elif idx <= 8:

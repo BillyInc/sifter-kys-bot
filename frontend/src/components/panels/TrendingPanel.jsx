@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square, BarChart3 } from 'lucide-react';
+import { TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square, BarChart3, Shield} from 'lucide-react';
 
 export default function TrendingPanel({
   userId,
@@ -326,6 +326,10 @@ export default function TrendingPanel({
                       <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded font-bold">
                         {token.multiplier}x
                       </span>
+                       <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-bold flex items-center gap-1">
+                          <Shield size={10} />
+                          Verified
+                        </span>
                     </div>
 
                     <div className="text-sm text-gray-400 mb-2">{token.name}</div>

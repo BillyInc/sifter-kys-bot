@@ -48,10 +48,10 @@ export default function WalletLeagueTable({
   };
 
   const getZoneLabel = (position) => {
-    if (position <= 3) return '🏆 Champions League Zone';
+    if (position <= 3) return '🏆 Elite';
     if (position <= 6) return '📊 Mid-Table';
-    if (position <= 8) return '⚠️ Monitoring Zone';
-    return '🔴 Relegation Zone';
+    if (position <= 8) return '⚠️ Monitoring';
+    return '🔴 Relegation';
   };
 
   const getMovementIcon = (movement) => {

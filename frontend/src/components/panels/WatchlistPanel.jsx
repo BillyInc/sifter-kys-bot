@@ -74,7 +74,7 @@ export default function WatchlistPanel({
       {/* Header with Refresh */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-bold text-lg">🏆 Premier League Watchlist</h3>
+          <h3 className="font-bold text-lg">🏆 Your Watchlist</h3>
           <p className="text-xs text-gray-400">
             Last updated: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : 'Never'}
           </p>

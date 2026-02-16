@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Zap, Search, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
+import { Zap, Search, Sparkles, CheckCircle, AlertCircle, Shield} from 'lucide-react';
 
 export default function DiscoveryPanel({
   userId,
@@ -111,35 +111,19 @@ export default function DiscoveryPanel({
           Automatically scan the last 30 days of trending tokens to find wallets that consistently hit multiple runners
         </p>
 
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Min Runners Hit</label>
-            <select
-              value={minRunners}
-              onChange={(e) => setMinRunners(parseInt(e.target.value))}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-            >
-              <option value="2">2+ Runners</option>
-              <option value="3">3+ Runners</option>
-              <option value="5">5+ Runners</option>
-              <option value="10">10+ Runners</option>
-            </select>
+        
+          <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mb-4">
+            <div className="flex items-center gap-2 text-xs">
+              <Shield className="text-green-400" size={14} />
+              <span className="text-green-400 font-semibold">Security Filter Active</span>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              All tokens are verified for: Liquidity locked • Mint authority revoked • Social presence
+            </p>
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Min ROI Multiplier</label>
-            <select
-              value={minRoiMultiplier}
-              onChange={(e) => setMinRoiMultiplier(parseFloat(e.target.value))}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-            >
-              <option value="2.0">2x ROI</option>
-              <option value="3.0">3x ROI</option>
-              <option value="5.0">5x ROI</option>
-              <option value="10.0">10x ROI</option>
-            </select>
-          </div>
-        </div>
+        
+     
 
         <button
           onClick={handleAutoDiscovery}

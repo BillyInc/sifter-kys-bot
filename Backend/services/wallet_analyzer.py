@@ -409,6 +409,54 @@ class WalletPumpAnalyzer:
         # C-Tier: Below threshold
         else:
             return 'C'
+
+    # ✅ NEW METHOD: Check token security
+    def _check_token_security(self, token_address):
+        """
+        Check token security: liquidity locked, mint revoked, has social
+        Returns dict with security flags or None if checks fail
+        """
+        try:
+            url = f"{self.st_base_url}/tokens/{token_address}"
+            
+            data = self.fetch_with_retry(
+                url,
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
+            
+            if not data:
+                return None
+            
+            # Check mint authority revoked
+            mint_authority = data.get('mint_authority')
+            is_mint_revoked = mint_authority is None or mint_authority == ""
+            
+            # Check liquidity locked
+            pools = data.get('pools', [])
+            is_liquidity_locked = False
+            if pools:
+                primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
+                # Check if pool has liquidity lock info
+                is_liquidity_locked = primary_pool.get('liquidity_locked', False)
+            
+            # Check social links
+            socials = data.get('socials', {})
+            social_count = sum(1 for v in socials.values() if v)  # Count non-empty socials
+            has_social = social_count >= 1
+            
+            return {
+                'is_mint_revoked': is_mint_revoked,
+                'is_liquidity_locked': is_liquidity_locked,
+                'has_social': has_social,
+                'social_count': social_count,
+                'socials': socials,
+                'passes_security': is_mint_revoked and is_liquidity_locked and has_social
+            }
+            
+        except Exception as e:
+            self._log(f"Security check error: {e}")
+            return None
  
     def get_wallet_pnl_solanatracker(self, wallet_address, token_address):
         """Get PnL data for a wallet-token pair"""
@@ -626,8 +674,8 @@ class WalletPumpAnalyzer:
             return None
             
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
-        """Enhanced trending runner discovery with caching"""
-        cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}"
+        """Enhanced trending runner discovery with MANDATORY security filtering"""
+        cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
         now = datetime.now()
      
         if days_back == 30:
@@ -641,6 +689,7 @@ class WalletPumpAnalyzer:
      
         self._log(f"\n{'='*80}")
         self._log(f"FINDING TRENDING RUNNERS: {days_back} days, {min_multiplier}x+")
+        self._log(f"🔒 SECURITY FILTER: ACTIVE (liquidity locked, mint revoked, has social)")
         self._log(f"{'='*80}")
      
         try:
@@ -673,6 +722,12 @@ class WalletPumpAnalyzer:
                     if liquidity < min_liquidity:
                         continue
                  
+                    # ✅ MANDATORY SECURITY CHECK
+                    security = self._check_token_security(mint)
+                    if not security or not security['passes_security']:
+                        self._log(f" 🔒 {token.get('symbol')} failed security check - SKIPPED")
+                        continue
+                 
                     price_range = self._get_price_range_in_period(mint, days_back)
                     if not price_range or price_range['multiplier'] < min_multiplier:
                         continue
@@ -684,7 +739,7 @@ class WalletPumpAnalyzer:
                     ath_data = self.get_token_ath(mint)
                     token_age_days = token_info.get('age_days', 0)
                  
-                    qualified_runners.append({
+                    runner_data = {
                         'symbol': token.get('symbol', 'UNKNOWN'),
                         'ticker': token.get('symbol', 'UNKNOWN'),
                         'name': token.get('name', 'Unknown'),
@@ -702,8 +757,17 @@ class WalletPumpAnalyzer:
                         'holders': token_info['holders'],
                         'token_age_days': round(token_age_days, 1),
                         'age': token_info.get('age', 'N/A'),
-                        'pair_address': pool.get('poolId', mint)
-                    })
+                        'pair_address': pool.get('poolId', mint),
+                        # ✅ INCLUDE SECURITY INFO
+                        'security': {
+                            'mint_revoked': security['is_mint_revoked'],
+                            'liquidity_locked': security['is_liquidity_locked'],
+                            'has_social': security['has_social'],
+                            'social_count': security['social_count']
+                        }
+                    }
+                 
+                    qualified_runners.append(runner_data)
                  
                     time.sleep(0.2)
                  
@@ -716,9 +780,9 @@ class WalletPumpAnalyzer:
             if days_back != 30:
                 self._trending_cache[cache_key] = qualified_runners
                 self._cache_expiry[cache_key] = now
-                self._log(f" ✅ Found {len(qualified_runners)} runners (cached 5 min)")
+                self._log(f" ✅ Found {len(qualified_runners)} SECURE runners (cached 5 min)")
             else:
-                self._log(f" ✅ Found {len(qualified_runners)} runners (no cache - one-off)")
+                self._log(f" ✅ Found {len(qualified_runners)} SECURE runners (no cache - one-off)")
          
             return qualified_runners
          

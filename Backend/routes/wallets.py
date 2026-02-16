@@ -273,7 +273,7 @@ def analyze_single_token():
 @wallets_bp.route('/trending/runners', methods=['GET','OPTIONS'])
 @optional_auth
 def get_trending_runners():
-    """Get trending runners list"""
+    """Get trending runners list - ALWAYS security filtered"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -290,6 +290,7 @@ def get_trending_runners():
         days_map = {'7d': 7, '14d': 14, '30d': 30}
         days_back = days_map.get(timeframe, 7)
 
+        # Security filtering is ALWAYS ON (built into find_trending_runners_enhanced)
         runners = wallet_analyzer.find_trending_runners_enhanced(
             days_back=days_back,
             min_multiplier=min_multiplier,
@@ -306,6 +307,8 @@ def get_trending_runners():
             'success': True,
             'runners': filtered_runners,
             'total': len(filtered_runners),
+            'security_filtered': True,  # ✅ Always true
+            'security_info': 'All tokens verified: liquidity locked, mint revoked, has social'
         }), 200
 
     except Exception as e:
@@ -422,7 +425,7 @@ def analyze_trending_runners_batch():
 @wallets_bp.route('/discover', methods=['POST','OPTIONS'])
 @optional_auth
 def auto_discover_wallets():
-    """Auto-discover using trending runners (30 days)"""
+    """Auto-discover using trending runners (30 days) - ALWAYS security filtered"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -434,6 +437,7 @@ def auto_discover_wallets():
 
         wallet_analyzer = get_wallet_analyzer()
 
+        # ✅ Security filtering is ALWAYS ON (built into find_trending_runners_enhanced)
         runners = wallet_analyzer.find_trending_runners_enhanced(
             days_back=30,
             min_multiplier=5.0,
@@ -443,7 +447,7 @@ def auto_discover_wallets():
         if not runners:
             return jsonify({
                 'success': False,
-                'error': 'No trending runners found'
+                'error': 'No secure trending runners found'
             }), 200
 
         smart_money = wallet_analyzer.batch_analyze_runners_professional(
@@ -464,6 +468,8 @@ def auto_discover_wallets():
             'top_wallets': smart_money[:50],
             'smart_money_wallets': smart_money[:50],
             'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners[:10]],
+            'security_filtered': True,  # ✅ Always true
+            'security_info': 'All tokens verified: liquidity locked, mint revoked, has social'
         }), 200
 
     except Exception as e:

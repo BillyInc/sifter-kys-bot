@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { User, Settings, Bell, Key, CreditCard, HelpCircle, LogOut, BarChart3 } from 'lucide-react';
+import { User, Settings, Bell, Key, CreditCard, HelpCircle, LogOut, BarChart3, Share2 } from 'lucide-react'; // Added Share2 here
 import SettingsSubPanel from './SettingsSubPanel';
 import TelegramSettings from '../../TelegramSettings';
 import MyDashboardPanel from './MyDashboardPanel';
+import ReferralDashboardSubPanel from './ReferralDashboardSubPanel'; // Added this import
 
 export default function ProfilePanel({ 
   user, 
   userId,
   apiUrl,
   onNavigate,
-  onSignOut 
+  onSignOut,
+  getAccessToken // Added this prop
 }) {
-  const [subPanel, setSubPanel] = useState(null); // 'settings', 'telegram', 'dashboard'
+  const [subPanel, setSubPanel] = useState(null); // 'settings', 'telegram', 'dashboard', 'referrals'
 
   // If viewing a sub-panel, render it
   if (subPanel === 'settings') {
@@ -47,13 +49,20 @@ export default function ProfilePanel({
   }
 
   if (subPanel === 'referrals') {
-  return <ReferralDashboardSubPanel userId={userId} apiUrl={apiUrl} onBack={() => setSubPanel(null)} />;
-}
+    return (
+      <ReferralDashboardSubPanel 
+        userId={userId} 
+        apiUrl={apiUrl} 
+        onBack={() => setSubPanel(null)} 
+        getAccessToken={getAccessToken} // Pass the token function here
+      />
+    );
+  }
 
   // Main profile menu
   const menuItems = [
     { id: 'dashboard', icon: BarChart3, label: 'My Dashboard', color: 'text-purple-400', action: () => setSubPanel('dashboard') },
-    { id: 'referrals', icon: Share2, label: 'Referrals & Points', color: 'text-green-400', action: () => setSubPanel('referrals') }, // NEW
+    { id: 'referrals', icon: Share2, label: 'Referrals & Points', color: 'text-green-400', action: () => setSubPanel('referrals') },
     { id: 'settings', icon: Settings, label: 'Settings', color: 'text-gray-400', action: () => setSubPanel('settings') },
     { id: 'telegram', icon: Bell, label: 'Telegram Setup', color: 'text-blue-400', action: () => setSubPanel('telegram') },
     { id: 'api', icon: Key, label: 'API Keys', color: 'text-yellow-400', action: () => alert('API Keys coming soon') },
