@@ -46,9 +46,14 @@ export default function ProfilePanel({
     );
   }
 
+  if (subPanel === 'referrals') {
+  return <ReferralDashboardSubPanel userId={userId} apiUrl={apiUrl} onBack={() => setSubPanel(null)} />;
+}
+
   // Main profile menu
   const menuItems = [
     { id: 'dashboard', icon: BarChart3, label: 'My Dashboard', color: 'text-purple-400', action: () => setSubPanel('dashboard') },
+    { id: 'referrals', icon: Share2, label: 'Referrals & Points', color: 'text-green-400', action: () => setSubPanel('referrals') }, // NEW
     { id: 'settings', icon: Settings, label: 'Settings', color: 'text-gray-400', action: () => setSubPanel('settings') },
     { id: 'telegram', icon: Bell, label: 'Telegram Setup', color: 'text-blue-400', action: () => setSubPanel('telegram') },
     { id: 'api', icon: Key, label: 'API Keys', color: 'text-yellow-400', action: () => alert('API Keys coming soon') },

@@ -31,6 +31,7 @@ export default function AnalyzePanel({
   isAnalyzing,
   onClose, // NEW: to close panel after starting analysis
   formatNumber,
+  setSelectedTokens,   // ← ADD THIS LINE
   formatPrice
 }) {
   return (

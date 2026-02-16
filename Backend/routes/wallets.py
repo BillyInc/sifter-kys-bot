@@ -6,6 +6,7 @@ from config import Config
 from auth import require_auth, optional_auth
 from db.watchlist_db import WatchlistDatabase
 from collections import defaultdict
+from datetime import datetime
 
 # Lazy imports
 _wallet_analyzer = None
@@ -970,6 +971,95 @@ def replace_wallet():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    
+    
+# =============================================================================
+# ✅ NEW: WATCHLIST STATS ENDPOINTS
+# =============================================================================
+
+@wallets_bp.route('/watchlist/<wallet_address>/stats', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_wallet_stats(wallet_address):
+    """Get detailed stats for a specific wallet"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from services.watchlist_manager import WatchlistLeagueManager
+        manager = WatchlistLeagueManager()
+        
+        # Get refreshed metrics
+        metrics = manager._refresh_wallet_metrics(wallet_address)
+        
+        # Get recent trades
+        trades = manager._get_recent_trades(wallet_address, days=30, limit=10)
+        
+        return jsonify({
+            'success': True,
+            'wallet_address': wallet_address,
+            'metrics': metrics,
+            'recent_trades': trades
+        }), 200
+        
+    except Exception as e:
+        print(f"[WALLET STATS] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/watchlist/<wallet_address>/refresh', methods=['POST', 'OPTIONS'])
+@optional_auth
+def refresh_wallet_stats(wallet_address):
+    """Force refresh stats for a specific wallet"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        data = request.json or {}
+        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from services.watchlist_manager import WatchlistLeagueManager
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        
+        manager = WatchlistLeagueManager()
+        supabase = get_supabase_client()
+        
+        # Refresh metrics
+        metrics = manager._refresh_wallet_metrics(wallet_address)
+        
+        # Update in database
+        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
+            'roi_7d': metrics.get('roi_7d', 0),
+            'roi_30d': metrics.get('roi_30d', 0),
+            'runners_7d': metrics.get('runners_7d', 0),
+            'runners_30d': metrics.get('runners_30d', 0),
+            'win_rate_7d': metrics.get('win_rate_7d', 0),
+            'last_trade_time': metrics.get('last_trade_time'),
+            'professional_score': metrics.get('professional_score', 0),
+            'consistency_score': metrics.get('consistency_score', 0),
+            'last_updated': datetime.utcnow().isoformat()
+        }).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Stats refreshed',
+            'metrics': metrics
+        }), 200
+        
+    except Exception as e:
+        print(f"[REFRESH WALLET] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @wallets_bp.route('/watchlist/add-quick', methods=['POST', 'OPTIONS'])
 @optional_auth
@@ -1048,6 +1138,131 @@ def add_wallet_quick():
         }), 200
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    
+
+
+@wallets_bp.route('/premium-elite-100', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_premium_elite_100():
+    """Get Premium Elite 100 - Top performing wallets globally"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        sort_by = request.args.get('sort_by', 'score')  # 'score', 'roi', 'runners'
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        # TODO: Check if user has premium subscription
+        # For now, allow all users
+        
+        from services.elite_100_manager import get_elite_manager
+        manager = get_elite_manager()
+        
+        wallets = manager.get_cached_elite_100(sort_by)
+        
+        return jsonify({
+            'success': True,
+            'wallets': wallets,
+            'total': len(wallets),
+            'sort_by': sort_by
+        }), 200
+        
+    except Exception as e:
+        print(f"[ELITE 100] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/premium-elite-100/export', methods=['GET', 'OPTIONS'])
+@optional_auth
+def export_elite_100():
+    """Export Elite 100 as CSV"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from services.elite_100_manager import get_elite_manager
+        import csv
+        from io import StringIO
+        import time
+        
+        manager = get_elite_manager()
+        wallets = manager.get_cached_elite_100()
+        
+        # Create CSV
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow([
+            'Rank', 'Wallet Address', 'Tier', 'Professional Score', 
+            'ROI 30d', 'Runners 30d', 'Win Rate 7d', 'Win Streak'
+        ])
+        
+        # Data
+        for i, wallet in enumerate(wallets, 1):
+            writer.writerow([
+                i,
+                wallet['wallet_address'],
+                wallet['tier'],
+                wallet['professional_score'],
+                wallet['roi_30d'],
+                wallet['runners_30d'],
+                wallet['win_rate_7d'],
+                wallet['win_streak']
+            ])
+        
+        output.seek(0)
+        
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename=elite-100-{int(time.time())}.csv'}
+        )
+        
+    except Exception as e:
+        print(f"[ELITE 100 EXPORT] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/top-100-community', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_top_100_community():
+    """Get Community Top 100 - Most added wallets this week"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'user_id required'}), 400
+        
+        from services.elite_100_manager import get_elite_manager
+        manager = get_elite_manager()
+        
+        wallets = manager.get_cached_community_top_100()
+        
+        return jsonify({
+            'success': True,
+            'wallets': wallets,
+            'total': len(wallets)
+        }), 200
+        
+    except Exception as e:
+        print(f"[COMMUNITY TOP 100] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

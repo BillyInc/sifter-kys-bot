@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square } from 'lucide-react';
+import { TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square, BarChart3 } from 'lucide-react';
 
 export default function TrendingPanel({
   userId,
   apiUrl,
   onClose,
-  // Add any other props you need from SifterKYS
   formatNumber,
   formatPrice
 }) {
@@ -13,14 +12,13 @@ export default function TrendingPanel({
   const [isLoadingTrending, setIsLoadingTrending] = useState(false);
   const [selectedRunners, setSelectedRunners] = useState([]);
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
-  const [batchResults, setBatchResults] = useState(null);
 
   // Filter states
   const [filters, setFilters] = useState({
-    timeframe: '24h',
-    minMultiplier: 5,
-    minLiquidity: 5000,
+    timeframe: '7d',
+    minMultiplier: 10,
     showAdvanced: false,
+    minLiquidity: 5000,
     minVolume: 0,
     minTxns: 0,
     chains: ['solana']
@@ -98,8 +96,7 @@ export default function TrendingPanel({
       const data = await response.json();
       
       if (data.success) {
-        setBatchResults(data.results);
-        alert(`✅ Found ${data.results.qualified_wallets || 0} qualified wallets!`);
+        alert(`✅ Found ${data.results?.qualified_wallets || 0} qualified wallets!`);
         onClose(); // Close panel and show results on dashboard
       }
     } catch (error) {
@@ -136,57 +133,81 @@ export default function TrendingPanel({
 
   return (
     <div className="space-y-4">
-      {/* Filter Bar */}
-      <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <Filter size={16} className="text-orange-400" />
-            Filters
-          </h3>
-          <button
-            onClick={() => setFilters({...filters, showAdvanced: !filters.showAdvanced})}
-            className="text-xs text-purple-400 hover:text-purple-300"
-          >
-            {filters.showAdvanced ? 'Hide' : 'Show'} Advanced
-          </button>
-        </div>
-
-        {/* Basic Filters */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Timeframe</label>
-            <select
-              value={filters.timeframe}
-              onChange={(e) => setFilters({...filters, timeframe: e.target.value})}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+      {/* Timeframe Buttons - STYLISH */}
+      <div className="bg-gradient-to-br from-orange-900/20 to-orange-800/10 border border-orange-500/30 rounded-xl p-4">
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <TrendingUp className="text-orange-400" size={16} />
+          Select Timeframe
+        </h3>
+        
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { value: '7d', label: '7 Days', emoji: '📅' },
+            { value: '14d', label: '14 Days', emoji: '📆' },
+            { value: '30d', label: '30 Days', emoji: '🗓️' }
+          ].map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setFilters({...filters, timeframe: option.value})}
+              className={`px-4 py-3 rounded-lg font-semibold text-sm transition-all duration-300 ${
+                filters.timeframe === option.value
+                  ? 'bg-gradient-to-r from-orange-600 to-orange-500 shadow-lg shadow-orange-500/30 scale-105'
+                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
+              }`}
             >
-              <option value="1h">Last 1 Hour</option>
-              <option value="4h">Last 4 Hours</option>
-              <option value="12h">Last 12 Hours</option>
-              <option value="24h">Last 24 Hours</option>
-              <option value="7d">Last 7 Days</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">Min Multiplier</label>
-            <select
-              value={filters.minMultiplier}
-              onChange={(e) => setFilters({...filters, minMultiplier: parseFloat(e.target.value)})}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-            >
-              <option value="2">2x</option>
-              <option value="5">5x</option>
-              <option value="10">10x</option>
-              <option value="20">20x</option>
-              <option value="50">50x</option>
-            </select>
-          </div>
+              <div className="text-lg mb-1">{option.emoji}</div>
+              <div>{option.label}</div>
+            </button>
+          ))}
         </div>
+      </div>
 
-        {/* Advanced Filters */}
-        {filters.showAdvanced && (
-          <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-white/10">
+      {/* Multiplier Filter - STYLISH */}
+      <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/30 rounded-xl p-4">
+        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <Sparkles className="text-purple-400" size={16} />
+          Minimum Multiplier
+        </h3>
+        
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { value: 5, label: '5x', color: 'yellow' },
+            { value: 10, label: '10x', color: 'green' },
+            { value: 20, label: '20x', color: 'blue' },
+            { value: 50, label: '50x', color: 'purple' },
+            
+          ].map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setFilters({...filters, minMultiplier: option.value})}
+              className={`px-3 py-2 rounded-lg font-bold text-sm transition-all duration-300 ${
+                filters.minMultiplier === option.value
+                  ? `bg-gradient-to-r from-${option.color}-600 to-${option.color}-500 shadow-lg scale-105`
+                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Advanced Filters Toggle */}
+      <button
+        onClick={() => setFilters({...filters, showAdvanced: !filters.showAdvanced})}
+        className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-semibold transition flex items-center justify-between"
+      >
+        <span className="flex items-center gap-2">
+          <Filter size={14} />
+          Advanced Filters
+        </span>
+        <ChevronDown size={16} className={`transition-transform ${filters.showAdvanced ? 'rotate-180' : ''}`} />
+      </button>
+
+      {/* Advanced Filters */}
+      {filters.showAdvanced && (
+        <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Min Liquidity ($)</label>
               <input
@@ -207,23 +228,15 @@ export default function TrendingPanel({
               />
             </div>
           </div>
-        )}
-
-        <button
-          onClick={loadTrendingRunners}
-          disabled={isLoadingTrending}
-          className="w-full mt-3 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/30 rounded-lg text-sm font-semibold transition"
-        >
-          {isLoadingTrending ? 'Loading...' : 'Apply Filters'}
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* Batch Selection Controls */}
       {trendingRunners.length > 0 && (
-        <div className="bg-gradient-to-r from-orange-900/20 to-orange-800/10 border border-orange-500/30 rounded-xl p-4">
+        <div className="bg-gradient-to-r from-blue-900/20 to-blue-800/10 border border-blue-500/30 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="text-sm font-semibold text-orange-400">
+              <h3 className="text-sm font-semibold text-blue-400">
                 {selectedRunners.length} / {trendingRunners.length} Selected
               </h3>
               <p className="text-xs text-gray-400">Select multiple tokens to find common wallets</p>
@@ -248,7 +261,7 @@ export default function TrendingPanel({
           <button
             onClick={handleBatchAnalyze}
             disabled={isBatchAnalyzing || selectedRunners.length === 0}
-            className="w-full px-4 py-3 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 disabled:from-orange-600/30 disabled:to-orange-500/30 rounded-lg font-semibold transition flex items-center justify-center gap-2"
+            className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 disabled:from-blue-600/30 disabled:to-blue-500/30 rounded-lg font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-blue-500/30"
           >
             {isBatchAnalyzing ? (
               <>
@@ -258,7 +271,7 @@ export default function TrendingPanel({
             ) : (
               <>
                 <Sparkles size={18} />
-                Batch Analyze Selected
+                Batch Analyze Selected ({selectedRunners.length})
               </>
             )}
           </button>
@@ -269,7 +282,7 @@ export default function TrendingPanel({
       <div className="space-y-2">
         {isLoadingTrending ? (
           <div className="flex justify-center py-12">
-            <div className="w-8 h-8 border-2 border-white/30 border-t-purple-500 rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-white/30 border-t-orange-500 rounded-full animate-spin" />
           </div>
         ) : trendingRunners.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
@@ -342,8 +355,9 @@ export default function TrendingPanel({
                   {/* Single Analysis Button */}
                   <button
                     onClick={() => handleSingleAnalysis(token)}
-                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded-lg text-xs font-semibold transition whitespace-nowrap"
+                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded-lg text-xs font-semibold transition whitespace-nowrap flex items-center gap-1"
                   >
+                    <BarChart3 size={14} />
                     Analyze
                   </button>
                 </div>

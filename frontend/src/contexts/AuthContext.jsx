@@ -18,6 +18,8 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [authEvent, setAuthEvent] = useState(null)
 
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -41,19 +43,66 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  const signUp = useCallback(async (email, password) => {
-    authLogger.debug('Attempting sign up', { email })
+  // ========== UPDATED SIGNUP WITH REFERRAL CODE ==========
+  const signUp = useCallback(async (email, password, referralCode = null) => {
+    authLogger.debug('Attempting sign up', { email, hasReferralCode: !!referralCode })
+    
+    // First, create the Supabase auth user
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          referral_code: referralCode // Store in user metadata
+        }
+      }
     })
+    
     if (error) {
       authLogger.warn('Sign up failed', { email, error: error.message })
-    } else {
-      authLogger.info('Sign up successful', { email })
+      return { data, error }
     }
+    
+    authLogger.info('Sign up successful', { email, userId: data.user?.id })
+    
+    // If signup was successful and we have a referral code, send it to backend
+    if (data.user && referralCode) {
+      try {
+        authLogger.debug('Sending referral code to backend', { userId: data.user.id, referralCode })
+        
+        const response = await fetch(`${API_URL}/api/auth/signup`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            user_id: data.user.id,
+            email: data.user.email,
+            referral_code: referralCode
+          })
+        })
+        
+        const result = await response.json()
+        
+        if (result.success) {
+          authLogger.info('Referral relationship created', { userId: data.user.id })
+        } else {
+          authLogger.warn('Failed to create referral relationship', { 
+            userId: data.user.id, 
+            error: result.error 
+          })
+        }
+      } catch (backendError) {
+        // Don't fail signup if backend call fails
+        authLogger.error('Backend referral call failed', { 
+          userId: data.user.id, 
+          error: backendError.message 
+        })
+      }
+    }
+    
     return { data, error }
-  }, [])
+  }, [API_URL])
 
   const signIn = useCallback(async (email, password) => {
     authLogger.debug('Attempting sign in', { email })

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
-import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, X, Search } from 'lucide-react';
+import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, Award } from 'lucide-react';
 
 // NEW IMPORTS - Panel System
 import DashboardHome from './components/dashboard/DashboardHome';
@@ -55,6 +55,10 @@ export default function SifterKYS() {
   // Watchlist state
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
   const [replacementModalWallet, setReplacementModalWallet] = useState(null);
+  const [replacementData, setReplacementData] = useState(null);
+  
+  // ========== POINTS STATE ==========
+  const [userPoints, setUserPoints] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const userId = user?.id;
@@ -74,9 +78,9 @@ export default function SifterKYS() {
       analyze: { direction: 'left', width: 'w-96', title: '🔍 Analyze Tokens' },
       trending: { direction: 'right', width: 'w-[600px]', title: '🔥 Trending Runners' },
       discovery: { direction: 'right', width: 'w-96', title: '⚡ Auto Discovery' },
-      watchlist: { direction: 'right', width: 'w-[600px]', title: '👁️ Watchlist' },
-      top100: { direction: 'right', width: 'w-96', title: '🏆 Top 100 Community' },
-      premium100: { direction: 'right', width: 'w-96', title: '👑 Premium Elite 100' },
+      watchlist: { direction: 'right', width: 'w-full max-w-4xl', title: '👁️ Watchlist' },
+      top100: { direction: 'right', width: 'w-full max-w-4xl', title: '🏆 Top 100 Community' },
+      premium100: { direction: 'right', width: 'w-full max-w-4xl', title: '👑 Premium Elite 100' },
       quickadd: { direction: 'right', width: 'w-96', title: '➕ Quick Add Wallet' },
       profile: { direction: 'right', width: 'w-96', title: 'Profile' },
       help: { direction: 'right', width: 'w-96', title: '❓ Help & Support' },
@@ -100,6 +104,57 @@ export default function SifterKYS() {
     if (price < 1) return `$${price.toFixed(4)}`;
     return `$${price.toFixed(2)}`;
   };
+
+  // ========== POINTS AWARD FUNCTION ==========
+  const awardPoints = async (actionType, metadata = {}) => {
+    try {
+      const token = getAccessToken();
+      await fetch(`${API_URL}/api/referral-points/points/award`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action_type: actionType,
+          metadata
+        })
+      });
+      
+      // Refresh points after awarding
+      loadUserPoints();
+    } catch (error) {
+      console.error('Points award error:', error);
+    }
+  };
+
+  // ========== LOAD USER POINTS ==========
+  const loadUserPoints = async () => {
+    if (!userId) return;
+    
+    try {
+      const token = getAccessToken();
+      const response = await fetch(`${API_URL}/api/referral-points/dashboard`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        setUserPoints(data.points?.total || 0);
+      }
+    } catch (error) {
+      console.error('Load points error:', error);
+    }
+  };
+
+  // ========== LOAD POINTS ON AUTH ==========
+  useEffect(() => {
+    if (isAuthenticated && userId) {
+      loadUserPoints();
+      // Award daily login points
+      awardPoints('daily_login');
+    }
+  }, [isAuthenticated, userId]);
 
   // ========== TOKEN SEARCH ==========
   useEffect(() => {
@@ -193,7 +248,7 @@ export default function SifterKYS() {
     });
   };
 
-  // ========== ANALYSIS FUNCTIONS ==========
+  // ========== ANALYSIS FUNCTIONS WITH POINTS ==========
   const handleAnalysisStreaming = async () => {
     if (selectedTokens.length === 0) {
       alert('Please select at least one token');
@@ -254,6 +309,11 @@ export default function SifterKYS() {
               } else if (jsonData.type === 'complete') {
                 setWalletResults(jsonData.data);
                 setStreamingMessage('Analysis complete!');
+                
+                // ========== AWARD POINTS FOR ANALYSIS ==========
+                await awardPoints('run_analysis', { 
+                  token_count: selectedTokens.length 
+                });
               } else if (jsonData.type === 'error') {
                 throw new Error(jsonData.message);
               }
@@ -293,6 +353,8 @@ export default function SifterKYS() {
 
       if (data.success) {
         alert('✅ Wallet added to watchlist!');
+        // Award points for adding to watchlist
+        await awardPoints('add_watchlist');
       } else {
         alert(`Failed: ${data.error}`);
       }
@@ -313,11 +375,11 @@ export default function SifterKYS() {
 
   if (!isAuthenticated) {
     return <Auth
-    onSignIn={signIn}
-    onSignUp={signUp}
-    onResetPassword={resetPassword}
-    onUpdatePassword={updatePassword}
-    isPasswordRecovery={false}
+      onSignIn={signIn}
+      onSignUp={signUp}
+      onResetPassword={resetPassword}
+      onUpdatePassword={updatePassword}
+      isPasswordRecovery={false}
     />;
   }
 
@@ -335,6 +397,13 @@ export default function SifterKYS() {
 
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
+
+              {/* ========== POINTS BADGE ========== */}
+              <div className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 rounded-lg cursor-pointer hover:bg-purple-500/30 transition"
+                   onClick={() => handleOpenPanel('profile')}>
+                <Award className="text-yellow-400" size={16} />
+                <span className="text-sm font-bold">{userPoints.toLocaleString()}</span>
+              </div>
 
               {/* PROFILE DROPDOWN */}
               <div className="relative">
@@ -393,6 +462,7 @@ export default function SifterKYS() {
                 )}
               </div>
 
+              {/* UPGRADE BUTTON - FIXED SYNTAX */}
               <a
                 href="https://whop.com/sifter"
                 target="_blank"
@@ -453,6 +523,7 @@ export default function SifterKYS() {
             handleAnalysisStreaming={handleAnalysisStreaming}
             isAnalyzing={isAnalyzing}
             onClose={handleClosePanel}
+            setSelectedTokens={setSelectedTokens}
             formatNumber={formatNumber}
             formatPrice={formatPrice}
           />
@@ -521,6 +592,7 @@ export default function SifterKYS() {
             apiUrl={API_URL}
             onNavigate={handleOpenPanel}
             onSignOut={signOut}
+            getAccessToken={getAccessToken}
           />
         )}
 
@@ -544,12 +616,40 @@ export default function SifterKYS() {
         />
       )}
 
-      {replacementModalWallet && (
+      {replacementData && (
         <WalletReplacementModal
-          walletAddress={replacementModalWallet}
-          userId={userId}
-          apiUrl={API_URL}
-          onClose={() => setReplacementModalWallet(null)}
+          currentWallet={replacementData.wallet}
+          suggestions={replacementData.suggestions}
+          onReplace={async (newWallet) => {
+            try {
+              const token = getAccessToken();
+              const response = await fetch(`${API_URL}/api/wallets/watchlist/replace`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  user_id: userId,
+                  old_wallet: replacementData.wallet.wallet_address,
+                  new_wallet: newWallet.wallet
+                })
+              });
+
+              const data = await response.json();
+              
+              if (data.success) {
+                alert('✅ Wallet replaced successfully!');
+                setReplacementData(null);
+              } else {
+                alert(`Failed: ${data.error}`);
+              }
+            } catch (error) {
+              console.error('Replace error:', error);
+              alert('Failed to replace wallet');
+            }
+          }}
+          onDismiss={() => setReplacementData(null)}
         />
       )}
 

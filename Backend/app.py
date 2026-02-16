@@ -9,6 +9,14 @@ from config import Config
 from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
 from rq import Queue
 from redis import Redis
+from routes import support_bp
+from routes import user_settings_bp
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from routes import whop_bp
+from routes import referral_points_bp
+from routes import auth_bp
+
 
 telegram_polling_started = False
 
@@ -18,6 +26,58 @@ def get_rate_limit_key():
     if user_id:
         return f"user:{user_id}"
     return get_remote_address()
+
+def init_scheduler(app):
+    """Initialize background scheduler for cron jobs"""
+    scheduler = BackgroundScheduler()
+    
+    # Daily stats refresh at 3am UTC
+    scheduler.add_job(
+        func=lambda: run_cron_job(app, 'daily'),
+        trigger=CronTrigger(hour=3, minute=0),
+        id='daily_stats_refresh',
+        name='Daily stats refresh',
+        replace_existing=True
+    )
+    
+    # Weekly rerank on Sunday at 4am UTC
+    scheduler.add_job(
+        func=lambda: run_cron_job(app, 'weekly'),
+        trigger=CronTrigger(day_of_week='sun', hour=4, minute=0),
+        id='weekly_rerank',
+        name='Weekly rerank',
+        replace_existing=True
+    )
+    
+    # 4-week check every 28 days at 5am UTC
+    scheduler.add_job(
+        func=lambda: run_cron_job(app, 'four_week'),
+        trigger=CronTrigger(day='*/28', hour=5, minute=0),
+        id='four_week_check',
+        name='4-week degradation check',
+        replace_existing=True
+    )
+    
+    scheduler.start()
+    print("[SCHEDULER] ✅ Background jobs scheduled")
+    print("  - Daily refresh: 3am UTC")
+    print("  - Weekly rerank: Sunday 4am UTC")
+    print("  - 4-week check: Every 28 days at 5am UTC")
+    
+    return scheduler
+
+def run_cron_job(app, job_type):
+    """Run cron job with app context"""
+    with app.app_context():
+        from services.watchlist_stats_updater import get_updater
+        updater = get_updater()
+        
+        if job_type == 'daily':
+            updater.daily_stats_refresh()
+        elif job_type == 'weekly':
+            updater.weekly_rerank_all()
+        elif job_type == 'four_week':
+            updater.four_week_degradation_check()
 
 def create_app() -> Flask:
     """Create and configure the Flask application."""
@@ -60,10 +120,18 @@ def create_app() -> Flask:
     app.register_blueprint(wallets_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(telegram_bp, url_prefix='/api/telegram')
+    app.register_blueprint(support_bp)
+    app.register_blueprint(user_settings_bp)
+    app.register_blueprint(whop_bp)
+    app.register_blueprint(referral_points_bp)
+    app.register_blueprint(auth_bp)
     
     # Initialize Redis and RQ
     redis_conn = Redis(host='localhost', port=6379, db=0)
     app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
+
+    # Initialize scheduler
+    app.config['SCHEDULER'] = init_scheduler(app)
 
     # Apply rate limits and error handlers
     _apply_rate_limits(limiter)

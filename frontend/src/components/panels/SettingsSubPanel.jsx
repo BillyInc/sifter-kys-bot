@@ -55,8 +55,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
         ← Back to Profile
       </button>
 
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-white/10">
+      {/* Tabs - FIXED: No horizontal scroll */}
+      <div className="flex gap-1 border-b border-white/10 overflow-x-auto pb-2">
         {[
           { id: 'account', icon: User, label: 'Account' },
           { id: 'alerts', icon: Bell, label: 'Alerts' },
@@ -66,7 +66,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
           <button
             key={tab.id}
             onClick={() => setActiveSettingsTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 border-b-2 transition text-sm ${
+            className={`flex items-center gap-2 px-3 py-2 border-b-2 transition text-xs whitespace-nowrap flex-shrink-0 ${
               activeSettingsTab === tab.id
                 ? 'border-purple-500 text-white'
                 : 'border-transparent text-gray-400 hover:text-white'
