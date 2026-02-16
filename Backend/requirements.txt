@@ -21,3 +21,4 @@ gevent==23.9.1
 # Celery for async tasks
 celery[redis]==5.3.6
 redis==5.0.1
+apscheduler==3.10.4
