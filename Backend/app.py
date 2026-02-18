@@ -149,11 +149,17 @@ def create_app() -> Flask:
 
 
 def preload_trending_cache():
+    """
+    Queue lightweight runner list warmup jobs only.
+    Does NOT run full 6-step analysis on startup.
+    Full analysis only runs when user clicks Analyze.
+    Saves ~300 credits per boot on free tier.
+    """
     try:
-        print("[CACHE WARMUP] Preloading trending runners...")
-        from services import preload_trending_cache_parallel
-        preload_trending_cache_parallel()
-        print("  ✅ Cache warmup jobs queued")
+        print("[CACHE WARMUP] Queuing runner list warmup (7d + 14d)...")
+        from worker_tasks import preload_trending_cache as _warmup
+        _warmup()
+        print("  ✅ Warmup jobs queued")
     except Exception as e:
         print(f"  ⚠️ Cache warmup failed: {e}")
 
