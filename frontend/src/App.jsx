@@ -261,7 +261,7 @@ export default function SifterKYS() {
 
     try {
       const token = getAccessToken();
-      const response = await fetch(`${API_URL}/api/analysis/wallet-streaming`, {
+      const response = await fetch(`${API_URL}/api/wallets/analyze/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
