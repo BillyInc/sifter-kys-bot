@@ -13,8 +13,8 @@ import time
 
 
 def _get_redis():
-    return Redis(host='localhost', port=6379)
-
+    url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+    return Redis.from_url(url)
 
 def _get_queue():
     return Queue(connection=_get_redis(), default_timeout=600)

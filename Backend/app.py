@@ -127,7 +127,7 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(tokens_bp)
 
-    redis_conn = Redis(host='localhost', port=6379, db=0)
+    redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
     app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
 
     app.config['SCHEDULER'] = init_scheduler(app)

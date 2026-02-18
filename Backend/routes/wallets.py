@@ -7,6 +7,7 @@ from auth import require_auth, optional_auth
 from db.watchlist_db import WatchlistDatabase
 from collections import defaultdict
 from datetime import datetime
+import os
 
 # Lazy imports
 _wallet_analyzer = None
@@ -84,7 +85,7 @@ def analyze_wallets():
         
         # Update job data with actual job_id
         from redis import Redis
-        redis = Redis(host='localhost', port=6379)
+        redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
         job_data = {
             'tokens': tokens,
             'user_id': user_id,
@@ -127,7 +128,7 @@ def get_job_status(job_id):
     if job.is_finished:
         # Get result from Redis
         from redis import Redis
-        redis = Redis(host='localhost', port=6379)
+        redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
         result = redis.get(f"job_result:{job_id}")
         if result:
             return jsonify(json.loads(result)), 200

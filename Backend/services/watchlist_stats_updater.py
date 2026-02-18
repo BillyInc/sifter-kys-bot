@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 from services.watchlist_manager import WatchlistLeagueManager
+import os
 
 
 class WatchlistStatsUpdater:
@@ -234,7 +235,7 @@ class WatchlistStatsUpdater:
             from redis import Redis
             from rq import Queue
             
-            redis = Redis(host='localhost', port=6379)
+            redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
             q = Queue(connection=redis)
             
             for alert in alerts:

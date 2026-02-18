@@ -1,385 +1,284 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Target, Zap, Award, TrendingUp, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Settings, Target, Zap, Award, TrendingUp, Info, ChevronDown, ChevronUp, Check } from 'lucide-react';
 
 export default function AnalysisSettings({ 
   selectedTokens, 
   onSettingsChange,
-  analysisType // 'general' or 'pump_window'
+  analysisType
 }) {
-  // ========== STATE ==========
   const [settingsMode, setSettingsMode] = useState('global');
-  
-  // GENERAL MODE: Only ROI multiplier matters
   const [globalSettings, setGlobalSettings] = useState({
     minRoiMultiplier: 3.0,
-    // Pump window settings (only used if analysisType === 'pump_window')
     daysBack: 7,
     candleSize: '5m',
     tweetWindow: { minus: 35, plus: 10 }
   });
-  
   const [perTokenSettings, setPerTokenSettings] = useState({});
   const [expandedTokens, setExpandedTokens] = useState({});
-  const [showInfoPanel, setShowInfoPanel] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
 
-  // ========== PRESETS ==========
   const roiPresets = [
-    { value: 3, label: '3x', color: 'from-green-600 to-green-500', shadow: 'shadow-green-500/30' },
-    { value: 5, label: '5x', color: 'from-blue-600 to-blue-500', shadow: 'shadow-blue-500/30' },
-    { value: 10, label: '10x', color: 'from-purple-600 to-purple-500', shadow: 'shadow-purple-500/30' },
-    { value: 20, label: '20x', color: 'from-pink-600 to-pink-500', shadow: 'shadow-pink-500/30' }
+    { value: 3,  label: '3x',  sublabel: 'Broad',   color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.35)' },
+    { value: 5,  label: '5x',  sublabel: 'Standard',color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.35)' },
+    { value: 10, label: '10x', sublabel: 'Sharp',   color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.35)' },
+    { value: 20, label: '20x', sublabel: 'Elite',   color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.35)' },
   ];
 
-  const candleSizes = [
-    { value: '1m', label: '1 Minute' },
-    { value: '5m', label: '5 Minutes' },
-    { value: '15m', label: '15 Minutes' },
-    { value: '1h', label: '1 Hour' },
-    { value: '4h', label: '4 Hours' },
-    { value: '1d', label: '1 Day' }
-  ];
+  const candleSizes = ['1m','5m','15m','1h','4h','1d'];
 
-  // ========== EFFECTS ==========
   useEffect(() => {
-    const newPerTokenSettings = {};
-    selectedTokens.forEach(token => {
-      if (!perTokenSettings[token.address]) {
-        newPerTokenSettings[token.address] = { ...globalSettings };
-      } else {
-        newPerTokenSettings[token.address] = perTokenSettings[token.address];
-      }
+    const updated = {};
+    selectedTokens.forEach(t => {
+      updated[t.address] = perTokenSettings[t.address] || { ...globalSettings };
     });
-    setPerTokenSettings(newPerTokenSettings);
+    setPerTokenSettings(updated);
   }, [selectedTokens]);
 
   useEffect(() => {
     if (onSettingsChange) {
-      onSettingsChange({
-        mode: settingsMode,
-        globalSettings: globalSettings,
-        perTokenSettings: perTokenSettings
-      });
+      onSettingsChange({ mode: settingsMode, globalSettings, perTokenSettings });
     }
   }, [settingsMode, globalSettings, perTokenSettings]);
 
-  // ========== HANDLERS ==========
-  const updateGlobalSettings = (field, value) => {
-    setGlobalSettings(prev => ({ ...prev, [field]: value }));
-  };
-
-  const updateGlobalTweetWindow = (field, value) => {
-    setGlobalSettings(prev => ({
-      ...prev,
-      tweetWindow: { ...prev.tweetWindow, [field]: parseInt(value) || 0 }
-    }));
-  };
-
-  const updatePerTokenSettings = (tokenAddress, field, value) => {
-    setPerTokenSettings(prev => ({
-      ...prev,
-      [tokenAddress]: { ...prev[tokenAddress], [field]: value }
-    }));
-  };
-
-  const updatePerTokenTweetWindow = (tokenAddress, field, value) => {
-    setPerTokenSettings(prev => ({
-      ...prev,
-      [tokenAddress]: {
-        ...prev[tokenAddress],
-        tweetWindow: { ...prev[tokenAddress].tweetWindow, [field]: parseInt(value) || 0 }
-      }
-    }));
-  };
-
-  const toggleTokenExpanded = (address) => {
-    setExpandedTokens(prev => ({ ...prev, [address]: !prev[address] }));
-  };
-
+  const updateGlobal = (field, value) => setGlobalSettings(p => ({ ...p, [field]: value }));
+  const updateGlobalTweet = (field, value) => setGlobalSettings(p => ({ ...p, tweetWindow: { ...p.tweetWindow, [field]: parseInt(value)||0 } }));
+  const updatePerToken = (addr, field, value) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], [field]: value } }));
+  const updatePerTokenTweet = (addr, field, value) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], tweetWindow: { ...p[addr].tweetWindow, [field]: parseInt(value)||0 } } }));
+  const toggleToken = addr => setExpandedTokens(p => ({ ...p, [addr]: !p[addr] }));
   const applyGlobalToAll = () => {
-    const updated = {};
-    selectedTokens.forEach(token => {
-      updated[token.address] = { ...globalSettings };
-    });
-    setPerTokenSettings(updated);
+    const u = {};
+    selectedTokens.forEach(t => { u[t.address] = { ...globalSettings }; });
+    setPerTokenSettings(u);
   };
 
-  // ========== EMPTY STATE ==========
   if (selectedTokens.length === 0) {
     return (
-      <div className="bg-white/5 border border-white/10 rounded-lg p-6 text-center">
-        <Settings className="mx-auto mb-3 text-gray-400" size={48} />
-        <p className="text-gray-400">Select tokens to configure analysis settings</p>
+      <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <div style={{ 
+          width: 64, height: 64, borderRadius: 16,
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 16px'
+        }}>
+          <Settings size={28} color="rgba(255,255,255,0.25)" />
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 14 }}>Select tokens above to configure analysis</p>
       </div>
     );
   }
 
-  // ========== GENERAL MODE UI ==========
+  const activePreset = roiPresets.find(p => p.value === globalSettings.minRoiMultiplier);
+
+  // ── GENERAL MODE ─────────────────────────────────────────────────────────
   if (analysisType === 'general') {
     return (
-      <div className="space-y-4">
-        {/* Mode Toggle */}
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-400">Settings Mode:</span>
-            
-            <button
-              onClick={() => setSettingsMode('global')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                settingsMode === 'global'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
-              }`}
-            >
-              Global (Quick Mode)
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+        {/* Mode toggle - compact pill */}
+        <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 4 }}>
+          {['global','per-token'].map(m => (
+            <button key={m} onClick={() => setSettingsMode(m)} style={{
+              flex: 1, padding: '7px 12px', borderRadius: 7, border: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+              background: settingsMode === m ? 'rgba(168,85,247,0.9)' : 'transparent',
+              color: settingsMode === m ? '#fff' : 'rgba(255,255,255,0.45)',
+            }}>
+              {m === 'global' ? 'Global' : 'Per-Token'}
             </button>
-            
-            <button
-              onClick={() => setSettingsMode('per-token')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                settingsMode === 'per-token'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-white/5 text-gray-400 hover:bg-white/10'
-              }`}
-            >
-              Per-Token Customization
-            </button>
-          </div>
+          ))}
         </div>
 
-        {/* Global Settings - GENERAL MODE */}
         {settingsMode === 'global' && (
-          <div className="space-y-4">
-            {/* Main Settings Card */}
-            <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-6">
-              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Target className="text-purple-400" size={20} />
-                Minimum ROI Multiplier
-              </h3>
+          <>
+            {/* ROI Presets - 2x2 grid to use width */}
+            <div style={{ 
+              background: 'rgba(255,255,255,0.03)', 
+              border: '1px solid rgba(255,255,255,0.08)', 
+              borderRadius: 12, padding: 16 
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 12 }}>
+                Min ROI Threshold
+              </div>
 
-              {/* Preset Buttons */}
-              <div className="grid grid-cols-4 gap-3 mb-6">
-                {roiPresets.map(preset => (
-                  <button
-                    key={preset.value}
-                    onClick={() => updateGlobalSettings('minRoiMultiplier', preset.value)}
-                    className={`relative px-6 py-4 rounded-xl font-bold text-lg transition-all duration-300 ${
-                      globalSettings.minRoiMultiplier === preset.value
-                        ? `bg-gradient-to-r ${preset.color} text-white shadow-lg ${preset.shadow} scale-105`
-                        : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:scale-102'
-                    }`}
-                  >
-                    {preset.label}
-                    {globalSettings.minRoiMultiplier === preset.value && (
-                      <div className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center">
-                        <Zap className="text-purple-600" size={14} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+                {roiPresets.map(p => {
+                  const active = globalSettings.minRoiMultiplier === p.value;
+                  return (
+                    <button key={p.value} onClick={() => updateGlobal('minRoiMultiplier', p.value)} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 14px', borderRadius: 9, border: `1px solid ${active ? p.border : 'rgba(255,255,255,0.08)'}`,
+                      background: active ? p.bg : 'rgba(255,255,255,0.03)',
+                      cursor: 'pointer', transition: 'all 0.18s',
+                    }}>
+                      <div style={{ textAlign: 'left' }}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: active ? p.color : 'rgba(255,255,255,0.7)', lineHeight: 1 }}>{p.label}</div>
+                        <div style={{ fontSize: 10, color: active ? p.color : 'rgba(255,255,255,0.3)', marginTop: 2 }}>{p.sublabel}</div>
                       </div>
-                    )}
-                  </button>
-                ))}
+                      {active && (
+                        <div style={{ 
+                          width: 18, height: 18, borderRadius: '50%', 
+                          background: p.color, display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                        }}>
+                          <Check size={11} color="#fff" strokeWidth={3} />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Custom Slider */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <label className="text-sm font-medium text-gray-300">
-                    Custom ROI Threshold
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={globalSettings.minRoiMultiplier}
-                      onChange={(e) => updateGlobalSettings('minRoiMultiplier', parseFloat(e.target.value) || 1)}
-                      min="1"
-                      max="50"
-                      step="0.5"
-                      className="w-20 bg-black/50 border border-white/10 rounded-lg px-3 py-1 text-sm text-center focus:outline-none focus:border-purple-500"
-                    />
-                    <span className="text-sm text-gray-400">x</span>
-                  </div>
-                </div>
-
-                <input
-                  type="range"
+              {/* Custom slider row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>Custom</span>
+                <input type="range" min="1" max="50" step="0.5"
                   value={globalSettings.minRoiMultiplier}
-                  onChange={(e) => updateGlobalSettings('minRoiMultiplier', parseFloat(e.target.value))}
-                  min="1"
-                  max="50"
-                  step="0.5"
-                  className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer slider-thumb"
-                  style={{
-                    background: `linear-gradient(to right, rgb(168, 85, 247) 0%, rgb(168, 85, 247) ${((globalSettings.minRoiMultiplier - 1) / 49) * 100}%, rgba(255,255,255,0.1) ${((globalSettings.minRoiMultiplier - 1) / 49) * 100}%, rgba(255,255,255,0.1) 100%)`
-                  }}
+                  onChange={e => updateGlobal('minRoiMultiplier', parseFloat(e.target.value))}
+                  style={{ flex: 1, accentColor: '#a855f7', cursor: 'pointer' }}
                 />
-
-                <div className="flex justify-between text-xs text-gray-500 mt-2">
-                  <span>1x (Low bar)</span>
-                  <span>25x (Sweet spot)</span>
-                  <span>50x (Moon only)</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="number" min="1" max="50" step="0.5"
+                    value={globalSettings.minRoiMultiplier}
+                    onChange={e => updateGlobal('minRoiMultiplier', parseFloat(e.target.value)||1)}
+                    style={{
+                      width: 48, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.12)',
+                      borderRadius: 6, padding: '4px 6px', color: '#fff', fontSize: 13,
+                      textAlign: 'center', outline: 'none'
+                    }}
+                  />
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>x</span>
                 </div>
-              </div>
-
-              <div className="mt-4 p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
-                <p className="text-sm text-gray-300">
-                  <span className="font-semibold text-purple-400">
-                    Current: {globalSettings.minRoiMultiplier}x minimum ROI
-                  </span>
-                  <br />
-                  <span className="text-xs text-gray-400">
-                    Only wallets with {globalSettings.minRoiMultiplier}x+ realized ROI will be included
-                  </span>
-                </p>
               </div>
             </div>
 
-            {/* Fixed Criteria Info Panel */}
-            <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <button
-                onClick={() => setShowInfoPanel(!showInfoPanel)}
-                className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition"
-              >
-                <div className="flex items-center gap-2">
-                  <Info className="text-blue-400" size={18} />
-                  <span className="font-semibold">Fixed Analysis Criteria</span>
+            {/* Fixed criteria - horizontal 3-col */}
+            <div style={{ 
+              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', 
+              borderRadius: 12, overflow: 'hidden'
+            }}>
+              <button onClick={() => setShowInfo(!showInfo)} style={{
+                width: '100%', padding: '12px 16px', background: 'transparent', border: 'none',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Info size={14} color="rgba(96,165,250,0.8)" />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>Fixed Criteria</span>
                 </div>
-                {showInfoPanel ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                {showInfo 
+                  ? <ChevronUp size={14} color="rgba(255,255,255,0.3)" />
+                  : <ChevronDown size={14} color="rgba(255,255,255,0.3)" />
+                }
               </button>
 
-              {showInfoPanel && (
-                <div className="px-6 pb-6 border-t border-white/10 pt-4 space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-black/30 rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Award className="text-yellow-400" size={16} />
-                        <span className="text-sm font-semibold">Min Investment</span>
-                      </div>
-                      <div className="text-2xl font-bold text-green-400">$100</div>
-                      <p className="text-xs text-gray-400 mt-1">Only wallets with $100+ invested</p>
+              {showInfo && (
+                <div style={{ padding: '0 16px 16px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  {/* 3-col stats */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12, marginTop: 12 }}>
+                    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#22c55e' }}>$100</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>Min Invest</div>
                     </div>
-
-                    <div className="bg-black/30 rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Zap className="text-purple-400" size={16} />
-                        <span className="text-sm font-semibold">Analysis Method</span>
-                      </div>
-                      <div className="text-2xl font-bold text-purple-400">6-Step</div>
-                      <p className="text-xs text-gray-400 mt-1">Professional trader-based analysis</p>
+                    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#a855f7' }}>6</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>Steps</div>
+                    </div>
+                    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b' }}>30d</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>History</div>
                     </div>
                   </div>
 
-                  <div className="bg-gradient-to-r from-blue-900/20 to-blue-800/10 border border-blue-500/20 rounded-lg p-4">
-                    <div className="flex items-start gap-3">
-                      <TrendingUp className="text-blue-400 mt-0.5" size={18} />
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-blue-400 mb-2">What You'll Discover:</p>
-                        <ul className="space-y-1 text-xs text-gray-300">
-                          <li>✓ Professional Score (60% timing, 30% profit, 10% overall)</li>
-                          <li>✓ Entry-to-ATH multipliers (how early they bought)</li>
-                          <li>✓ 30-day runner history (other 5x+ tokens they traded)</li>
-                          <li>✓ Consistency grades (A+ to F based on variance)</li>
-                          <li>✓ Realized vs unrealized profits</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
-                    <div className="flex items-start gap-2">
-                      <div className="text-yellow-400 mt-0.5">💡</div>
-                      <div className="flex-1 text-xs text-gray-300">
-                        <p className="font-semibold mb-1">Pro Tip:</p>
-                        <p>Start with 3x to see more wallets, increase to 10x+ for only the top performers. 
-                        The analysis automatically finds ALL historical traders regardless of timeframe.</p>
-                      </div>
-                    </div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.7 }}>
+                    ✓ Score: 60% timing · 30% profit · 10% overall<br/>
+                    ✓ Entry-to-ATH multipliers<br/>
+                    ✓ 30d runner history (5x+ tokens)<br/>
+                    ✓ Consistency grades A+ to F
                   </div>
                 </div>
               )}
             </div>
-          </div>
+
+            {/* Live summary bar */}
+            <div style={{
+              padding: '10px 14px', borderRadius: 9,
+              background: activePreset ? activePreset.bg : 'rgba(168,85,247,0.08)',
+              border: `1px solid ${activePreset ? activePreset.border : 'rgba(168,85,247,0.2)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+            }}>
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>Active threshold</span>
+              <span style={{ 
+                fontSize: 14, fontWeight: 800, 
+                color: activePreset ? activePreset.color : '#a855f7'
+              }}>
+                {globalSettings.minRoiMultiplier}x ROI minimum
+              </span>
+            </div>
+          </>
         )}
 
-        {/* Per-Token Settings - GENERAL MODE */}
         {settingsMode === 'per-token' && (
-          <div className="space-y-3">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-lg font-semibold">Customize ROI Threshold Per Token</h3>
-              <button
-                onClick={applyGlobalToAll}
-                className="text-sm px-3 py-1 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded text-purple-400"
-              >
-                Apply Global to All
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={applyGlobalToAll} style={{
+                fontSize: 11, padding: '5px 10px', borderRadius: 6,
+                background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.25)',
+                color: 'rgba(168,85,247,0.9)', cursor: 'pointer'
+              }}>
+                Apply global to all
               </button>
             </div>
 
-            {selectedTokens.map((token, index) => {
-              const settings = perTokenSettings[token.address] || globalSettings;
-              const isExpanded = expandedTokens[token.address];
+            {selectedTokens.map((token, i) => {
+              const s = perTokenSettings[token.address] || globalSettings;
+              const expanded = expandedTokens[token.address];
+              const preset = roiPresets.find(p => p.value === s.minRoiMultiplier);
 
               return (
-                <div
-                  key={token.address}
-                  className="bg-white/5 border border-white/10 rounded-lg overflow-hidden"
-                >
-                  <button
-                    onClick={() => toggleTokenExpanded(token.address)}
-                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg font-bold text-purple-400">#{index + 1}</span>
-                      <div className="text-left">
-                        <div className="font-semibold">{token.ticker}</div>
-                        <div className="text-xs text-gray-400">{token.name}</div>
-                      </div>
-                      <span className="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded font-semibold">
-                        {settings.minRoiMultiplier}x ROI
-                      </span>
-                    </div>
-                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                <div key={token.address} style={{
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 10, overflow: 'hidden'
+                }}>
+                  <button onClick={() => toggleToken(token.address)} style={{
+                    width: '100%', padding: '11px 14px', background: 'transparent', border: 'none',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#a855f7' }}>#{i+1}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', flex: 1, textAlign: 'left' }}>{token.ticker}</span>
+                    <span style={{
+                      fontSize: 11, padding: '2px 8px', borderRadius: 5,
+                      background: preset ? preset.bg : 'rgba(255,255,255,0.06)',
+                      color: preset ? preset.color : 'rgba(255,255,255,0.5)',
+                      border: `1px solid ${preset ? preset.border : 'transparent'}`
+                    }}>{s.minRoiMultiplier}x</span>
+                    {expanded ? <ChevronUp size={14} color="rgba(255,255,255,0.3)" /> : <ChevronDown size={14} color="rgba(255,255,255,0.3)" />}
                   </button>
 
-                  {isExpanded && (
-                    <div className="px-6 pb-6 border-t border-white/10 pt-4">
-                      <label className="block text-sm font-medium mb-3 text-gray-300">
-                        Minimum ROI Multiplier
-                      </label>
-
-                      <div className="grid grid-cols-4 gap-2 mb-4">
-                        {roiPresets.map(preset => (
-                          <button
-                            key={preset.value}
-                            onClick={() => updatePerTokenSettings(token.address, 'minRoiMultiplier', preset.value)}
-                            className={`px-4 py-2 rounded-lg font-bold text-sm transition ${
-                              settings.minRoiMultiplier === preset.value
-                                ? `bg-gradient-to-r ${preset.color} text-white`
-                                : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                            }`}
-                          >
-                            {preset.label}
-                          </button>
+                  {expanded && (
+                    <div style={{ padding: '0 14px 14px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 12, marginBottom: 10 }}>
+                        {roiPresets.map(p => (
+                          <button key={p.value} onClick={() => updatePerToken(token.address, 'minRoiMultiplier', p.value)} style={{
+                            padding: '8px 10px', borderRadius: 7, border: `1px solid ${s.minRoiMultiplier === p.value ? p.border : 'rgba(255,255,255,0.08)'}`,
+                            background: s.minRoiMultiplier === p.value ? p.bg : 'rgba(255,255,255,0.03)',
+                            cursor: 'pointer', color: s.minRoiMultiplier === p.value ? p.color : 'rgba(255,255,255,0.5)',
+                            fontSize: 13, fontWeight: 700
+                          }}>{p.label}</button>
                         ))}
                       </div>
-
-                      <input
-                        type="range"
-                        value={settings.minRoiMultiplier}
-                        onChange={(e) => updatePerTokenSettings(token.address, 'minRoiMultiplier', parseFloat(e.target.value))}
-                        min="1"
-                        max="50"
-                        step="0.5"
-                        className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer mb-2"
-                      />
-                      
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-400">Custom:</span>
-                        <input
-                          type="number"
-                          value={settings.minRoiMultiplier}
-                          onChange={(e) => updatePerTokenSettings(token.address, 'minRoiMultiplier', parseFloat(e.target.value) || 1)}
-                          min="1"
-                          max="50"
-                          step="0.5"
-                          className="w-20 bg-black/50 border border-white/10 rounded px-2 py-1 text-center focus:outline-none focus:border-purple-500"
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="range" min="1" max="50" step="0.5"
+                          value={s.minRoiMultiplier}
+                          onChange={e => updatePerToken(token.address, 'minRoiMultiplier', parseFloat(e.target.value))}
+                          style={{ flex: 1, accentColor: '#a855f7' }}
                         />
+                        <input type="number" min="1" max="50" step="0.5"
+                          value={s.minRoiMultiplier}
+                          onChange={e => updatePerToken(token.address, 'minRoiMultiplier', parseFloat(e.target.value)||1)}
+                          style={{
+                            width: 46, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: 6, padding: '4px 6px', color: '#fff', fontSize: 12, textAlign: 'center', outline: 'none'
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>x</span>
                       </div>
                     </div>
                   )}
@@ -392,206 +291,155 @@ export default function AnalysisSettings({
     );
   }
 
-  // ========== PUMP WINDOW MODE UI (Original Settings) ==========
+  // ── PUMP WINDOW MODE ──────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
-      {/* Mode Toggle */}
-      <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-400">Settings Mode:</span>
-          
-          <button
-            onClick={() => setSettingsMode('global')}
-            className={`px-4 py-2 rounded-lg font-semibold transition ${
-              settingsMode === 'global'
-                ? 'bg-purple-600 text-white'
-                : 'bg-white/5 text-gray-400 hover:bg-white/10'
-            }`}
-          >
-            Global (Quick Mode)
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Mode toggle */}
+      <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 4 }}>
+        {['global','per-token'].map(m => (
+          <button key={m} onClick={() => setSettingsMode(m)} style={{
+            flex: 1, padding: '7px 12px', borderRadius: 7, border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+            background: settingsMode === m ? 'rgba(168,85,247,0.9)' : 'transparent',
+            color: settingsMode === m ? '#fff' : 'rgba(255,255,255,0.45)',
+          }}>
+            {m === 'global' ? 'Global' : 'Per-Token'}
           </button>
-          
-          <button
-            onClick={() => setSettingsMode('per-token')}
-            className={`px-4 py-2 rounded-lg font-semibold transition ${
-              settingsMode === 'per-token'
-                ? 'bg-purple-600 text-white'
-                : 'bg-white/5 text-gray-400 hover:bg-white/10'
-            }`}
-          >
-            Per-Token Customization
-          </button>
-        </div>
+        ))}
       </div>
 
-      {/* Global Settings - PUMP WINDOW MODE */}
       {settingsMode === 'global' && (
-        <div className="bg-white/5 border border-white/10 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Settings className="text-purple-400" size={20} />
-            Global Settings (Apply to all {selectedTokens.length} tokens)
-          </h3>
-
-          <div className="space-y-6">
-            {/* Days Back */}
+        <div style={{ 
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', 
+          borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 
+        }}>
+          {/* Days Back + Candle Side by side */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
-              <label className="flex items-center gap-2 text-sm font-medium mb-2 text-gray-300">
-                Days Back (Historical Data)
+              <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.4)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                Days Back
               </label>
-              <input
-                type="number"
-                value={globalSettings.daysBack}
-                onChange={(e) => updateGlobalSettings('daysBack', Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
-                min="1"
-                max="90"
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
+              <input type="number" value={globalSettings.daysBack}
+                onChange={e => updateGlobal('daysBack', Math.max(1, Math.min(90, parseInt(e.target.value)||7)))}
+                min="1" max="90"
+                style={{
+                  width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 14, outline: 'none',
+                  boxSizing: 'border-box'
+                }}
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Analyze the last {globalSettings.daysBack} days of price data (1-90 days)
-              </p>
             </div>
-
-            {/* Candle Size */}
             <div>
-              <label className="text-sm font-medium mb-2 text-gray-300 block">
+              <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.4)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
                 Candle Size
               </label>
-              <select
-                value={globalSettings.candleSize}
-                onChange={(e) => updateGlobalSettings('candleSize', e.target.value)}
-                className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500"
-              >
-                {candleSizes.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+              <select value={globalSettings.candleSize} onChange={e => updateGlobal('candleSize', e.target.value)}
+                style={{
+                  width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 14, outline: 'none',
+                  boxSizing: 'border-box'
+                }}>
+                {candleSizes.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+          </div>
 
-            {/* Tweet Window */}
-            <div>
-              <label className="text-sm font-medium mb-2 text-gray-300 block">
-                Tweet Search Window
-              </label>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">T-minus (minutes)</label>
-                  <input
-                    type="number"
-                    value={globalSettings.tweetWindow.minus}
-                    onChange={(e) => updateGlobalTweetWindow('minus', e.target.value)}
-                    min="0"
-                    max="120"
-                    className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">T-plus (minutes)</label>
-                  <input
-                    type="number"
-                    value={globalSettings.tweetWindow.plus}
-                    onChange={(e) => updateGlobalTweetWindow('plus', e.target.value)}
-                    min="0"
-                    max="60"
-                    className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
+          {/* Tweet window */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.4)', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+              Tweet Window (minutes)
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 5 }}>T-minus (before)</div>
+                <input type="number" value={globalSettings.tweetWindow.minus}
+                  onChange={e => updateGlobalTweet('minus', e.target.value)}
+                  min="0" max="120"
+                  style={{
+                    width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 14, outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 5 }}>T-plus (after)</div>
+                <input type="number" value={globalSettings.tweetWindow.plus}
+                  onChange={e => updateGlobalTweet('plus', e.target.value)}
+                  min="0" max="60"
+                  style={{
+                    width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 14, outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Per-Token Settings - PUMP WINDOW MODE */}
       {settingsMode === 'per-token' && (
-        <div className="space-y-3">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-lg font-semibold">Customize Each Token</h3>
-            <button
-              onClick={applyGlobalToAll}
-              className="text-sm px-3 py-1 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded text-purple-400"
-            >
-              Apply Global to All
-            </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={applyGlobalToAll} style={{
+              fontSize: 11, padding: '5px 10px', borderRadius: 6,
+              background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.25)',
+              color: 'rgba(168,85,247,0.9)', cursor: 'pointer'
+            }}>Apply global to all</button>
           </div>
 
-          {selectedTokens.map((token, index) => {
-            const settings = perTokenSettings[token.address] || globalSettings;
-            const isExpanded = expandedTokens[token.address];
+          {selectedTokens.map((token, i) => {
+            const s = perTokenSettings[token.address] || globalSettings;
+            const expanded = expandedTokens[token.address];
 
             return (
-              <div
-                key={token.address}
-                className="bg-white/5 border border-white/10 rounded-lg overflow-hidden"
-              >
-                <button
-                  onClick={() => toggleTokenExpanded(token.address)}
-                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-bold text-purple-400">#{index + 1}</span>
-                    <div className="text-left">
-                      <div className="font-semibold">{token.ticker}</div>
-                      <div className="text-xs text-gray-400">{token.name}</div>
-                    </div>
-                  </div>
-                  {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+              <div key={token.address} style={{
+                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 10, overflow: 'hidden'
+              }}>
+                <button onClick={() => toggleToken(token.address)} style={{
+                  width: '100%', padding: '11px 14px', background: 'transparent', border: 'none',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#a855f7' }}>#{i+1}</span>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: '#fff', textAlign: 'left' }}>{token.ticker}</span>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{s.daysBack}d · {s.candleSize}</span>
+                  {expanded ? <ChevronUp size={14} color="rgba(255,255,255,0.3)" /> : <ChevronDown size={14} color="rgba(255,255,255,0.3)" />}
                 </button>
 
-                {isExpanded && (
-                  <div className="px-6 pb-6 space-y-4 border-t border-white/10 pt-4">
-                    {/* Days Back, Candle Size, Tweet Window - same as original */}
-                    <div>
-                      <label className="block text-sm font-medium mb-2 text-gray-300">Days Back</label>
-                      <input
-                        type="number"
-                        value={settings.daysBack}
-                        onChange={(e) => updatePerTokenSettings(token.address, 'daysBack', Math.max(1, Math.min(90, parseInt(e.target.value) || 7)))}
-                        min="1"
-                        max="90"
-                        className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-purple-500"
-                      />
+                {expanded && (
+                  <div style={{ padding: '12px 14px 14px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 5 }}>Days Back</div>
+                        <input type="number" value={s.daysBack}
+                          onChange={e => updatePerToken(token.address, 'daysBack', Math.max(1, Math.min(90, parseInt(e.target.value)||7)))}
+                          min="1" max="90"
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, padding: '7px 10px', color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 5 }}>Candle Size</div>
+                        <select value={s.candleSize} onChange={e => updatePerToken(token.address, 'candleSize', e.target.value)}
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, padding: '7px 10px', color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}>
+                          {candleSizes.map(cs => <option key={cs} value={cs}>{cs}</option>)}
+                        </select>
+                      </div>
                     </div>
-
                     <div>
-                      <label className="block text-sm font-medium mb-2 text-gray-300">Candle Size</label>
-                      <select
-                        value={settings.candleSize}
-                        onChange={(e) => updatePerTokenSettings(token.address, 'candleSize', e.target.value)}
-                        className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-purple-500"
-                      >
-                        {candleSizes.map(option => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2 text-gray-300">Tweet Window</label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">T-minus</label>
-                          <input
-                            type="number"
-                            value={settings.tweetWindow.minus}
-                            onChange={(e) => updatePerTokenTweetWindow(token.address, 'minus', e.target.value)}
-                            min="0"
-                            max="120"
-                            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">T-plus</label>
-                          <input
-                            type="number"
-                            value={settings.tweetWindow.plus}
-                            onChange={(e) => updatePerTokenTweetWindow(token.address, 'plus', e.target.value)}
-                            min="0"
-                            max="60"
-                            className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>Tweet Window</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input type="number" value={s.tweetWindow.minus}
+                          onChange={e => updatePerTokenTweet(token.address, 'minus', e.target.value)}
+                          placeholder="T-minus" min="0" max="120"
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, padding: '7px 10px', color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                        />
+                        <input type="number" value={s.tweetWindow.plus}
+                          onChange={e => updatePerTokenTweet(token.address, 'plus', e.target.value)}
+                          placeholder="T-plus" min="0" max="60"
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, padding: '7px 10px', color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+                        />
                       </div>
                     </div>
                   </div>

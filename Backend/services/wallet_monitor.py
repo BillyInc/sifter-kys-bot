@@ -43,7 +43,7 @@ class WalletActivityMonitor:
         # Telegram notifier for sending alerts
         self.telegram_notifier = telegram_notifier
 
-        # NEW: Multi-wallet signal buffering
+        # Multi-wallet signal buffering
         self.pending_signals = {}  # {token_address: [list_of_trades]}
         self.buffer_lock = threading.Lock()
 
@@ -92,7 +92,6 @@ class WalletActivityMonitor:
             try:
                 cycle_start = time.time()
 
-                # Get all wallets that need monitoring
                 wallets_to_monitor = self._get_monitored_wallets()
 
                 if not wallets_to_monitor:
@@ -102,18 +101,14 @@ class WalletActivityMonitor:
 
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Monitoring {len(wallets_to_monitor)} wallets...")
 
-                # Check each wallet for new activity
                 for wallet_info in wallets_to_monitor:
                     if not self.running:
                         break
-
                     self._check_wallet_activity(wallet_info)
 
-                # Update cycle stats
                 cycle_duration = time.time() - cycle_start
                 print(f"✓ Cycle complete in {cycle_duration:.1f}s")
 
-                # Sleep until next poll
                 sleep_time = max(0, self.poll_interval - cycle_duration)
                 if sleep_time > 0:
                     print(f"💤 Sleeping {sleep_time:.1f}s until next cycle...\n")
@@ -123,12 +118,11 @@ class WalletActivityMonitor:
                 print(f"\n❌ ERROR in monitor loop: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(30)  # Brief pause before retrying
+                time.sleep(30)
 
     def _get_monitored_wallets(self) -> List[Dict]:
         """Get all wallets that have alerts enabled from any user"""
         try:
-            # Get unique wallets with alert settings from all users
             result = self._table('wallet_watchlist').select(
                 'wallet_address, tier, alert_enabled'
             ).eq('alert_enabled', True).execute()
@@ -141,7 +135,6 @@ class WalletActivityMonitor:
                 if addr not in seen_addresses:
                     seen_addresses.add(addr)
 
-                    # Get monitor status for this wallet
                     status_result = self._table('wallet_monitor_status').select(
                         'last_checked_at, last_activity_at'
                     ).eq('wallet_address', addr).limit(1).execute()
@@ -155,9 +148,7 @@ class WalletActivityMonitor:
                         'last_activity_at': status.get('last_activity_at')
                     })
 
-            # Sort by last_checked_at (oldest first)
             wallets.sort(key=lambda x: x.get('last_checked_at') or 0)
-
             return wallets
 
         except Exception as e:
@@ -170,7 +161,7 @@ class WalletActivityMonitor:
             result = self._table('user_settings').select(
                 'min_buy_usd'
             ).eq('user_id', user_id).limit(1).execute()
-            
+
             if result.data:
                 return result.data[0]
             return {'min_buy_usd': 50.0}
@@ -179,11 +170,11 @@ class WalletActivityMonitor:
             return {'min_buy_usd': 50.0}
 
     def _check_wallet_activity(self, wallet_info):
-        """Check a single wallet for new transactions - ENHANCED"""
+        """Check a single wallet for new transactions - FIXED timestamps"""
         wallet_address = wallet_info['wallet_address']
         last_checked = wallet_info.get('last_checked_at')
 
-        # ✅ FIX: Handle both ISO strings and Unix timestamps
+        # Handle ISO strings from Supabase TIMESTAMPTZ
         if last_checked:
             try:
                 if isinstance(last_checked, str):
@@ -191,7 +182,7 @@ class WalletActivityMonitor:
                     last_checked_epoch = int(dt.timestamp())
                 else:
                     last_checked_epoch = int(last_checked)
-            except:
+            except Exception:
                 last_checked_epoch = 0
         else:
             last_checked_epoch = 0
@@ -201,7 +192,6 @@ class WalletActivityMonitor:
         before_time = int(time.time())
 
         try:
-            # Fetch ALL recent trades (not just first buys)
             transactions = self._fetch_wallet_all_trades(
                 wallet_address,
                 after_time=after_time,
@@ -212,17 +202,12 @@ class WalletActivityMonitor:
                 print(f"  {wallet_address[:8]}... → {len(transactions)} new tx(s)")
 
                 new_activities = []
-                tokens_bought = defaultdict(list)  # Track buys by token
+                tokens_bought = defaultdict(list)
 
                 for tx in transactions:
                     activity_id = self._save_wallet_activity(tx, wallet_address)
                     if activity_id:
-                        new_activities.append({
-                            'activity_id': activity_id,
-                            'tx': tx
-                        })
-
-                        # Track buys for multi-wallet detection
+                        new_activities.append({'activity_id': activity_id, 'tx': tx})
                         if tx.get('side') == 'buy':
                             tokens_bought[tx.get('token_address')].append({
                                 'wallet': wallet_address,
@@ -230,19 +215,17 @@ class WalletActivityMonitor:
                                 'usd_value': tx.get('usd_value', 0)
                             })
 
-                # Create notifications for users watching this wallet
                 if new_activities:
                     self._create_notifications_for_wallet(wallet_address, new_activities)
 
-                # Check for multi-wallet signals using buffering system
                 for token_address, wallets_buying in tokens_bought.items():
                     self._buffer_multi_wallet_signal(token_address, wallets_buying, wallet_info)
 
-            # ✅ FIX: Pass Unix timestamps
+            # Pass Unix int - _update_monitor_status converts to ISO
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=int(time.time()),  # ✅ Unix timestamp
-                last_activity_at=int(time.time()) if transactions else None,  # ✅ Unix timestamp
+                last_checked_at=int(time.time()),
+                last_activity_at=int(time.time()) if transactions else None,
                 success=True
             )
 
@@ -250,7 +233,7 @@ class WalletActivityMonitor:
             print(f"  ❌ Error checking {wallet_address[:8]}...: {e}")
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=int(time.time()),  # ✅ Unix timestamp
+                last_checked_at=int(time.time()),
                 success=False,
                 error_message=str(e)
             )
@@ -260,9 +243,8 @@ class WalletActivityMonitor:
         with self.buffer_lock:
             if token_address not in self.pending_signals:
                 self.pending_signals[token_address] = []
-                # Start 60s window to group other watchlist buys
                 threading.Timer(60.0, self._flush_multi_signal, [token_address]).start()
-            
+
             for wallet_buy in wallets_buying:
                 self.pending_signals[token_address].append({
                     'wallet': wallet_buy['wallet'],
@@ -274,16 +256,14 @@ class WalletActivityMonitor:
         """Sends the accumulated signals after the 60s window."""
         with self.buffer_lock:
             trades = self.pending_signals.pop(token_address, [])
-        
+
         if len(trades) >= 2:
-            # Calculate signal strength
             signal_strength = 0
             tier_weights = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
 
             for trade in trades:
                 signal_strength += tier_weights.get(trade['tier'], 1)
 
-            # Strong signal if 2+ wallets AND combined strength ≥ 5
             if signal_strength >= 5:
                 signal = {
                     'token_address': token_address,
@@ -296,7 +276,7 @@ class WalletActivityMonitor:
 
     def _fetch_wallet_all_trades(self, wallet_address, after_time, before_time):
         """
-        ✅ UPDATED: Fetch ALL trades (buys AND sells) for a wallet using Solana Tracker API
+        Fetch ALL trades (buys AND sells) for a wallet using Solana Tracker API
         """
         url = f"{self.solanatracker_trades_url}/{wallet_address}/trades"
         headers = {
@@ -313,8 +293,7 @@ class WalletActivityMonitor:
             if response.status_code == 200:
                 data = response.json()
                 raw_trades = data.get('trades', [])
-                
-                # ✅ Normalize Solana Tracker response format
+
                 normalized_trades = []
                 for trade in raw_trades:
                     normalized_trades.append({
@@ -323,17 +302,17 @@ class WalletActivityMonitor:
                         'token_name': trade.get('token_name') or trade.get('tokenName'),
                         'side': trade.get('type', '').lower(),  # 'buy' or 'sell'
                         'token_amount': float(trade.get('token_amount', 0) or trade.get('tokenAmount', 0)),
-                        'usd_value': float(trade.get('sol_amount', 0) or trade.get('solAmount', 0)) * 150,  # Approximate USD
+                        'usd_value': float(trade.get('sol_amount', 0) or trade.get('solAmount', 0)) * 150,
                         'price': float(trade.get('price', 0)),
                         'tx_hash': trade.get('signature') or trade.get('tx_hash'),
                         'block_time': int(trade.get('timestamp', 0) / 1000) if trade.get('timestamp') else int(time.time()),
                         'dex': trade.get('dex', 'unknown')
                     })
-                
+
                 return normalized_trades
             else:
                 print(f"    ⚠️ Solana Tracker API returned status {response.status_code}")
-                
+
         except Exception as e:
             print(f"    ❌ Error fetching trades from Solana Tracker: {e}")
 
@@ -344,14 +323,12 @@ class WalletActivityMonitor:
         if len(wallets_buying) < 2:
             return None
 
-        # Calculate signal strength
         signal_strength = 0
         tier_weights = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
 
         for wallet_info in wallets_buying:
             signal_strength += tier_weights.get(wallet_info['tier'], 1)
 
-        # Strong signal if 2+ wallets AND combined strength ≥ 5
         if signal_strength >= 5:
             return {
                 'token_address': token_address,
@@ -368,7 +345,6 @@ class WalletActivityMonitor:
         print(f"  🚨 MULTI-WALLET SIGNAL: {signal['wallet_count']} wallets bought {signal['token_address'][:8]}...")
 
         try:
-            # Get all users watching any of these wallets
             wallet_addresses = [w['wallet'] for w in signal['wallets']]
 
             result = self._table('wallet_watchlist').select('user_id').in_(
@@ -378,7 +354,6 @@ class WalletActivityMonitor:
             user_ids = list(set(row['user_id'] for row in result.data))
 
             for user_id in user_ids:
-                # Queue Telegram alert
                 self._send_telegram_alert(user_id, 'multi_wallet', signal)
 
         except Exception as e:
@@ -387,13 +362,11 @@ class WalletActivityMonitor:
     def _save_wallet_activity(self, tx, wallet_address) -> Optional[int]:
         """Save transaction to wallet_activity table"""
         try:
-            # Check if tx_hash already exists
             existing = self._table('wallet_activity').select('id').eq(
                 'signature', tx.get('tx_hash')
             ).limit(1).execute()
 
             if existing.data:
-                # Already exists
                 return None
 
             result = self._table('wallet_activity').insert({
@@ -406,7 +379,7 @@ class WalletActivityMonitor:
                 'usd_value': tx.get('usd_value', 0),
                 'price_per_token': tx.get('price', 0),
                 'signature': tx.get('tx_hash'),
-                'block_time': datetime.fromtimestamp(tx.get('block_time', time.time())).isoformat()
+                'block_time': datetime.utcfromtimestamp(tx.get('block_time', time.time())).isoformat()
             }).execute()
 
             if result.data:
@@ -438,29 +411,25 @@ class WalletActivityMonitor:
         """Queue Telegram alert for background sending"""
         if not self.telegram_notifier:
             return
-        
-        # ✅ Custom Threshold Check
+
         if alert_type == 'trade':
             settings = self._get_user_settings(user_id)
             if alert_data.get('usd_value', 0) < settings.get('min_buy_usd', 50.0):
                 print(f"    ⏭️ Trade below user threshold: ${alert_data.get('usd_value')}")
                 return
-        
-        # ✅ Use RQ queue if available (production)
+
         try:
             from flask import current_app
             q = current_app.config.get('RQ_QUEUE')
-            
+
             if q:
-                q.enqueue('tasks.send_telegram_alert_async', 
+                q.enqueue('tasks.send_telegram_alert_async',
                           user_id, alert_type, alert_data)
                 print(f"[WALLET MONITOR] ✓ Alert queued for {user_id[:8]}...")
             else:
-                # Fallback: Send directly (local dev)
                 self._send_alert_direct(user_id, alert_type, alert_data)
         except Exception as e:
             print(f"[WALLET MONITOR] ⚠️ Alert queue failed: {e}")
-            # Fallback: Send directly
             self._send_alert_direct(user_id, alert_type, alert_data)
 
     def _send_alert_direct(self, user_id: str, alert_type: str, alert_data: Dict):
@@ -474,11 +443,8 @@ class WalletActivityMonitor:
         """Send direct trade alert"""
         try:
             wallet_address = tx.get('wallet_address', '')
-            
-            # Get wallet tier/stats from watchlist
             wallet_info = self._get_wallet_info(user_id, wallet_address)
 
-            # Format alert payload
             alert_payload = {
                 'wallet': {
                     'address': wallet_address,
@@ -506,7 +472,6 @@ class WalletActivityMonitor:
                 }
             }
 
-            # Send to Telegram
             self.telegram_notifier.send_wallet_alert(user_id, alert_payload, tx.get('activity_id'))
             print(f"    📱 Telegram alert sent to user {user_id}")
 
@@ -516,7 +481,6 @@ class WalletActivityMonitor:
     def _create_notifications_for_wallet(self, wallet_address, activities):
         """Create notifications for all users watching this wallet"""
         try:
-            # Get all users watching this wallet with their alert settings
             result = self._table('wallet_watchlist').select(
                 'user_id, alert_enabled, alert_threshold_usd'
             ).eq('wallet_address', wallet_address).eq('alert_enabled', True).execute()
@@ -533,7 +497,6 @@ class WalletActivityMonitor:
                 activity_id = activity['activity_id']
 
                 for watcher in watchers:
-                    # Check if transaction meets user's alert criteria
                     if self._should_notify(tx, watcher):
                         try:
                             self._table('wallet_notifications').insert({
@@ -552,7 +515,6 @@ class WalletActivityMonitor:
 
                             notifications_created += 1
 
-                            # Send Telegram alert
                             if self.telegram_notifier:
                                 tx['wallet_address'] = wallet_address
                                 tx['activity_id'] = activity_id
@@ -576,7 +538,6 @@ class WalletActivityMonitor:
         usd_value = tx.get('usd_value', 0)
         threshold = settings.get('alert_threshold_usd', 100)
 
-        # Check minimum USD value
         if usd_value < threshold:
             return False
 
@@ -584,32 +545,35 @@ class WalletActivityMonitor:
 
     def _update_monitor_status(self, wallet_address, last_checked_at,
                                last_activity_at=None, success=True, error_message=None):
-        """Update monitoring status for a wallet"""
+        """Update monitoring status - FIXED: converts Unix timestamps to ISO for Supabase TIMESTAMPTZ"""
         try:
-            # ✅ FIX: Convert ISO strings to Unix timestamps
-            if isinstance(last_checked_at, str):
-                last_checked_at = int(datetime.fromisoformat(last_checked_at.replace('Z', '+00:00')).timestamp())
-            
-            if last_activity_at and isinstance(last_activity_at, str):
-                last_activity_at = int(datetime.fromisoformat(last_activity_at.replace('Z', '+00:00')).timestamp())
-            
-            # Check if status exists
+            # ✅ FIX: Always convert to ISO string for Supabase TIMESTAMPTZ columns
+            def to_iso(ts):
+                if ts is None:
+                    return None
+                if isinstance(ts, str):
+                    return ts  # Already ISO
+                return datetime.utcfromtimestamp(int(ts)).isoformat() + 'Z'
+
+            last_checked_iso = to_iso(last_checked_at)
+            last_activity_iso = to_iso(last_activity_at) if last_activity_at else None
+            updated_at_iso = datetime.utcnow().isoformat() + 'Z'
+
             existing = self._table('wallet_monitor_status').select('wallet_address').eq(
                 'wallet_address', wallet_address
             ).limit(1).execute()
 
             if existing.data:
-                # Update existing status
                 update_data = {
-                    'last_checked_at': last_checked_at,
-                    'updated_at': int(datetime.utcnow().timestamp())  # ✅ FIX: Unix timestamp
+                    'last_checked_at': last_checked_iso,
+                    'updated_at': updated_at_iso
                 }
 
                 if success:
                     update_data['error_count'] = 0
                     update_data['last_error'] = None
-                    if last_activity_at:
-                        update_data['last_activity_at'] = last_activity_at
+                    if last_activity_iso:
+                        update_data['last_activity_at'] = last_activity_iso
                 else:
                     update_data['last_error'] = error_message
 
@@ -617,18 +581,20 @@ class WalletActivityMonitor:
                     'wallet_address', wallet_address
                 ).execute()
 
-                # Increment check_count with raw SQL via RPC
-                self.supabase.rpc('increment_check_count', {
-                    'p_wallet_address': wallet_address,
-                    'p_error_increment': 0 if success else 1
-                }).execute()
+                try:
+                    self.supabase.rpc('increment_check_count', {
+                        'p_wallet_address': wallet_address,
+                        'p_error_increment': 0 if success else 1
+                    }).execute()
+                except Exception:
+                    pass  # RPC is optional
 
             else:
-                # Insert new status
                 self._table('wallet_monitor_status').insert({
                     'wallet_address': wallet_address,
-                    'last_checked_at': last_checked_at,
-                    'last_activity_at': last_activity_at,
+                    'last_checked_at': last_checked_iso,
+                    'last_activity_at': last_activity_iso,
+                    'updated_at': updated_at_iso,
                     'check_count': 1,
                     'error_count': 0 if success else 1,
                     'last_error': None if success else error_message,
@@ -641,26 +607,22 @@ class WalletActivityMonitor:
     def get_monitoring_stats(self) -> Dict:
         """Get current monitoring statistics"""
         try:
-            # Active wallets being monitored
             active_result = self._table('wallet_watchlist').select(
                 'wallet_address', count='exact'
             ).eq('alert_enabled', True).execute()
             active_wallets = active_result.count or 0
 
-            # Recent activity (last hour)
             one_hour_ago = datetime.utcfromtimestamp(time.time() - 3600).isoformat()
             activity_result = self._table('wallet_activity').select(
                 'id', count='exact'
             ).gte('created_at', one_hour_ago).execute()
             recent_activities = activity_result.count or 0
 
-            # Pending notifications
             pending_result = self._table('wallet_notifications').select(
                 'id', count='exact'
             ).eq('is_read', False).execute()
             pending_notifications = pending_result.count or 0
 
-            # Monitor health
             health_result = self._table('wallet_monitor_status').select(
                 'wallet_address, error_count, check_count'
             ).execute()
@@ -766,14 +728,12 @@ def mark_all_notifications_read(user_id, db_path=None) -> int:
     try:
         supabase = get_supabase_client()
 
-        # Count first
         count_result = supabase.schema(SCHEMA_NAME).table('wallet_notifications').select(
             'id', count='exact'
         ).eq('user_id', user_id).eq('is_read', False).execute()
 
         count = count_result.count or 0
 
-        # Update
         supabase.schema(SCHEMA_NAME).table('wallet_notifications').update({
             'is_read': True
         }).eq('user_id', user_id).eq('is_read', False).execute()
@@ -821,7 +781,7 @@ if __name__ == '__main__':
 
     monitor = WalletActivityMonitor(
         solanatracker_api_key=SOLANATRACKER_API_KEY,
-        poll_interval=120  # 2 minutes
+        poll_interval=120
     )
 
     print("\n🎯 Wallet Activity Monitor")
@@ -830,9 +790,8 @@ if __name__ == '__main__':
     try:
         monitor.start()
 
-        # Keep main thread alive and print stats periodically
         while True:
-            time.sleep(300)  # Every 5 minutes
+            time.sleep(300)
             stats = monitor.get_monitoring_stats()
 
             print(f"\n{'='*80}")
