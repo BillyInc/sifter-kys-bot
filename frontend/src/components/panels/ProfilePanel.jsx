@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { User, Settings, Bell, Key, CreditCard, HelpCircle, LogOut, BarChart3, Share2 } from 'lucide-react'; // Added Share2 here
+import { User, Settings, Bell, Key, CreditCard, HelpCircle, LogOut, BarChart3, Share2 } from 'lucide-react';
 import SettingsSubPanel from './SettingsSubPanel';
 import TelegramSettings from '../../TelegramSettings';
 import MyDashboardPanel from './MyDashboardPanel';
-import ReferralDashboardSubPanel from './ReferralDashboardSubPanel'; // Added this import
+import ReferralDashboardSubPanel from './ReferralDashboardSubPanel';
 
 export default function ProfilePanel({ 
   user, 
@@ -11,11 +11,18 @@ export default function ProfilePanel({
   apiUrl,
   onNavigate,
   onSignOut,
-  getAccessToken // Added this prop
+  getAccessToken
 }) {
-  const [subPanel, setSubPanel] = useState(null); // 'settings', 'telegram', 'dashboard', 'referrals'
+  const [subPanel, setSubPanel] = useState(null);
 
-  // If viewing a sub-panel, render it
+  // Prefer a real display name over the email prefix
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.name ||
+    user?.email?.split('@')[0] ||
+    'User';
+
   if (subPanel === 'settings') {
     return <SettingsSubPanel userId={userId} apiUrl={apiUrl} onBack={() => setSubPanel(null)} />;
   }
@@ -23,10 +30,7 @@ export default function ProfilePanel({
   if (subPanel === 'telegram') {
     return (
       <div className="space-y-4">
-        <button
-          onClick={() => setSubPanel(null)}
-          className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 transition"
-        >
+        <button onClick={() => setSubPanel(null)} className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 transition">
           ← Back to Profile
         </button>
         <TelegramSettings userId={userId} apiUrl={apiUrl} />
@@ -37,10 +41,7 @@ export default function ProfilePanel({
   if (subPanel === 'dashboard') {
     return (
       <div className="space-y-4">
-        <button
-          onClick={() => setSubPanel(null)}
-          className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 transition"
-        >
+        <button onClick={() => setSubPanel(null)} className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 transition">
           ← Back to Profile
         </button>
         <MyDashboardPanel userId={userId} apiUrl={apiUrl} />
@@ -50,23 +51,22 @@ export default function ProfilePanel({
 
   if (subPanel === 'referrals') {
     return (
-      <ReferralDashboardSubPanel 
-        userId={userId} 
-        apiUrl={apiUrl} 
-        onBack={() => setSubPanel(null)} 
-        getAccessToken={getAccessToken} // Pass the token function here
+      <ReferralDashboardSubPanel
+        userId={userId}
+        apiUrl={apiUrl}
+        onBack={() => setSubPanel(null)}
+        getAccessToken={getAccessToken}
       />
     );
   }
 
-  // Main profile menu
   const menuItems = [
-    { id: 'dashboard', icon: BarChart3, label: 'My Dashboard', color: 'text-purple-400', action: () => setSubPanel('dashboard') },
-    { id: 'referrals', icon: Share2, label: 'Referrals & Points', color: 'text-green-400', action: () => setSubPanel('referrals') },
-    { id: 'settings', icon: Settings, label: 'Settings', color: 'text-gray-400', action: () => setSubPanel('settings') },
-    { id: 'telegram', icon: Bell, label: 'Telegram Setup', color: 'text-blue-400', action: () => setSubPanel('telegram') },
-    { id: 'api', icon: Key, label: 'API Keys', color: 'text-yellow-400', action: () => alert('API Keys coming soon') },
-    { id: 'billing', icon: CreditCard, label: 'Billing', color: 'text-green-400', action: () => window.open('https://whop.com/sifter', '_blank') },
+    { id: 'dashboard', icon: BarChart3, label: 'My Dashboard',      color: 'text-purple-400', action: () => setSubPanel('dashboard')  },
+    { id: 'referrals', icon: Share2,   label: 'Referrals & Points', color: 'text-green-400',  action: () => setSubPanel('referrals') },
+    { id: 'settings',  icon: Settings, label: 'Settings',           color: 'text-gray-400',   action: () => setSubPanel('settings')  },
+    { id: 'telegram',  icon: Bell,     label: 'Telegram Setup',     color: 'text-blue-400',   action: () => setSubPanel('telegram')  },
+    { id: 'api',       icon: Key,      label: 'API Keys',           color: 'text-yellow-400', action: () => alert('API Keys coming soon') },
+    { id: 'billing',   icon: CreditCard, label: 'Billing',          color: 'text-green-400',  action: () => window.open('https://whop.com/sifter', '_blank') },
   ];
 
   return (
@@ -78,7 +78,8 @@ export default function ProfilePanel({
             <User className="text-purple-400" size={24} />
           </div>
           <div>
-            <div className="font-bold">{user?.email?.split('@')[0] || 'User'}</div>
+            {/* Show real name, not email prefix */}
+            <div className="font-bold">{displayName}</div>
             <div className="text-xs text-gray-400">{user?.email}</div>
           </div>
         </div>

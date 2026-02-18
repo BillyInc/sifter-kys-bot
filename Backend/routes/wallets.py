@@ -42,7 +42,7 @@ def get_wallet_monitor():
         telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
 
         _wallet_monitor = WalletActivityMonitor(
-            birdeye_api_key=Config.BIRDEYE_API_KEY,
+            solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
             poll_interval=120,
             telegram_notifier=telegram_notifier
         )
@@ -480,7 +480,7 @@ def auto_discover_wallets():
 
 
 # =============================================================================
-# WATCHLIST ENDPOINTS (unchanged from before)
+# WATCHLIST ENDPOINTS - ✅ UPDATED WITH PROPER ERROR HANDLING
 # =============================================================================
 
 @wallets_bp.route('/watchlist/add', methods=['POST', 'OPTIONS'])
@@ -551,6 +551,7 @@ def get_wallet_watchlist():
             'professional_score, consistency_score, pump_count, '
             'avg_distance_to_peak, avg_roi_to_peak, tokens_hit, '
             'tags, notes, alert_enabled, alert_threshold_usd, '
+            'alert_on_buy, alert_on_sell, min_trade_usd, '
             'added_at, last_updated'
         ).eq('user_id', user_id)
         
@@ -571,21 +572,43 @@ def get_wallet_watchlist():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
 @wallets_bp.route('/watchlist/remove', methods=['POST', 'OPTIONS'])
 @optional_auth
 def remove_wallet_from_watchlist():
+    """✅ UPDATED: Remove wallet with proper error handling."""
     if request.method == 'OPTIONS':
         return '', 204
     
     try:
         data = request.json
         user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        wallet_address = data.get('wallet_address')
 
-        if not user_id or not data.get('wallet_address'):
-            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        if not user_id or not wallet_address:
+            return jsonify({
+                'success': False,
+                'error': 'user_id and wallet_address are required'
+            }), 400
 
+        # ✅ PRE-CHECK: Verify wallet exists before attempting delete
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        
+        check = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'wallet_address'
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+
+        if not check.data:
+            # Wallet doesn't exist in watchlist
+            return jsonify({
+                'success': False,
+                'error': 'Wallet not found in your watchlist'
+            }), 404
+
+        # Now delete it
         db = get_watchlist_db()
-        success = db.remove_wallet_from_watchlist(user_id, data['wallet_address'])
+        success = db.remove_wallet_from_watchlist(user_id, wallet_address)
 
         if success:
             return jsonify({
@@ -593,10 +616,21 @@ def remove_wallet_from_watchlist():
                 'message': 'Wallet removed from watchlist'
             }), 200
         else:
-            return jsonify({'success': False, 'error': 'Failed to remove wallet'}), 500
+            # Database delete failed for some reason
+            return jsonify({
+                'success': False,
+                'error': 'Failed to remove wallet'
+            }), 500
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"[WALLET ROUTES] Error removing wallet {wallet_address}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'An unexpected error occurred. Please try again.'
+        }), 500
+
 
 @wallets_bp.route('/watchlist/update', methods=['POST', 'OPTIONS'])
 @optional_auth
@@ -630,6 +664,7 @@ def update_wallet_watchlist():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
 @wallets_bp.route('/watchlist/stats', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_wallet_watchlist_stats():
@@ -652,6 +687,65 @@ def get_wallet_watchlist_stats():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/watchlist/alerts/update', methods=['POST', 'OPTIONS'])
+@optional_auth
+def update_wallet_alert_settings():
+    """✅ NEW: Update alert settings for a watchlisted wallet."""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        data = request.json
+        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        wallet_address = data.get('wallet_address')
+        alert_enabled = data.get('alert_enabled')
+        alert_threshold_usd = data.get('alert_threshold_usd')
+        alert_on_buy = data.get('alert_on_buy')
+        alert_on_sell = data.get('alert_on_sell')
+        min_trade_usd = data.get('min_trade_usd')
+
+        if not user_id or not wallet_address:
+            return jsonify({
+                'success': False,
+                'error': 'user_id and wallet_address are required'
+            }), 400
+
+        # Build update dict
+        update_data = {'last_updated': datetime.utcnow().isoformat()}
+        if alert_enabled is not None:
+            update_data['alert_enabled'] = alert_enabled
+        if alert_threshold_usd is not None:
+            update_data['alert_threshold_usd'] = alert_threshold_usd
+        if alert_on_buy is not None:
+            update_data['alert_on_buy'] = alert_on_buy
+        if alert_on_sell is not None:
+            update_data['alert_on_sell'] = alert_on_sell
+        if min_trade_usd is not None:
+            update_data['min_trade_usd'] = min_trade_usd
+        
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        
+        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update(
+            update_data
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+
+        return jsonify({
+            'success': True,
+            'message': 'Alert settings updated'
+        }), 200
+
+    except Exception as e:
+        print(f"[WALLET ROUTES] Error updating alerts: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'Failed to update alert settings'
+        }), 500
+
 
 @wallets_bp.route('/watchlist/rerank', methods=['POST', 'OPTIONS'])
 @require_auth
