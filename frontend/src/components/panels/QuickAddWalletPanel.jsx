@@ -123,7 +123,7 @@ export default function QuickAddWalletPanel({
         </div>
         
         <p className="text-xs text-gray-400 mb-3">
-          Test your monitoring system with high-volume wallets
+          Manually Add Wallets To Your Watchlist
         </p>
 
         <div className="space-y-2">
@@ -330,7 +330,7 @@ export default function QuickAddWalletPanel({
       {/* Stress Test Warning */}
       <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
         <p className="text-xs text-yellow-300">
-          ⚠️ <strong>Stress Test Warning:</strong> Exchange wallets like Binance may generate hundreds of alerts per hour. Use these primarily for system testing, not regular monitoring.
+          ⚠️ <strong>Warning:</strong> High Volume Wallets may generate hundreds of alerts per hour. Use these with Caution
         </p>
       </div>
     </div>

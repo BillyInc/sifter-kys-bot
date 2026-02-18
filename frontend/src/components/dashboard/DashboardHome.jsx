@@ -1,33 +1,64 @@
-import React from 'react';
-import { Search, TrendingUp, Zap, BookmarkPlus, Trophy, Crown, Plus } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, TrendingUp, Zap, BookmarkPlus, Trophy, Crown, Plus, X } from 'lucide-react';
 
 export default function DashboardHome({ 
   user, 
   onOpenPanel,
   recentActivity = [],
-  // NEW: Add results props
   analysisResults = null,
   isAnalyzing = false
 }) {
+  // Persist the dismissed state so it survives re-renders (but resets on sign-out)
+  const storageKey = `welcome_dismissed_${user?.id || 'guest'}`;
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try { return localStorage.getItem(storageKey) !== 'true'; } catch { return true; }
+  });
+
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    try { localStorage.setItem(storageKey, 'true'); } catch {}
+  };
+
   const quickActions = [
-    { id: 'analyze', icon: Search, label: 'Analyze Tokens', color: 'purple' },
-    { id: 'trending', icon: TrendingUp, label: 'Trending Runners', color: 'orange' },
-    { id: 'discovery', icon: Zap, label: 'Auto Discovery', color: 'yellow' },
-    { id: 'watchlist', icon: BookmarkPlus, label: 'Watchlist', color: 'blue' },
-    { id: 'top100', icon: Trophy, label: 'Top 100 Community', color: 'green' },
-    { id: 'premium100', icon: Crown, label: 'Premium Elite 100', color: 'pink' },
-    { id: 'quickadd', icon: Plus, label: 'Quick Add Wallet', color: 'cyan' },
+    { id: 'analyze',    icon: Search,      label: 'Analyze Tokens',       color: 'purple' },
+    { id: 'trending',   icon: TrendingUp,  label: 'Trending Runners',      color: 'orange' },
+    { id: 'discovery',  icon: Zap,         label: 'Auto Discovery',        color: 'yellow' },
+    { id: 'watchlist',  icon: BookmarkPlus,label: 'Watchlist',             color: 'blue'   },
+    { id: 'top100',     icon: Trophy,      label: 'Top 100 Community',     color: 'green'  },
+    { id: 'premium100', icon: Crown,       label: 'Premium Elite 100',     color: 'pink'   },
+    { id: 'quickadd',   icon: Plus,        label: 'Quick Add Wallet',      color: 'cyan'   },
   ];
+
+  // Prefer display name → email prefix → 'User'
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split('@')[0] ||
+    'User';
 
   return (
     <div className="space-y-6">
-      {/* Welcome Header */}
-      <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-6">
-        <h1 className="text-2xl font-bold mb-2">Welcome back, {user?.email?.split('@')[0] || 'User'}! 👋</h1>
-        <p className="text-gray-400">What would you like to do today?</p>
-      </div>
 
-      {/* Quick Actions Grid */}
+      {/* ── Dismissible Welcome Header ── */}
+      {showWelcome && (
+        <div className="relative bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-6">
+          {/* Close button */}
+          <button
+            onClick={dismissWelcome}
+            title="Dismiss welcome banner"
+            className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+          >
+            <X size={16} />
+          </button>
+
+          <h1 className="text-2xl font-bold mb-2">
+            Welcome back, {displayName}! 👋
+          </h1>
+          <p className="text-gray-400">What would you like to do today?</p>
+        </div>
+      )}
+
+      {/* ── Quick Actions Grid ── */}
       <div>
         <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
         <div className="grid grid-cols-3 gap-4">
@@ -48,77 +79,58 @@ export default function DashboardHome({
         </div>
       </div>
 
-      {/* ANALYSIS RESULTS SECTION */}
+      {/* ── Analysis Results ── */}
       {(isAnalyzing || analysisResults) && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-6">
           <h2 className="text-xl font-bold mb-4">Analysis Results</h2>
-          
+
           {isAnalyzing ? (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-12 h-12 border-4 border-white/20 border-t-purple-500 rounded-full animate-spin mb-4" />
-              <p className="text-gray-400">Analyzing wallets...</p>
+              <p className="text-gray-400">Analyzing wallets…</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Results Summary */}
               {analysisResults?.summary && (
                 <div className="grid grid-cols-4 gap-4 p-4 bg-gradient-to-r from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-lg">
                   <div>
-                    <div className="text-2xl font-bold text-green-400">
-                      {analysisResults.summary.qualified_wallets || 0}
-                    </div>
+                    <div className="text-2xl font-bold text-green-400">{analysisResults.summary.qualified_wallets || 0}</div>
                     <div className="text-xs text-gray-400">Qualified Wallets</div>
                   </div>
                   <div>
-                    <div className="text-2xl font-bold text-yellow-400">
-                      {analysisResults.summary.real_winners || 0}
-                    </div>
+                    <div className="text-2xl font-bold text-yellow-400">{analysisResults.summary.real_winners || 0}</div>
                     <div className="text-xs text-gray-400">S-Tier Wallets</div>
                   </div>
                   <div>
-                    <div className="text-2xl font-bold text-blue-400">
-                      {analysisResults.summary.total_rallies || 0}
-                    </div>
+                    <div className="text-2xl font-bold text-blue-400">{analysisResults.summary.total_rallies || 0}</div>
                     <div className="text-xs text-gray-400">Total Rallies</div>
                   </div>
                   <div>
-                    <div className="text-2xl font-bold text-purple-400">
-                      {analysisResults.summary.tokens_analyzed || 0}
-                    </div>
+                    <div className="text-2xl font-bold text-purple-400">{analysisResults.summary.tokens_analyzed || 0}</div>
                     <div className="text-xs text-gray-400">Tokens Analyzed</div>
                   </div>
                 </div>
               )}
 
-              {/* Top Wallets */}
               {analysisResults?.top_wallets?.slice(0, 5).map((wallet, idx) => (
                 <div key={wallet.wallet} className="bg-black/30 border border-white/10 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-purple-400 font-bold">#{idx + 1}</span>
-                      <code className="text-sm font-mono">{wallet.wallet?.slice(0, 12)}...</code>
-                      {wallet.professional_grade && (
-                        <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
-                          {wallet.professional_grade} • {wallet.professional_score}
-                        </span>
-                      )}
-                    </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-purple-400 font-bold">#{idx + 1}</span>
+                    <code className="text-sm font-mono">{wallet.wallet?.slice(0, 12)}…</code>
+                    {wallet.professional_grade && (
+                      <span className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">
+                        {wallet.professional_grade} • {wallet.professional_score}
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
-
-              <button
-                onClick={() => analysisResults = null}
-                className="w-full px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-semibold transition"
-              >
-                Clear Results
-              </button>
             </div>
           )}
         </div>
       )}
 
-      {/* Recent Activity */}
+      {/* ── Recent Activity ── */}
       {recentActivity.length > 0 && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
           <h3 className="text-lg font-semibold mb-3">Recent Activity</h3>

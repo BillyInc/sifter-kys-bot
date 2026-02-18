@@ -1,16 +1,62 @@
 import React, { useState, useEffect } from 'react';
-import { BookmarkPlus, Trash2, Tag, StickyNote, Users, Wallet, Settings, Bell, BellOff } from 'lucide-react';
+import { BookmarkPlus, Trash2, Tag, StickyNote, Users, Wallet, Settings, Bell, BellOff, AlertCircle, CheckCircle, X } from 'lucide-react';
 import WalletAlertSettings from './WalletAlertSettings';
 import { supabase } from './lib/supabase';
 
+// ─── Toast Notification ───────────────────────────────────────────────────────
+function Toast({ message, type = 'error', onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  const styles = {
+    error:   'bg-red-900/90 border-red-500/50 text-red-200',
+    success: 'bg-green-900/90 border-green-500/50 text-green-200',
+  };
+  const Icon = type === 'error' ? AlertCircle : CheckCircle;
+
+  return (
+    <div className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border text-sm shadow-xl ${styles[type]}`}>
+      <Icon size={16} />
+      <span>{message}</span>
+      <button onClick={onDismiss} className="ml-2 opacity-60 hover:opacity-100">
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+// ─── Inline Confirmation Dialog ───────────────────────────────────────────────
+function ConfirmDelete({ onConfirm, onCancel, isDeleting }) {
+  return (
+    <div className="flex items-center gap-2 mt-2 p-2 bg-red-950/50 border border-red-500/30 rounded-lg">
+      <span className="text-xs text-red-300 flex-1">Remove from watchlist?</span>
+      <button
+        onClick={onConfirm}
+        disabled={isDeleting}
+        className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded text-xs font-semibold transition"
+      >
+        {isDeleting ? 'Removing…' : 'Yes, remove'}
+      </button>
+      <button
+        onClick={onCancel}
+        disabled={isDeleting}
+        className="px-2 py-1 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded text-xs transition"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function Watchlist({ userId, apiUrl }) {
-  // Tab state
   const [activeWatchlistTab, setActiveWatchlistTab] = useState('accounts');
-  
+
   // Twitter watchlist state
   const [watchlist, setWatchlist] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [selectedGroup, setSelectedGroup] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [editingNotes, setEditingNotes] = useState(null);
   const [editingTags, setEditingTags] = useState(null);
@@ -22,10 +68,21 @@ export default function Watchlist({ userId, apiUrl }) {
   const [walletWatchlist, setWalletWatchlist] = useState([]);
   const [walletStats, setWalletStats] = useState(null);
 
+  // Delete confirmation state — tracks which item is pending delete
+  const [pendingDeleteAccount, setPendingDeleteAccount] = useState(null);
+  const [pendingDeleteWallet, setPendingDeleteWallet] = useState(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isDeletingWallet, setIsDeletingWallet] = useState(false);
+
+  // Toast notification state
+  const [toast, setToast] = useState(null); // { message, type }
+
   // Alert settings modal state
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
 
-  // Helper function to get auth headers
+  const showToast = (message, type = 'error') => setToast({ message, type });
+  const dismissToast = () => setToast(null);
+
   const getHeaders = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     return {
@@ -45,18 +102,19 @@ export default function Watchlist({ userId, apiUrl }) {
     loadGroups();
   }, [userId, activeWatchlistTab]);
 
-  // Twitter watchlist functions
+  // ─── Twitter watchlist functions ──────────────────────────────────────────
+
   const loadWatchlist = async () => {
     setIsLoading(true);
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/get?user_id=${userId}`, { headers });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
-      if (data.success) {
-        setWatchlist(data.accounts);
-      }
+      if (data.success) setWatchlist(data.accounts);
     } catch (error) {
       console.error('Error loading watchlist:', error);
+      showToast('Failed to load watchlist. Please try again.');
     }
     setIsLoading(false);
   };
@@ -65,10 +123,9 @@ export default function Watchlist({ userId, apiUrl }) {
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/groups?user_id=${userId}`, { headers });
+      if (!response.ok) return;
       const data = await response.json();
-      if (data.success) {
-        setGroups(data.groups);
-      }
+      if (data.success) setGroups(data.groups);
     } catch (error) {
       console.error('Error loading groups:', error);
     }
@@ -78,17 +135,16 @@ export default function Watchlist({ userId, apiUrl }) {
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/stats?user_id=${userId}`, { headers });
+      if (!response.ok) return;
       const data = await response.json();
-      if (data.success) {
-        setStats(data.stats);
-      }
+      if (data.success) setStats(data.stats);
     } catch (error) {
       console.error('Error loading stats:', error);
     }
   };
 
   const removeAccount = async (authorId) => {
-    if (!confirm('Remove this account from watchlist?')) return;
+    setIsDeletingAccount(true);
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/remove`, {
@@ -96,13 +152,26 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId })
       });
+
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
+
       if (data.success) {
-        loadWatchlist();
-        loadStats();
+        // ✅ Optimistic: remove from local state immediately
+        setWatchlist(prev => prev.filter(a => a.author_id !== authorId));
+        setStats(prev => prev ? { ...prev, total_accounts: (prev.total_accounts || 1) - 1 } : prev);
+        showToast('Account removed from watchlist.', 'success');
+      } else {
+        throw new Error(data.error || 'Failed to remove account');
       }
     } catch (error) {
       console.error('Error removing account:', error);
+      showToast(error.message || 'Failed to remove account. Please try again.');
+      // Re-fetch to ensure UI is in sync after failure
+      loadWatchlist();
+    } finally {
+      setIsDeletingAccount(false);
+      setPendingDeleteAccount(null);
     }
   };
 
@@ -114,14 +183,18 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId, notes })
       });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
       if (data.success) {
-        loadWatchlist();
+        setWatchlist(prev => prev.map(a => a.author_id === authorId ? { ...a, notes } : a));
         setEditingNotes(null);
         setNewNote('');
+      } else {
+        throw new Error(data.error || 'Failed to update notes');
       }
     } catch (error) {
       console.error('Error updating notes:', error);
+      showToast('Failed to save notes. Please try again.');
     }
   };
 
@@ -134,29 +207,34 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, author_id: authorId, tags: tagsArray })
       });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
       if (data.success) {
-        loadWatchlist();
+        setWatchlist(prev => prev.map(a => a.author_id === authorId ? { ...a, tags: tagsArray } : a));
         setEditingTags(null);
         setNewTags('');
+      } else {
+        throw new Error(data.error || 'Failed to update tags');
       }
     } catch (error) {
       console.error('Error updating tags:', error);
+      showToast('Failed to save tags. Please try again.');
     }
   };
 
-  // Wallet watchlist functions
+  // ─── Wallet watchlist functions ───────────────────────────────────────────
+
   const loadWalletWatchlist = async () => {
     setIsLoading(true);
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/get?user_id=${userId}`, { headers });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
-      if (data.success) {
-        setWalletWatchlist(data.wallets);
-      }
+      if (data.success) setWalletWatchlist(data.wallets);
     } catch (error) {
       console.error('Error loading wallet watchlist:', error);
+      showToast('Failed to load wallet watchlist. Please try again.');
     }
     setIsLoading(false);
   };
@@ -165,17 +243,16 @@ export default function Watchlist({ userId, apiUrl }) {
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/stats?user_id=${userId}`, { headers });
+      if (!response.ok) return;
       const data = await response.json();
-      if (data.success) {
-        setWalletStats(data.stats);
-      }
+      if (data.success) setWalletStats(data.stats);
     } catch (error) {
       console.error('Error loading wallet stats:', error);
     }
   };
 
   const removeWallet = async (walletAddress) => {
-    if (!confirm('Remove this wallet from watchlist?')) return;
+    setIsDeletingWallet(true);
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/remove`, {
@@ -183,13 +260,26 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress })
       });
+
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
+
       if (data.success) {
-        loadWalletWatchlist();
-        loadWalletStats();
+        // ✅ Optimistic: remove from local state immediately
+        setWalletWatchlist(prev => prev.filter(w => w.wallet_address !== walletAddress));
+        setWalletStats(prev => prev ? { ...prev, total_wallets: (prev.total_wallets || 1) - 1 } : prev);
+        showToast('Wallet removed from watchlist.', 'success');
+      } else {
+        throw new Error(data.error || 'Failed to remove wallet');
       }
     } catch (error) {
       console.error('Error removing wallet:', error);
+      showToast(error.message || 'Failed to remove wallet. Please try again.');
+      // Re-fetch to ensure UI is in sync after failure
+      loadWalletWatchlist();
+    } finally {
+      setIsDeletingWallet(false);
+      setPendingDeleteWallet(null);
     }
   };
 
@@ -201,14 +291,18 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, notes })
       });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
       if (data.success) {
-        loadWalletWatchlist();
+        setWalletWatchlist(prev => prev.map(w => w.wallet_address === walletAddress ? { ...w, notes } : w));
         setEditingNotes(null);
         setNewNote('');
+      } else {
+        throw new Error(data.error || 'Failed to update notes');
       }
     } catch (error) {
       console.error('Error updating wallet notes:', error);
+      showToast('Failed to save notes. Please try again.');
     }
   };
 
@@ -221,16 +315,22 @@ export default function Watchlist({ userId, apiUrl }) {
         headers,
         body: JSON.stringify({ user_id: userId, wallet_address: walletAddress, tags: tagsArray })
       });
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
       const data = await response.json();
       if (data.success) {
-        loadWalletWatchlist();
+        setWalletWatchlist(prev => prev.map(w => w.wallet_address === walletAddress ? { ...w, tags: tagsArray } : w));
         setEditingTags(null);
         setNewTags('');
+      } else {
+        throw new Error(data.error || 'Failed to update tags');
       }
     } catch (error) {
       console.error('Error updating wallet tags:', error);
+      showToast('Failed to save tags. Please try again.');
     }
   };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -243,6 +343,9 @@ export default function Watchlist({ userId, apiUrl }) {
 
   return (
     <div className="space-y-4">
+      {/* Toast */}
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={dismissToast} />}
+
       {/* Tab Switcher */}
       <div className="flex gap-3 border-b border-white/10">
         <button
@@ -269,7 +372,7 @@ export default function Watchlist({ userId, apiUrl }) {
         </button>
       </div>
 
-      {/* Twitter Accounts Tab */}
+      {/* ── Twitter Accounts Tab ─────────────────────────────────────────── */}
       {activeWatchlistTab === 'accounts' && (
         <>
           {stats && (
@@ -322,14 +425,27 @@ export default function Watchlist({ userId, apiUrl }) {
                           <div className="text-xl font-bold text-purple-400">{account.influence_score}</div>
                           <div className="text-xs text-gray-400">Influence</div>
                         </div>
+                        {/* ✅ Delete button — opens inline confirmation instead of confirm() */}
                         <button
-                          onClick={() => removeAccount(account.author_id)}
-                          className="p-2 hover:bg-red-500/20 rounded text-red-400"
+                          onClick={() => setPendingDeleteAccount(
+                            pendingDeleteAccount === account.author_id ? null : account.author_id
+                          )}
+                          disabled={isDeletingAccount && pendingDeleteAccount === account.author_id}
+                          className="p-2 hover:bg-red-500/20 rounded text-red-400 disabled:opacity-50 transition"
                         >
                           <Trash2 size={16} />
                         </button>
                       </div>
                     </div>
+
+                    {/* Inline delete confirmation */}
+                    {pendingDeleteAccount === account.author_id && (
+                      <ConfirmDelete
+                        onConfirm={() => removeAccount(account.author_id)}
+                        onCancel={() => setPendingDeleteAccount(null)}
+                        isDeleting={isDeletingAccount}
+                      />
+                    )}
 
                     {/* Tags */}
                     <div className="mb-2">
@@ -342,43 +458,20 @@ export default function Watchlist({ userId, apiUrl }) {
                             placeholder="Enter tags (comma separated)"
                             className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-1 text-sm"
                           />
-                          <button
-                            onClick={() => updateTags(account.author_id, newTags)}
-                            className="px-3 py-1 bg-purple-600 rounded text-sm"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => {
-                              setEditingTags(null);
-                              setNewTags('');
-                            }}
-                            className="px-3 py-1 bg-white/10 rounded text-sm"
-                          >
-                            Cancel
-                          </button>
+                          <button onClick={() => updateTags(account.author_id, newTags)} className="px-3 py-1 bg-purple-600 rounded text-sm">Save</button>
+                          <button onClick={() => { setEditingTags(null); setNewTags(''); }} className="px-3 py-1 bg-white/10 rounded text-sm">Cancel</button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Tag size={14} className="text-gray-400" />
                           {account.tags && account.tags.length > 0 ? (
                             account.tags.map((tag, idx) => (
-                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">
-                                {tag}
-                              </span>
+                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
                             ))
                           ) : (
                             <span className="text-xs text-gray-500">No tags</span>
                           )}
-                          <button
-                            onClick={() => {
-                              setEditingTags(account.author_id);
-                              setNewTags(account.tags ? account.tags.join(', ') : '');
-                            }}
-                            className="text-xs text-purple-400 hover:text-purple-300"
-                          >
-                            Edit
-                          </button>
+                          <button onClick={() => { setEditingTags(account.author_id); setNewTags(account.tags ? account.tags.join(', ') : ''); }} className="text-xs text-purple-400 hover:text-purple-300">Edit</button>
                         </div>
                       )}
                     </div>
@@ -395,40 +488,17 @@ export default function Watchlist({ userId, apiUrl }) {
                             rows={3}
                           />
                           <div className="flex gap-2">
-                            <button
-                              onClick={() => updateNotes(account.author_id, newNote)}
-                              className="px-3 py-1 bg-purple-600 rounded text-sm"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingNotes(null);
-                                setNewNote('');
-                              }}
-                              className="px-3 py-1 bg-white/10 rounded text-sm"
-                            >
-                              Cancel
-                            </button>
+                            <button onClick={() => updateNotes(account.author_id, newNote)} className="px-3 py-1 bg-purple-600 rounded text-sm">Save</button>
+                            <button onClick={() => { setEditingNotes(null); setNewNote(''); }} className="px-3 py-1 bg-white/10 rounded text-sm">Cancel</button>
                           </div>
                         </div>
                       ) : (
                         <div className="flex items-start gap-2">
                           <StickyNote size={14} className="text-gray-400 mt-0.5" />
                           <div className="flex-1">
-                            {account.notes ? (
-                              <p className="text-sm text-gray-300">{account.notes}</p>
-                            ) : (
-                              <span className="text-xs text-gray-500">No notes</span>
-                            )}
+                            {account.notes ? <p className="text-sm text-gray-300">{account.notes}</p> : <span className="text-xs text-gray-500">No notes</span>}
                           </div>
-                          <button
-                            onClick={() => {
-                              setEditingNotes(account.author_id);
-                              setNewNote(account.notes || '');
-                            }}
-                            className="text-xs text-purple-400 hover:text-purple-300"
-                          >
+                          <button onClick={() => { setEditingNotes(account.author_id); setNewNote(account.notes || ''); }} className="text-xs text-purple-400 hover:text-purple-300">
                             {account.notes ? 'Edit' : 'Add'}
                           </button>
                         </div>
@@ -442,10 +512,9 @@ export default function Watchlist({ userId, apiUrl }) {
         </>
       )}
 
-      {/* Wallet Watchlist Tab */}
+      {/* ── Wallet Watchlist Tab ──────────────────────────────────────────── */}
       {activeWatchlistTab === 'wallets' && (
         <>
-          {/* Stats Grid */}
           {walletStats && (
             <div className="grid grid-cols-4 gap-4">
               <div className="bg-white/5 border border-white/10 rounded-lg p-4">
@@ -467,14 +536,11 @@ export default function Watchlist({ userId, apiUrl }) {
             </div>
           )}
 
-          {/* Wallet List or Empty State */}
           {walletWatchlist.length === 0 ? (
             <div className="bg-white/5 border border-white/10 rounded-lg p-12 text-center">
               <Wallet className="mx-auto mb-4 text-gray-400" size={48} />
               <h3 className="text-lg font-semibold mb-2">No Wallets in Watchlist</h3>
-              <p className="text-sm text-gray-400">
-                Run wallet analysis and add high-performing wallets here
-              </p>
+              <p className="text-sm text-gray-400">Run wallet analysis and add high-performing wallets here</p>
             </div>
           ) : (
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
@@ -496,23 +562,17 @@ export default function Watchlist({ userId, apiUrl }) {
                           }`}>
                             Tier {wallet.tier}
                           </span>
-
-                          {/* Alert Status Indicator */}
                           {wallet.alert_enabled ? (
                             <span className="flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
-                              <Bell size={12} />
-                              Alerts ON
+                              <Bell size={12} /> Alerts ON
                             </span>
                           ) : (
                             <span className="flex items-center gap-1 px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">
-                              <BellOff size={12} />
-                              Alerts OFF
+                              <BellOff size={12} /> Alerts OFF
                             </span>
                           )}
                         </div>
-                        <div className="text-xs font-mono text-gray-400 mb-2">
-                          {wallet.wallet_address}
-                        </div>
+                        <div className="text-xs font-mono text-gray-400 mb-2">{wallet.wallet_address}</div>
                         {wallet.tokens_hit && wallet.tokens_hit.length > 0 && (
                           <div className="text-xs text-gray-500">
                             <strong>Tokens:</strong> {wallet.tokens_hit.join(', ')}
@@ -529,15 +589,28 @@ export default function Watchlist({ userId, apiUrl }) {
                         >
                           <Settings size={16} />
                         </button>
+                        {/* ✅ Delete button — opens inline confirmation */}
                         <button
-                          onClick={() => removeWallet(wallet.wallet_address)}
-                          className="p-2 hover:bg-red-500/20 rounded text-red-400"
+                          onClick={() => setPendingDeleteWallet(
+                            pendingDeleteWallet === wallet.wallet_address ? null : wallet.wallet_address
+                          )}
+                          disabled={isDeletingWallet && pendingDeleteWallet === wallet.wallet_address}
+                          className="p-2 hover:bg-red-500/20 rounded text-red-400 disabled:opacity-50 transition"
                           title="Remove wallet"
                         >
                           <Trash2 size={16} />
                         </button>
                       </div>
                     </div>
+
+                    {/* Inline delete confirmation */}
+                    {pendingDeleteWallet === wallet.wallet_address && (
+                      <ConfirmDelete
+                        onConfirm={() => removeWallet(wallet.wallet_address)}
+                        onCancel={() => setPendingDeleteWallet(null)}
+                        isDeleting={isDeletingWallet}
+                      />
+                    )}
 
                     {/* Performance Stats */}
                     <div className="grid grid-cols-4 gap-3 mb-3 text-sm">
@@ -559,7 +632,6 @@ export default function Watchlist({ userId, apiUrl }) {
                       </div>
                     </div>
 
-                    {/* Alert Settings Summary */}
                     {wallet.alert_enabled && (
                       <div className="mb-3 p-2 bg-purple-500/10 border border-purple-500/30 rounded text-xs">
                         <span className="text-purple-400 font-semibold">Alert Config:</span>
@@ -572,7 +644,7 @@ export default function Watchlist({ userId, apiUrl }) {
                       </div>
                     )}
 
-                    {/* Tags Section */}
+                    {/* Tags */}
                     <div className="mb-2">
                       {editingTags === wallet.wallet_address ? (
                         <div className="flex gap-2">
@@ -583,48 +655,25 @@ export default function Watchlist({ userId, apiUrl }) {
                             placeholder="Enter tags (comma separated)"
                             className="flex-1 bg-black/50 border border-white/10 rounded px-3 py-1 text-sm"
                           />
-                          <button
-                            onClick={() => updateWalletTags(wallet.wallet_address, newTags)}
-                            className="px-3 py-1 bg-purple-600 rounded text-sm"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => {
-                              setEditingTags(null);
-                              setNewTags('');
-                            }}
-                            className="px-3 py-1 bg-white/10 rounded text-sm"
-                          >
-                            Cancel
-                          </button>
+                          <button onClick={() => updateWalletTags(wallet.wallet_address, newTags)} className="px-3 py-1 bg-purple-600 rounded text-sm">Save</button>
+                          <button onClick={() => { setEditingTags(null); setNewTags(''); }} className="px-3 py-1 bg-white/10 rounded text-sm">Cancel</button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 flex-wrap">
                           <Tag size={14} className="text-gray-400" />
                           {wallet.tags && wallet.tags.length > 0 ? (
                             wallet.tags.map((tag, idx) => (
-                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">
-                                {tag}
-                              </span>
+                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
                             ))
                           ) : (
                             <span className="text-xs text-gray-500">No tags</span>
                           )}
-                          <button
-                            onClick={() => {
-                              setEditingTags(wallet.wallet_address);
-                              setNewTags(wallet.tags ? wallet.tags.join(', ') : '');
-                            }}
-                            className="text-xs text-purple-400 hover:text-purple-300"
-                          >
-                            Edit
-                          </button>
+                          <button onClick={() => { setEditingTags(wallet.wallet_address); setNewTags(wallet.tags ? wallet.tags.join(', ') : ''); }} className="text-xs text-purple-400 hover:text-purple-300">Edit</button>
                         </div>
                       )}
                     </div>
 
-                    {/* Notes Section */}
+                    {/* Notes */}
                     <div>
                       {editingNotes === wallet.wallet_address ? (
                         <div className="space-y-2">
@@ -636,40 +685,17 @@ export default function Watchlist({ userId, apiUrl }) {
                             rows={3}
                           />
                           <div className="flex gap-2">
-                            <button
-                              onClick={() => updateWalletNotes(wallet.wallet_address, newNote)}
-                              className="px-3 py-1 bg-purple-600 rounded text-sm"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingNotes(null);
-                                setNewNote('');
-                              }}
-                              className="px-3 py-1 bg-white/10 rounded text-sm"
-                            >
-                              Cancel
-                            </button>
+                            <button onClick={() => updateWalletNotes(wallet.wallet_address, newNote)} className="px-3 py-1 bg-purple-600 rounded text-sm">Save</button>
+                            <button onClick={() => { setEditingNotes(null); setNewNote(''); }} className="px-3 py-1 bg-white/10 rounded text-sm">Cancel</button>
                           </div>
                         </div>
                       ) : (
                         <div className="flex items-start gap-2">
                           <StickyNote size={14} className="text-gray-400 mt-0.5" />
                           <div className="flex-1">
-                            {wallet.notes ? (
-                              <p className="text-sm text-gray-300">{wallet.notes}</p>
-                            ) : (
-                              <span className="text-xs text-gray-500">No notes</span>
-                            )}
+                            {wallet.notes ? <p className="text-sm text-gray-300">{wallet.notes}</p> : <span className="text-xs text-gray-500">No notes</span>}
                           </div>
-                          <button
-                            onClick={() => {
-                              setEditingNotes(wallet.wallet_address);
-                              setNewNote(wallet.notes || '');
-                            }}
-                            className="text-xs text-purple-400 hover:text-purple-300"
-                          >
+                          <button onClick={() => { setEditingNotes(wallet.wallet_address); setNewNote(wallet.notes || ''); }} className="text-xs text-purple-400 hover:text-purple-300">
                             {wallet.notes ? 'Edit' : 'Add'}
                           </button>
                         </div>
@@ -688,9 +714,7 @@ export default function Watchlist({ userId, apiUrl }) {
         <WalletAlertSettings
           walletAddress={alertSettingsWallet}
           onClose={() => setAlertSettingsWallet(null)}
-          onSave={() => {
-            loadWalletWatchlist();
-          }}
+          onSave={() => loadWalletWatchlist()}
         />
       )}
     </div>

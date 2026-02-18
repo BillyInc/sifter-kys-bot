@@ -1,6 +1,6 @@
 """
 wallet_monitor.py - Real-time Wallet Activity Monitor
-Continuously polls Birdeye API for transactions from watched wallets
+Continuously polls Solana Tracker API for transactions from watched wallets
 Creates notifications when activity matches user alert settings
 Supports Telegram alerts integration
 
@@ -23,16 +23,16 @@ if TYPE_CHECKING:
 class WalletActivityMonitor:
     """
     Monitors wallets in real-time and creates notifications.
-    Runs as a background service polling Birdeye API.
+    Runs as a background service polling Solana Tracker API.
     Uses Supabase for data persistence.
     """
 
-    def __init__(self, birdeye_api_key, poll_interval=120,
+    def __init__(self, solanatracker_api_key, poll_interval=120,
                  telegram_notifier: Optional['TelegramNotifier'] = None,
                  db_path: str = None):  # db_path kept for backward compatibility
-        self.birdeye_key = birdeye_api_key
+        self.solanatracker_key = solanatracker_api_key
         self.poll_interval = poll_interval  # seconds (default: 2 minutes)
-        self.birdeye_txs_url = "https://public-api.birdeye.so/defi/v3/token/txs"
+        self.solanatracker_trades_url = "https://data.solanatracker.io/wallet"
         self.running = False
         self.monitor_thread = None
 
@@ -54,7 +54,7 @@ class WalletActivityMonitor:
 ╚══════════════════════════════════════════════════════════════════╝
   📊 Database: Supabase ({self.schema})
   🔄 Poll Interval: {poll_interval}s ({poll_interval/60:.1f} minutes)
-  🔑 Birdeye API: Configured
+  🔑 Solana Tracker API: Configured
   📱 Telegram Alerts: {telegram_status}
 """)
 
@@ -295,12 +295,13 @@ class WalletActivityMonitor:
                 self._create_signal_alert(signal)
 
     def _fetch_wallet_all_trades(self, wallet_address, after_time, before_time):
-        """Fetch ALL trades (buys AND sells) for a wallet"""
-        # Use Solana Tracker trades endpoint
-        url = f"https://data.solanatracker.io/wallet/{wallet_address}/trades"
+        """
+        ✅ UPDATED: Fetch ALL trades (buys AND sells) for a wallet using Solana Tracker API
+        """
+        url = f"{self.solanatracker_trades_url}/{wallet_address}/trades"
         headers = {
             'accept': 'application/json',
-            'x-api-key': self.birdeye_key  # Or solanatracker_key
+            'x-api-key': self.solanatracker_key
         }
         params = {
             'since_time': after_time * 1000,  # Convert to ms
@@ -311,9 +312,30 @@ class WalletActivityMonitor:
             response = requests.get(url, headers=headers, params=params, timeout=15)
             if response.status_code == 200:
                 data = response.json()
-                return data.get('trades', [])
+                raw_trades = data.get('trades', [])
+                
+                # ✅ Normalize Solana Tracker response format
+                normalized_trades = []
+                for trade in raw_trades:
+                    normalized_trades.append({
+                        'token_address': trade.get('token_address') or trade.get('tokenAddress'),
+                        'token_ticker': trade.get('symbol') or trade.get('tokenSymbol'),
+                        'token_name': trade.get('token_name') or trade.get('tokenName'),
+                        'side': trade.get('type', '').lower(),  # 'buy' or 'sell'
+                        'token_amount': float(trade.get('token_amount', 0) or trade.get('tokenAmount', 0)),
+                        'usd_value': float(trade.get('sol_amount', 0) or trade.get('solAmount', 0)) * 150,  # Approximate USD
+                        'price': float(trade.get('price', 0)),
+                        'tx_hash': trade.get('signature') or trade.get('tx_hash'),
+                        'block_time': int(trade.get('timestamp', 0) / 1000) if trade.get('timestamp') else int(time.time()),
+                        'dex': trade.get('dex', 'unknown')
+                    })
+                
+                return normalized_trades
+            else:
+                print(f"    ⚠️ Solana Tracker API returned status {response.status_code}")
+                
         except Exception as e:
-            print(f"Error fetching trades: {e}")
+            print(f"    ❌ Error fetching trades from Solana Tracker: {e}")
 
         return []
 
@@ -795,10 +817,10 @@ def update_alert_settings(user_id, wallet_address, settings, db_path=None) -> bo
 if __name__ == '__main__':
     import os
 
-    BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', '')
+    SOLANATRACKER_API_KEY = os.environ.get('SOLANATRACKER_API_KEY', '')
 
     monitor = WalletActivityMonitor(
-        birdeye_api_key=BIRDEYE_API_KEY,
+        solanatracker_api_key=SOLANATRACKER_API_KEY,
         poll_interval=120  # 2 minutes
     )
 

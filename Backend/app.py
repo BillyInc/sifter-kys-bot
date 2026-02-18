@@ -16,9 +16,11 @@ from apscheduler.triggers.cron import CronTrigger
 from routes import whop_bp
 from routes import referral_points_bp
 from routes import auth_bp
+from routes import tokens_bp
 
 
 telegram_polling_started = False
+
 
 def get_rate_limit_key():
     """Get rate limit key - prefer user ID from auth, fallback to IP."""
@@ -27,11 +29,11 @@ def get_rate_limit_key():
         return f"user:{user_id}"
     return get_remote_address()
 
+
 def init_scheduler(app):
     """Initialize background scheduler for cron jobs"""
     scheduler = BackgroundScheduler()
-    
-    # Daily stats refresh at 3am UTC
+
     scheduler.add_job(
         func=lambda: run_cron_job(app, 'daily'),
         trigger=CronTrigger(hour=3, minute=0),
@@ -39,8 +41,7 @@ def init_scheduler(app):
         name='Daily stats refresh',
         replace_existing=True
     )
-    
-    # Weekly rerank on Sunday at 4am UTC
+
     scheduler.add_job(
         func=lambda: run_cron_job(app, 'weekly'),
         trigger=CronTrigger(day_of_week='sun', hour=4, minute=0),
@@ -48,8 +49,7 @@ def init_scheduler(app):
         name='Weekly rerank',
         replace_existing=True
     )
-    
-    # 4-week check every 28 days at 5am UTC
+
     scheduler.add_job(
         func=lambda: run_cron_job(app, 'four_week'),
         trigger=CronTrigger(day='*/28', hour=5, minute=0),
@@ -57,21 +57,22 @@ def init_scheduler(app):
         name='4-week degradation check',
         replace_existing=True
     )
-    
+
     scheduler.start()
     print("[SCHEDULER] ✅ Background jobs scheduled")
     print("  - Daily refresh: 3am UTC")
     print("  - Weekly rerank: Sunday 4am UTC")
     print("  - 4-week check: Every 28 days at 5am UTC")
-    
+
     return scheduler
+
 
 def run_cron_job(app, job_type):
     """Run cron job with app context"""
     with app.app_context():
         from services.watchlist_stats_updater import get_updater
         updater = get_updater()
-        
+
         if job_type == 'daily':
             updater.daily_stats_refresh()
         elif job_type == 'weekly':
@@ -79,10 +80,11 @@ def run_cron_job(app, job_type):
         elif job_type == 'four_week':
             updater.four_week_degradation_check()
 
+
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
-    
+
     CORS(app, resources={
         r"/*": {
             "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com"],
@@ -93,7 +95,6 @@ def create_app() -> Flask:
         }
     })
 
-    # Initialize rate limiter
     limiter = Limiter(
         key_func=get_rate_limit_key,
         app=app,
@@ -102,13 +103,12 @@ def create_app() -> Flask:
         strategy=Config.RATELIMIT_STRATEGY,
         enabled=False
     )
-    
-    # Initialize Telegram
+
     from services.telegram_notifier import TelegramNotifier
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk")
     telegram_notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
     app.config['TELEGRAM_NOTIFIER'] = telegram_notifier
-    
+
     if telegram_notifier:
         print("\n[TELEGRAM] ✅ Notifier initialized")
     else:
@@ -125,80 +125,73 @@ def create_app() -> Flask:
     app.register_blueprint(whop_bp)
     app.register_blueprint(referral_points_bp)
     app.register_blueprint(auth_bp)
-    
-    # Initialize Redis and RQ
+    app.register_blueprint(tokens_bp)
+
     redis_conn = Redis(host='localhost', port=6379, db=0)
     app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
 
-    # Initialize scheduler
     app.config['SCHEDULER'] = init_scheduler(app)
 
-    # Apply rate limits and error handlers
     _apply_rate_limits(limiter)
     _register_error_handlers(app)
 
-    # --- THE PRODUCTION FIX ---
-    # Start background services in a separate thread
     def run_startup_tasks(app_instance):
-        """Internal helper to run startup tasks with app context."""
         with app_instance.app_context():
             print("\n[SYSTEM] 🚀 Bootstrapping background services...")
             preload_trending_cache()
             start_wallet_monitoring()
 
-    # Guard: Don't start the thread twice during local 'debug' reload
     if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
         startup_thread = threading.Thread(target=run_startup_tasks, args=(app,), daemon=True)
         startup_thread.start()
 
     return app
 
-# --- SUPPORTING FUNCTIONS ---
 
 def preload_trending_cache():
-    """Preload trending runners cache"""
+    """
+    Queue lightweight runner list warmup jobs only.
+    Does NOT run full 6-step analysis on startup.
+    Full analysis only runs when user clicks Analyze.
+    Saves ~300 credits per boot on free tier.
+    """
     try:
-        print("[CACHE WARMUP] Preloading trending runners...")
-        from services import preload_trending_cache_parallel
-        preload_trending_cache_parallel()
-        print("  ✅ Cache warmup jobs queued")
+        print("[CACHE WARMUP] Queuing runner list warmup (7d + 14d)...")
+        from worker_tasks import preload_trending_cache as _warmup
+        _warmup()
+        print("  ✅ Warmup jobs queued")
     except Exception as e:
         print(f"  ⚠️ Cache warmup failed: {e}")
 
+
 def start_wallet_monitoring():
-    """Start background wallet monitoring"""
+    """
+    Start background wallet monitoring.
+    WalletActivityMonitor takes solanatracker_api_key (NOT birdeye_api_key).
+    """
     try:
         print("\n[WALLET MONITORING] Starting real-time monitoring...")
-        
-        # Import inside function to avoid circular imports
         from services.wallet_monitor import WalletActivityMonitor
         from config import Config
-        
-        # Get Telegram notifier from app config
         from flask import current_app
         telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
-        
-        # Create monitor instance
+
+        # ✅ CORRECT: pass solanatracker_api_key, not birdeye_api_key
         monitor = WalletActivityMonitor(
-            birdeye_api_key=Config.BIRDEYE_API_KEY,
-            poll_interval=120,  # 2 minutes
+            solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
+            poll_interval=120,
             telegram_notifier=telegram_notifier
         )
-        
-        # Store in app config so we can access it later
         current_app.config['WALLET_MONITOR'] = monitor
-        
-        # Start monitoring in background thread
         monitor.start()
-        
         print("  ✅ Wallet monitoring started (polling every 2 minutes)\n")
     except Exception as e:
         print(f"  ⚠️ Monitoring start failed: {e}\n")
         import traceback
         traceback.print_exc()
 
+
 def _apply_rate_limits(limiter: Limiter):
-    """Apply rate limits to endpoints."""
     limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(analyze_bp)
     limiter.limit(Config.ANALYZE_RATE_LIMIT_DAY)(analyze_bp)
     limiter.limit(Config.WATCHLIST_WRITE_LIMIT)(watchlist_bp)
@@ -206,8 +199,8 @@ def _apply_rate_limits(limiter: Limiter):
     limiter.exempt(health_bp)
     limiter.exempt(telegram_bp)
 
+
 def _register_error_handlers(app: Flask):
-    """Register error handlers."""
     @app.errorhandler(429)
     def ratelimit_handler(e):
         return jsonify({'error': 'Rate limit exceeded', 'message': str(e.description)}), 429
@@ -216,15 +209,15 @@ def _register_error_handlers(app: Flask):
     def internal_error(e):
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
+
 def print_startup_banner():
-    """Print startup banner."""
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
 ║   SIFTER KYS API SERVER v7.0 - AUTH + WALLET + TELEGRAM          ║
 ╚══════════════════════════════════════════════════════════════════╝
     """)
 
-# Create the global app instance
+
 app = create_app()
 
 if __name__ == '__main__':
