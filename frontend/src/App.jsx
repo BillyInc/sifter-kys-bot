@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, Award } from 'lucide-react';
 
-// NEW IMPORTS - Panel System
 import DashboardHome from './components/dashboard/DashboardHome';
 import SlideOutPanel from './components/panels/SlideOutPanel';
 import AnalyzePanel from './components/panels/AnalyzePanel';
@@ -15,7 +14,6 @@ import QuickAddWalletPanel from './components/panels/QuickAddWalletPanel';
 import ProfilePanel from './components/panels/ProfilePanel';
 import HelpSupportPanel from './components/panels/HelpSupportPanel';
 
-// Keep existing imports
 import WalletActivityMonitor from './WalletActivityMonitor';
 import WalletAlertSettings from './WalletAlertSettings';
 import WalletReplacementModal from './WalletReplacementModal';
@@ -24,11 +22,9 @@ import Auth from './components/Auth';
 export default function SifterKYS() {
   const { user, loading: authLoading, isAuthenticated, signOut, getAccessToken, signIn, signUp, resetPassword, updatePassword } = useAuth();
 
-  // ========== PANEL STATE (REPLACES activeTab) ==========
   const [openPanel, setOpenPanel] = useState(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
-  // ========== EXISTING STATE - KEEP ALL ==========
   const [mode, setMode] = useState('wallet');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -37,7 +33,6 @@ export default function SifterKYS() {
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef(null);
 
-  // Analysis state
   const [analysisType, setAnalysisType] = useState('general');
   const [useGlobalSettings, setUseGlobalSettings] = useState(true);
   const [tokenSettings, setTokenSettings] = useState({});
@@ -46,24 +41,20 @@ export default function SifterKYS() {
   const [tMinusWindow, setTMinusWindow] = useState(4);
   const [tPlusWindow, setTPlusWindow] = useState(2);
 
-  // Results state
   const [walletResults, setWalletResults] = useState(null);
   const [batchResults, setBatchResults] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState('');
 
-  // Watchlist state
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
   const [replacementModalWallet, setReplacementModalWallet] = useState(null);
   const [replacementData, setReplacementData] = useState(null);
   
-  // ========== POINTS STATE ==========
   const [userPoints, setUserPoints] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const userId = user?.id;
 
-  // ========== PANEL HANDLERS ==========
   const handleOpenPanel = (panelId) => {
     setOpenPanel(panelId);
     setShowProfileDropdown(false);
@@ -88,7 +79,6 @@ export default function SifterKYS() {
     return configs[panelId] || configs.analyze;
   };
 
-  // ========== UTILITY FUNCTIONS ==========
   const formatNumber = (num) => {
     if (!num) return '0';
     if (num >= 1000000000) return `$${(num / 1000000000).toFixed(2)}B`;
@@ -105,7 +95,6 @@ export default function SifterKYS() {
     return `$${price.toFixed(2)}`;
   };
 
-  // ========== POINTS AWARD FUNCTION ==========
   const awardPoints = async (actionType, metadata = {}) => {
     try {
       const token = getAccessToken();
@@ -120,15 +109,12 @@ export default function SifterKYS() {
           metadata
         })
       });
-      
-      // Refresh points after awarding
       loadUserPoints();
     } catch (error) {
       console.error('Points award error:', error);
     }
   };
 
-  // ========== LOAD USER POINTS ==========
   const loadUserPoints = async () => {
     if (!userId) return;
     
@@ -147,16 +133,13 @@ export default function SifterKYS() {
     }
   };
 
-  // ========== LOAD POINTS ON AUTH ==========
   useEffect(() => {
     if (isAuthenticated && userId) {
       loadUserPoints();
-      // Award daily login points
       awardPoints('daily_login');
     }
   }, [isAuthenticated, userId]);
 
-  // ========== TOKEN SEARCH ==========
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (searchRef.current && !searchRef.current.contains(event.target)) {
@@ -248,8 +231,8 @@ export default function SifterKYS() {
     });
   };
 
-  // ========== ANALYSIS FUNCTIONS WITH POINTS ==========
-  const handleAnalysisStreaming = async () => {
+  // ========== ANALYSIS FUNCTION - RQ POLLING ==========
+  const handleAnalysisPolling = async () => {
     if (selectedTokens.length === 0) {
       alert('Please select at least one token');
       return;
@@ -257,11 +240,12 @@ export default function SifterKYS() {
 
     setIsAnalyzing(true);
     setWalletResults(null);
-    setStreamingMessage('Initializing analysis...');
+    setStreamingMessage(`Analyzing 0 of ${selectedTokens.length} token${selectedTokens.length !== 1 ? 's' : ''}...`);
 
     try {
       const token = getAccessToken();
-      const response = await fetch(`${API_URL}/api/wallets/analyze/stream`, {
+
+      const submitRes = await fetch(`${API_URL}/api/wallets/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -274,61 +258,67 @@ export default function SifterKYS() {
             chain: t.chain,
             ticker: t.ticker,
           })),
-          use_global_settings: useGlobalSettings,
           global_settings: useGlobalSettings
             ? { days_back: daysBack, candle_size: candleSize, t_minus_window: tMinusWindow, t_plus_window: tPlusWindow }
             : null,
-          token_settings: !useGlobalSettings ? tokenSettings : null,
           analysis_type: analysisType,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Analysis failed');
-      }
+      const submitData = await submitRes.json();
+      if (!submitData.success) throw new Error(submitData.error || 'Failed to queue job');
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const jobId = submitData.job_id;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const pollInterval = setInterval(async () => {
+        try {
+          const progressRes = await fetch(`${API_URL}/api/wallets/jobs/${jobId}/progress`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const progressData = await progressRes.json();
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+          if (!progressData.success) return;
 
-        for (const line of lines) {
-          if (line.trim().startsWith('data: ')) {
-            try {
-              const jsonData = JSON.parse(line.substring(6));
+          const { status, progress, phase, tokens_completed, tokens_total } = progressData;
 
-              if (jsonData.type === 'progress') {
-                setStreamingMessage(jsonData.message);
-              } else if (jsonData.type === 'complete') {
-                setWalletResults(jsonData.data);
-                setStreamingMessage('Analysis complete!');
-                
-                // ========== AWARD POINTS FOR ANALYSIS ==========
-                await awardPoints('run_analysis', { 
-                  token_count: selectedTokens.length 
-                });
-              } else if (jsonData.type === 'error') {
-                throw new Error(jsonData.message);
-              }
-            } catch (parseError) {
-              console.error('Parse error:', parseError);
-            }
+          const total = tokens_total || selectedTokens.length;
+          const completed = tokens_completed ?? Math.round((progress / 100) * total);
+
+          setStreamingMessage(
+            `Analyzing ${completed} of ${total} token${total !== 1 ? 's' : ''}...`
+          );
+
+          if (status === 'completed') {
+            clearInterval(pollInterval);
+
+            const resultRes = await fetch(`${API_URL}/api/wallets/jobs/${jobId}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const resultData = await resultRes.json();
+
+            setWalletResults(resultData);
+            setStreamingMessage('Analysis complete!');
+            setIsAnalyzing(false);
+
+            await awardPoints('run_analysis', { token_count: selectedTokens.length });
+
+          } else if (status === 'failed') {
+            clearInterval(pollInterval);
+            throw new Error('Analysis job failed');
           }
+        } catch (pollError) {
+          clearInterval(pollInterval);
+          console.error('Polling error:', pollError);
+          alert(`Analysis failed: ${pollError.message}`);
+          setIsAnalyzing(false);
         }
-      }
+      }, 3000);
+
     } catch (error) {
       console.error('Analysis error:', error);
       alert(`Analysis failed: ${error.message}`);
+      setIsAnalyzing(false);
     }
-
-    setIsAnalyzing(false);
   };
 
   // ========== WATCHLIST FUNCTIONS ==========
@@ -353,7 +343,6 @@ export default function SifterKYS() {
 
       if (data.success) {
         alert('✅ Wallet added to watchlist!');
-        // Award points for adding to watchlist
         await awardPoints('add_watchlist');
       } else {
         alert(`Failed: ${data.error}`);
@@ -364,7 +353,6 @@ export default function SifterKYS() {
     }
   };
 
-  // ========== AUTH CHECK ==========
   if (authLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -398,14 +386,12 @@ export default function SifterKYS() {
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
 
-              {/* ========== POINTS BADGE ========== */}
               <div className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 rounded-lg cursor-pointer hover:bg-purple-500/30 transition"
                    onClick={() => handleOpenPanel('profile')}>
                 <Award className="text-yellow-400" size={16} />
                 <span className="text-sm font-bold">{userPoints.toLocaleString()}</span>
               </div>
 
-              {/* PROFILE DROPDOWN */}
               <div className="relative">
                 <button
                   onClick={() => setShowProfileDropdown(!showProfileDropdown)}
@@ -462,7 +448,6 @@ export default function SifterKYS() {
                 )}
               </div>
 
-              {/* UPGRADE BUTTON - FIXED SYNTAX */}
               <a
                 href="https://whop.com/sifter"
                 target="_blank"
@@ -476,7 +461,6 @@ export default function SifterKYS() {
         </div>
       </nav>
 
-      {/* ========== MAIN CONTENT - DASHBOARD HOME ========== */}
       <div className="pt-20 max-w-7xl mx-auto px-6 py-6">
         <DashboardHome
           user={user}
@@ -487,7 +471,6 @@ export default function SifterKYS() {
         />
       </div>
 
-      {/* ========== SLIDE-OUT PANEL SYSTEM ========== */}
       <SlideOutPanel
         isOpen={openPanel !== null}
         onClose={handleClosePanel}
@@ -520,7 +503,7 @@ export default function SifterKYS() {
             setTMinusWindow={setTMinusWindow}
             tPlusWindow={tPlusWindow}
             setTPlusWindow={setTPlusWindow}
-            handleAnalysisStreaming={handleAnalysisStreaming}
+            handleAnalysisStreaming={handleAnalysisPolling}
             isAnalyzing={isAnalyzing}
             onClose={handleClosePanel}
             setSelectedTokens={setSelectedTokens}
@@ -599,14 +582,12 @@ export default function SifterKYS() {
         {openPanel === 'help' && <HelpSupportPanel userId={userId} apiUrl={API_URL} />}
       </SlideOutPanel>
 
-      {/* ========== FOOTER ========== */}
       <footer className="fixed bottom-0 w-full bg-black/80 border-t border-white/10 py-2 z-30">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-500">
           © 2026 Sifter.io • support@sifter.io • @SifterIO • Terms • Privacy
         </div>
       </footer>
 
-      {/* ========== MODALS ========== */}
       {alertSettingsWallet && (
         <WalletAlertSettings
           walletAddress={alertSettingsWallet}
@@ -653,7 +634,6 @@ export default function SifterKYS() {
         />
       )}
 
-      {/* Streaming Progress Overlay */}
       {isAnalyzing && streamingMessage && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center">
           <div className="bg-gradient-to-br from-gray-900 to-black border border-white/10 rounded-xl p-6 max-w-md mx-4">

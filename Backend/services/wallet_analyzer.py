@@ -11,47 +11,161 @@ import time
 import asyncio
 import aiohttp
 from asyncio import Semaphore as AsyncSemaphore
+import json
+import redis as redis_lib
 
 # ============================================================
 # CACHE TTL CONSTANTS - Tuned for SolanaTracker free tier
 # ============================================================
-CACHE_TTL_PNL         = 21600   # 6 hours  (was 30 min)
-CACHE_TTL_RUNNERS     = 43200   # 12 hours (was 1 hour)
-CACHE_TTL_TOKEN_INFO  = 86400   # 24 hours (was 24h - unchanged)
-CACHE_TTL_LAUNCH      = 86400   # 24 hours (unchanged)
-CACHE_TTL_TRENDING    = 600     # 10 min   (was 5 min - slightly longer)
+CACHE_TTL_PNL         = 21600   # 6 hours
+CACHE_TTL_RUNNERS     = 43200   # 12 hours
+CACHE_TTL_TOKEN_INFO  = 86400   # 24 hours
+CACHE_TTL_LAUNCH      = 86400   # 24 hours
+CACHE_TTL_TRENDING    = 600     # 10 min
+
+# Redis TTLs (slightly longer than DuckDB TTLs to allow graceful fallback)
+REDIS_TTL_PNL         = CACHE_TTL_PNL + 3600
+REDIS_TTL_RUNNERS     = CACHE_TTL_RUNNERS + 3600
+REDIS_TTL_TOKEN_INFO  = CACHE_TTL_TOKEN_INFO + 3600
+REDIS_TTL_LAUNCH      = CACHE_TTL_LAUNCH + 3600
 
 
 class WalletPumpAnalyzer:
     """
-    FIXED WALLET ANALYZER - Uses Absolute Scoring
+    HYBRID CACHE WALLET ANALYZER
+    Redis = Hot cache (fast reads, all workers write)
+    DuckDB = Cold storage (persistent, flushed from Redis every hour via Celery)
     Cache maximized for SolanaTracker free tier (10k credits/month)
     """
-    def __init__(self, solanatracker_api_key, birdeye_api_key=None, debug_mode=True):
+    def __init__(self, solanatracker_api_key, birdeye_api_key=None, debug_mode=True, read_only=False):
         self.solanatracker_key = solanatracker_api_key
         self.birdeye_key = birdeye_api_key or "a49c49de31d34574967c13bd35f3c523"
         self.st_base_url = "https://data.solanatracker.io"
         self.birdeye_base_url = "https://public-api.birdeye.so"
         self.debug_mode = debug_mode
+        self.read_only = read_only  # Workers use read_only=True (no DuckDB writes)
         self.duckdb_path = 'wallet_analytics.duckdb'
-        self.con = duckdb.connect(self.duckdb_path)
+
+        # Open DuckDB in read-only mode for workers to avoid locking conflicts
+        if read_only:
+            self.con = duckdb.connect(self.duckdb_path, read_only=True)
+            self._log("DuckDB opened in READ-ONLY mode (worker)")
+        else:
+            self.con = duckdb.connect(self.duckdb_path)
+            self._log("DuckDB opened in READ-WRITE mode (Flask)")
+
+        # Redis connection (shared hot cache for all workers + Flask)
+        self._redis = self._init_redis()
 
         # Concurrency - tuned for free tier (1-2 req/sec limit)
         self.max_workers = 8
         self.birdeye_semaphore = Semaphore(2)
-        self.solana_tracker_semaphore = Semaphore(1)  # FREE TIER: 1 concurrent
-        self.pnl_semaphore = Semaphore(1)             # FREE TIER: 1 concurrent
+        self.solana_tracker_semaphore = Semaphore(1)
+        self.pnl_semaphore = Semaphore(1)
         self.birdeye_async_semaphore = AsyncSemaphore(2)
-        self.solana_tracker_async_semaphore = AsyncSemaphore(1)  # FREE TIER
-        self.pnl_async_semaphore = AsyncSemaphore(1)             # FREE TIER
+        self.solana_tracker_async_semaphore = AsyncSemaphore(1)
+        self.pnl_async_semaphore = AsyncSemaphore(1)
         self.executor = None
 
         # In-memory trending cache
         self._trending_cache = {}
         self._cache_expiry = {}
 
-        self._init_db()
-        self._log("DuckDB cache initialized (maximized TTLs for free tier)")
+        if not read_only:
+            self._init_db()
+        self._log(f"Initialized (read_only={read_only}) | Redis: {'✅' if self._redis else '❌ fallback to DuckDB'}")
+
+    # =========================================================================
+    # REDIS INIT + HELPERS
+    # =========================================================================
+
+    def _init_redis(self):
+        """Initialize Redis connection from REDIS_URL env var"""
+        import os
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        try:
+            r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=3)
+            r.ping()
+            self._log(f"Redis connected ✅")
+            return r
+        except Exception as e:
+            self._log(f"Redis connection failed: {e} — falling back to DuckDB only")
+            return None
+
+    def _redis_get(self, key):
+        """Get JSON value from Redis. Returns None on miss or error."""
+        if not self._redis:
+            return None
+        try:
+            raw = self._redis.get(key)
+            return json.loads(raw) if raw else None
+        except Exception as e:
+            self._log(f"Redis GET error ({key}): {e}")
+            return None
+
+    def _redis_set(self, key, value, ttl):
+        """Set JSON value in Redis with TTL. Silently fails if Redis is down."""
+        if not self._redis:
+            return
+        try:
+            self._redis.setex(key, ttl, json.dumps(value))
+        except Exception as e:
+            self._log(f"Redis SET error ({key}): {e}")
+
+    def _redis_delete(self, key):
+        """Delete a key from Redis."""
+        if not self._redis:
+            return
+        try:
+            self._redis.delete(key)
+        except Exception as e:
+            self._log(f"Redis DEL error ({key}): {e}")
+
+    # =========================================================================
+    # HYBRID CACHE CORE - Check Redis → DuckDB → API
+    # =========================================================================
+
+    def _get_from_cache(self, redis_key, duckdb_query, duckdb_params):
+        """
+        Universal cache read: Redis first, then DuckDB fallback.
+        Returns (data, source) where source is 'redis', 'duckdb', or None.
+        """
+        # 1. Try Redis hot cache
+        data = self._redis_get(redis_key)
+        if data is not None:
+            return data, 'redis'
+
+        # 2. Fallback to DuckDB cold storage
+        try:
+            result = self.con.execute(duckdb_query, duckdb_params).fetchone()
+            if result:
+                return result, 'duckdb'
+        except Exception as e:
+            self._log(f"DuckDB read error: {e}")
+
+        return None, None
+
+    def _save_to_cache(self, redis_key, redis_value, redis_ttl,
+                       duckdb_query=None, duckdb_params=None):
+        """
+        Universal cache write:
+        - Always writes to Redis (fast, all workers can access)
+        - Only writes to DuckDB if not read_only (Flask process)
+        Workers only write to Redis; Flask flushes Redis → DuckDB every hour.
+        """
+        # Always write to Redis
+        self._redis_set(redis_key, redis_value, redis_ttl)
+
+        # Only write to DuckDB from Flask (read_only=False)
+        if not self.read_only and duckdb_query and duckdb_params:
+            try:
+                self.con.execute(duckdb_query, duckdb_params)
+            except Exception as e:
+                self._log(f"DuckDB write error: {e}")
+
+    # =========================================================================
+    # DB INIT
+    # =========================================================================
 
     def _init_db(self):
         """Initialize all DuckDB tables"""
@@ -202,25 +316,42 @@ class WalletPumpAnalyzer:
         return None
 
     # =========================================================================
-    # CACHE METHODS - All TTLs maximized for free tier
+    # CACHE METHODS - All use Redis → DuckDB hybrid
     # =========================================================================
 
     def _get_cached_pnl_and_entry(self, wallet, token):
         now = time.time()
-        result = self.con.execute("""
-            SELECT realized, unrealized, total_invested, entry_price, first_buy_time
-            FROM wallet_token_cache
-            WHERE wallet = ? AND token = ? AND last_updated > ?
-        """, [wallet, token, now - CACHE_TTL_PNL]).fetchone()  # 6 hours
+        redis_key = f"pnl:{wallet}:{token}"
 
-        if result:
-            self._log(f"Cache hit (6h) for {wallet[:8]}... / {token[:8]}...")
-            return {
-                'realized': result[0], 'unrealized': result[1], 'total_invested': result[2],
-                'entry_price': result[3], 'first_buy_time': result[4]
-            }
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            self._log(f"Redis hit (PnL) for {wallet[:8]}... / {token[:8]}...")
+            return cached
 
-        self._log(f"Cache miss for {wallet[:8]}... / {token[:8]}... Fetching...")
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT realized, unrealized, total_invested, entry_price, first_buy_time
+                FROM wallet_token_cache
+                WHERE wallet = ? AND token = ? AND last_updated > ?
+            """, [wallet, token, now - CACHE_TTL_PNL]).fetchone()
+
+            if result:
+                self._log(f"DuckDB hit (PnL) for {wallet[:8]}... / {token[:8]}...")
+                data = {
+                    'realized': result[0], 'unrealized': result[1],
+                    'total_invested': result[2], 'entry_price': result[3],
+                    'first_buy_time': result[4]
+                }
+                # Backfill Redis from DuckDB
+                self._redis_set(redis_key, data, REDIS_TTL_PNL)
+                return data
+        except Exception as e:
+            self._log(f"DuckDB PnL read error: {e}")
+
+        # 3. Fetch from API
+        self._log(f"Cache miss (PnL) for {wallet[:8]}... / {token[:8]}... Fetching...")
         pnl = self.get_wallet_pnl_solanatracker(wallet, token)
         first_buy = self.get_first_buy_for_wallet(wallet, token)
 
@@ -232,17 +363,20 @@ class WalletPumpAnalyzer:
                 'entry_price': first_buy.get('price'),
                 'first_buy_time': first_buy.get('time')
             }
-            self.con.execute("""
-                INSERT OR REPLACE INTO wallet_token_cache
-                (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, [wallet, token, data['realized'], data['unrealized'],
-                  data['total_invested'], data['entry_price'],
-                  data['first_buy_time'], now])
-            self._log("Cached new PnL data (6h TTL)")
+            self._save_to_cache(
+                redis_key, data, REDIS_TTL_PNL,
+                duckdb_query="""
+                    INSERT OR REPLACE INTO wallet_token_cache
+                    (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                duckdb_params=[wallet, token, data['realized'], data['unrealized'],
+                               data['total_invested'], data['entry_price'],
+                               data['first_buy_time'], now]
+            )
+            self._log("Cached new PnL data")
             return data
 
-        # Cache negative result too - avoid re-fetching missing data
         if pnl and not first_buy:
             data = {
                 'realized': pnl.get('realized', 0),
@@ -251,12 +385,16 @@ class WalletPumpAnalyzer:
                 'entry_price': None,
                 'first_buy_time': None
             }
-            self.con.execute("""
-                INSERT OR REPLACE INTO wallet_token_cache
-                (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, [wallet, token, data['realized'], data['unrealized'],
-                  data['total_invested'], None, None, now])
+            self._save_to_cache(
+                redis_key, data, REDIS_TTL_PNL,
+                duckdb_query="""
+                    INSERT OR REPLACE INTO wallet_token_cache
+                    (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                duckdb_params=[wallet, token, data['realized'], data['unrealized'],
+                               data['total_invested'], None, None, now]
+            )
             return data
 
         self._log("Fetch failed - no data")
@@ -264,60 +402,106 @@ class WalletPumpAnalyzer:
 
     def _get_cached_other_runners(self, wallet, current_token=None, min_multiplier=5.0):
         now = time.time()
-        result = self.con.execute("""
-            SELECT other_runners, stats
-            FROM wallet_runner_cache
-            WHERE wallet = ? AND last_updated > ?
-        """, [wallet, now - CACHE_TTL_RUNNERS]).fetchone()  # 12 hours
+        redis_key = f"runners:{wallet}"
 
-        if result:
-            import json
-            self._log(f"Runner cache hit (12h) for {wallet[:8]}...")
-            return {'other_runners': json.loads(result[0]), 'stats': json.loads(result[1])}
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            self._log(f"Redis hit (runners) for {wallet[:8]}...")
+            return cached
 
-        self._log(f"Runner cache miss for {wallet[:8]}... Computing...")
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT other_runners, stats
+                FROM wallet_runner_cache
+                WHERE wallet = ? AND last_updated > ?
+            """, [wallet, now - CACHE_TTL_RUNNERS]).fetchone()
+
+            if result:
+                self._log(f"DuckDB hit (runners) for {wallet[:8]}...")
+                data = {
+                    'other_runners': json.loads(result[0]),
+                    'stats': json.loads(result[1])
+                }
+                self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
+                return data
+        except Exception as e:
+            self._log(f"DuckDB runners read error: {e}")
+
+        # 3. Fetch from API
+        self._log(f"Cache miss (runners) for {wallet[:8]}... Computing...")
         runners = self.get_wallet_other_runners(wallet, current_token, min_multiplier)
         if runners:
-            import json
-            self.con.execute("""
-                INSERT OR REPLACE INTO wallet_runner_cache
-                (wallet, other_runners, stats, last_updated)
-                VALUES (?, ?, ?, ?)
-            """, [wallet, json.dumps(runners['other_runners']), json.dumps(runners['stats']), now])
-            self._log("Cached runner history (12h TTL)")
+            self._save_to_cache(
+                redis_key, runners, REDIS_TTL_RUNNERS,
+                duckdb_query="""
+                    INSERT OR REPLACE INTO wallet_runner_cache
+                    (wallet, other_runners, stats, last_updated)
+                    VALUES (?, ?, ?, ?)
+                """,
+                duckdb_params=[wallet, json.dumps(runners['other_runners']),
+                               json.dumps(runners['stats']), now]
+            )
+            self._log("Cached runner history")
             return runners
         return {'other_runners': [], 'stats': {}}
 
     def _get_cached_check_if_runner(self, token, min_multiplier=5.0):
         now = time.time()
-        result = self.con.execute(
-            "SELECT runner_info FROM token_runner_cache WHERE token = ? AND last_updated > ?",
-            [token, now - CACHE_TTL_RUNNERS]  # 12 hours
-        ).fetchone()
-        if result:
-            import json
-            return json.loads(result[0])
+        redis_key = f"token_runner:{token}"
 
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            return cached
+
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute(
+                "SELECT runner_info FROM token_runner_cache WHERE token = ? AND last_updated > ?",
+                [token, now - CACHE_TTL_RUNNERS]
+            ).fetchone()
+            if result:
+                data = json.loads(result[0])
+                self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
+                return data
+        except Exception as e:
+            self._log(f"DuckDB token_runner read error: {e}")
+
+        # 3. Fetch
         runner_info = self._check_if_runner(token, min_multiplier)
         if runner_info:
-            import json
-            self.con.execute(
-                "INSERT OR REPLACE INTO token_runner_cache VALUES (?, ?, ?)",
-                [token, json.dumps(runner_info), now]
+            self._save_to_cache(
+                redis_key, runner_info, REDIS_TTL_RUNNERS,
+                duckdb_query="INSERT OR REPLACE INTO token_runner_cache VALUES (?, ?, ?)",
+                duckdb_params=[token, json.dumps(runner_info), now]
             )
             return runner_info
         return None
 
     def _get_token_launch_price(self, token_address):
         now = time.time()
-        result = self.con.execute("""
-            SELECT launch_price FROM token_launch_cache
-            WHERE token = ? AND last_updated > ?
-        """, [token_address, now - CACHE_TTL_LAUNCH]).fetchone()  # 24 hours
+        redis_key = f"launch_price:{token_address}"
 
-        if result:
-            return result[0]
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            return cached.get('price')
 
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT launch_price FROM token_launch_cache
+                WHERE token = ? AND last_updated > ?
+            """, [token_address, now - CACHE_TTL_LAUNCH]).fetchone()
+            if result:
+                self._redis_set(redis_key, {'price': result[0]}, REDIS_TTL_LAUNCH)
+                return result[0]
+        except Exception as e:
+            self._log(f"DuckDB launch_price read error: {e}")
+
+        # 3. Fetch
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(
@@ -333,11 +517,15 @@ class WalletPumpAnalyzer:
                     launch_price = primary_pool.get('price', {}).get('usd', 0)
 
                     if launch_price and launch_price > 0:
-                        self.con.execute("""
-                            INSERT OR REPLACE INTO token_launch_cache
-                            (token, launch_price, last_updated)
-                            VALUES (?, ?, ?)
-                        """, [token_address, launch_price, now])
+                        self._save_to_cache(
+                            redis_key, {'price': launch_price}, REDIS_TTL_LAUNCH,
+                            duckdb_query="""
+                                INSERT OR REPLACE INTO token_launch_cache
+                                (token, launch_price, last_updated)
+                                VALUES (?, ?, ?)
+                            """,
+                            duckdb_params=[token_address, launch_price, now]
+                        )
                         return launch_price
         except Exception as e:
             self._log(f"Error fetching launch price: {e}")
@@ -345,17 +533,31 @@ class WalletPumpAnalyzer:
         return None
 
     def get_token_ath(self, token_address):
-        """ATH with 24h cache to avoid burning credits"""
+        """ATH with 24h cache"""
         now = time.time()
-        result = self.con.execute("""
-            SELECT highest_price, timestamp FROM token_ath_cache
-            WHERE token = ? AND last_updated > ?
-        """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()  # 24 hours
+        redis_key = f"token_ath:{token_address}"
 
-        if result:
-            self._log(f"ATH cache hit (24h) for {token_address[:8]}...")
-            return {'highest_price': result[0], 'timestamp': result[1]}
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            self._log(f"Redis hit (ATH) for {token_address[:8]}...")
+            return cached
 
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT highest_price, timestamp FROM token_ath_cache
+                WHERE token = ? AND last_updated > ?
+            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+            if result:
+                self._log(f"DuckDB hit (ATH) for {token_address[:8]}...")
+                data = {'highest_price': result[0], 'timestamp': result[1]}
+                self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
+                return data
+        except Exception as e:
+            self._log(f"DuckDB ATH read error: {e}")
+
+        # 3. Fetch
         try:
             url = f"{self.st_base_url}/tokens/{token_address}/ath"
             data = self.fetch_with_retry(
@@ -364,39 +566,57 @@ class WalletPumpAnalyzer:
                 semaphore=self.solana_tracker_semaphore
             )
             if data:
-                self.con.execute("""
-                    INSERT OR REPLACE INTO token_ath_cache
-                    (token, highest_price, timestamp, last_updated)
-                    VALUES (?, ?, ?, ?)
-                """, [token_address,
-                      data.get('highest_price', 0),
-                      data.get('timestamp', 0),
-                      now])
+                self._save_to_cache(
+                    redis_key, data, REDIS_TTL_TOKEN_INFO,
+                    duckdb_query="""
+                        INSERT OR REPLACE INTO token_ath_cache
+                        (token, highest_price, timestamp, last_updated)
+                        VALUES (?, ?, ?, ?)
+                    """,
+                    duckdb_params=[token_address,
+                                   data.get('highest_price', 0),
+                                   data.get('timestamp', 0),
+                                   now]
+                )
                 return data
         except Exception as e:
-            self._log(f" ⚠️ Error fetching ATH: {str(e)}")
+            self._log(f"⚠️ Error fetching ATH: {str(e)}")
         return None
 
     def _get_token_detailed_info(self, token_address):
         """Token info with 24h cache"""
         now = time.time()
-        result = self.con.execute("""
-            SELECT symbol, name, liquidity, volume_24h, price, holders, age_days
-            FROM token_info_cache
-            WHERE token = ? AND last_updated > ?
-        """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()  # 24 hours
+        redis_key = f"token_info:{token_address}"
 
-        if result:
-            self._log(f"Token info cache hit (24h) for {token_address[:8]}...")
-            return {
-                'symbol': result[0], 'name': result[1],
-                'address': token_address,
-                'liquidity': result[2], 'volume_24h': result[3],
-                'price': result[4], 'holders': result[5],
-                'age_days': result[6],
-                'age': f"{result[6]:.1f}d" if result[6] > 0 else 'N/A'
-            }
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            self._log(f"Redis hit (token_info) for {token_address[:8]}...")
+            return cached
 
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT symbol, name, liquidity, volume_24h, price, holders, age_days
+                FROM token_info_cache
+                WHERE token = ? AND last_updated > ?
+            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+            if result:
+                self._log(f"DuckDB hit (token_info) for {token_address[:8]}...")
+                info = {
+                    'symbol': result[0], 'name': result[1],
+                    'address': token_address,
+                    'liquidity': result[2], 'volume_24h': result[3],
+                    'price': result[4], 'holders': result[5],
+                    'age_days': result[6],
+                    'age': f"{result[6]:.1f}d" if result[6] > 0 else 'N/A'
+                }
+                self._redis_set(redis_key, info, REDIS_TTL_TOKEN_INFO)
+                return info
+        except Exception as e:
+            self._log(f"DuckDB token_info read error: {e}")
+
+        # 3. Fetch
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(
@@ -429,33 +649,49 @@ class WalletPumpAnalyzer:
                 'age':        f"{token_age_days:.1f}d" if token_age_days > 0 else 'N/A'
             }
 
-            self.con.execute("""
-                INSERT OR REPLACE INTO token_info_cache
-                (token, symbol, name, liquidity, volume_24h, price, holders, age_days, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [token_address, info['symbol'], info['name'],
-                  info['liquidity'], info['volume_24h'], info['price'],
-                  info['holders'], info['age_days'], now])
-
+            self._save_to_cache(
+                redis_key, info, REDIS_TTL_TOKEN_INFO,
+                duckdb_query="""
+                    INSERT OR REPLACE INTO token_info_cache
+                    (token, symbol, name, liquidity, volume_24h, price, holders, age_days, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                duckdb_params=[token_address, info['symbol'], info['name'],
+                               info['liquidity'], info['volume_24h'], info['price'],
+                               info['holders'], info['age_days'], now]
+            )
             return info
 
         except Exception as e:
-            self._log(f" ⚠️ Token info error: {str(e)}")
+            self._log(f"⚠️ Token info error: {str(e)}")
             return None
 
     def _check_token_security(self, token_address):
         """Security check with 24h cache"""
         now = time.time()
-        result = self.con.execute("""
-            SELECT security_data FROM token_security_cache
-            WHERE token = ? AND last_updated > ?
-        """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()  # 24 hours
+        redis_key = f"token_security:{token_address}"
 
-        if result:
-            import json
-            self._log(f"Security cache hit (24h) for {token_address[:8]}...")
-            return json.loads(result[0])
+        # 1. Try Redis
+        cached = self._redis_get(redis_key)
+        if cached is not None:
+            self._log(f"Redis hit (security) for {token_address[:8]}...")
+            return cached
 
+        # 2. Try DuckDB
+        try:
+            result = self.con.execute("""
+                SELECT security_data FROM token_security_cache
+                WHERE token = ? AND last_updated > ?
+            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+            if result:
+                self._log(f"DuckDB hit (security) for {token_address[:8]}...")
+                data = json.loads(result[0])
+                self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
+                return data
+        except Exception as e:
+            self._log(f"DuckDB security read error: {e}")
+
+        # 3. Fetch
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(
@@ -508,13 +744,15 @@ class WalletPumpAnalyzer:
                 'passes_security': passes,
             }
 
-            import json
-            self.con.execute("""
-                INSERT OR REPLACE INTO token_security_cache
-                (token, security_data, last_updated)
-                VALUES (?, ?, ?)
-            """, [token_address, json.dumps(security_data), now])
-
+            self._save_to_cache(
+                redis_key, security_data, REDIS_TTL_TOKEN_INFO,
+                duckdb_query="""
+                    INSERT OR REPLACE INTO token_security_cache
+                    (token, security_data, last_updated)
+                    VALUES (?, ?, ?)
+                """,
+                duckdb_params=[token_address, json.dumps(security_data), now]
+            )
             return security_data
 
         except Exception as e:
@@ -522,7 +760,7 @@ class WalletPumpAnalyzer:
             return None
 
     # =========================================================================
-    # DATA FETCHING METHODS
+    # DATA FETCHING METHODS (unchanged)
     # =========================================================================
 
     def get_wallet_pnl_solanatracker(self, wallet_address, token_address):
@@ -534,15 +772,18 @@ class WalletPumpAnalyzer:
                 semaphore=self.pnl_semaphore
             )
         except Exception as e:
-            self._log(f" ⚠️ Error fetching PnL: {str(e)}")
+            self._log(f"⚠️ Error fetching PnL: {str(e)}")
             return None
 
     def get_wallet_trades_30days(self, wallet_address, limit=100):
         now = time.time()
-        result = self.con.execute("""
-            SELECT last_processed_time FROM wallet_token_cache
-            WHERE wallet = ? LIMIT 1
-        """, [wallet_address]).fetchone()
+        try:
+            result = self.con.execute("""
+                SELECT last_processed_time FROM wallet_token_cache
+                WHERE wallet = ? LIMIT 1
+            """, [wallet_address]).fetchone()
+        except Exception:
+            result = None
 
         last_processed = result[0] if result else (now - (30 * 24 * 60 * 60)) * 1000
 
@@ -558,19 +799,22 @@ class WalletPumpAnalyzer:
                 data = response.json()
                 trades = data.get('trades', [])
 
-                if trades:
+                if trades and not self.read_only:
                     latest_time = max(t.get('time', 0) for t in trades)
-                    self.con.execute("""
-                        UPDATE wallet_token_cache
-                        SET last_processed_time = ?
-                        WHERE wallet = ?
-                    """, [latest_time, wallet_address])
+                    try:
+                        self.con.execute("""
+                            UPDATE wallet_token_cache
+                            SET last_processed_time = ?
+                            WHERE wallet = ?
+                        """, [latest_time, wallet_address])
+                    except Exception:
+                        pass
 
                 return trades
             return []
 
         except Exception as e:
-            self._log(f" ⚠️ Error getting 30-day trades: {str(e)}")
+            self._log(f"⚠️ Error getting 30-day trades: {str(e)}")
             return []
 
     def get_first_buy_for_wallet(self, wallet_address, token_address):
@@ -615,7 +859,7 @@ class WalletPumpAnalyzer:
             return await asyncio.gather(*tasks)
 
     # =========================================================================
-    # TRENDING RUNNER DISCOVERY
+    # TRENDING RUNNER DISCOVERY (unchanged logic, uses updated cache methods)
     # =========================================================================
 
     def _get_price_range_in_period(self, token_address, days_back):
@@ -660,7 +904,7 @@ class WalletPumpAnalyzer:
                 'candle_count': len(candles)
             }
         except Exception as e:
-            self._log(f" ⚠️ Price range error: {str(e)}")
+            self._log(f"⚠️ Price range error: {str(e)}")
             return None
 
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
@@ -668,12 +912,12 @@ class WalletPumpAnalyzer:
         now = datetime.now()
 
         if days_back == 30:
-            self._log(f" ⚡ Skipping memory cache for 30d (one-off autodiscovery)")
+            self._log(f"⚡ Skipping memory cache for 30d (one-off autodiscovery)")
         else:
             if cache_key in self._trending_cache:
                 cache_age = now - self._cache_expiry[cache_key]
                 if cache_age < timedelta(seconds=CACHE_TTL_TRENDING):
-                    self._log(f" ⚡ Cache hit ({cache_key}) - age: {cache_age.seconds}s")
+                    self._log(f"⚡ Cache hit ({cache_key}) - age: {cache_age.seconds}s")
                     return self._trending_cache[cache_key]
 
         self._log(f"\n{'='*80}")
@@ -689,7 +933,7 @@ class WalletPumpAnalyzer:
             )
 
             if not response:
-                self._log(f" ❌ Failed to fetch trending list")
+                self._log(f"❌ Failed to fetch trending list")
                 return []
 
             trending_data = response if isinstance(response, list) else []
@@ -709,22 +953,19 @@ class WalletPumpAnalyzer:
                     if liquidity < min_liquidity:
                         continue
 
-                    # Security check uses 24h cache - free
                     security = self._check_token_security(mint)
                     if not security or not security['passes_security']:
-                        self._log(f" 🔒 {token.get('symbol')} failed security - SKIPPED")
+                        self._log(f"🔒 {token.get('symbol')} failed security - SKIPPED")
                         continue
 
                     price_range = self._get_price_range_in_period(mint, days_back)
                     if not price_range or price_range['multiplier'] < min_multiplier:
                         continue
 
-                    # Token info uses 24h cache - free
                     token_info = self._get_token_detailed_info(mint)
                     if not token_info:
                         continue
 
-                    # ATH uses 24h cache - free
                     ath_data = self.get_token_ath(mint)
                     token_age_days = token_info.get('age_days', 0)
 
@@ -756,10 +997,10 @@ class WalletPumpAnalyzer:
                     }
 
                     qualified_runners.append(runner_data)
-                    time.sleep(0.3)  # Free tier: be gentle
+                    time.sleep(0.3)
 
                 except Exception as e:
-                    self._log(f" ⚠️ Token skip: {str(e)}")
+                    self._log(f"⚠️ Token skip: {str(e)}")
                     continue
 
             qualified_runners.sort(key=lambda x: x['multiplier'], reverse=True)
@@ -767,24 +1008,24 @@ class WalletPumpAnalyzer:
             if days_back != 30:
                 self._trending_cache[cache_key] = qualified_runners
                 self._cache_expiry[cache_key] = now
-                self._log(f" ✅ Found {len(qualified_runners)} SECURE runners (cached {CACHE_TTL_TRENDING//60} min)")
+                self._log(f"✅ Found {len(qualified_runners)} SECURE runners (cached {CACHE_TTL_TRENDING//60} min)")
             else:
-                self._log(f" ✅ Found {len(qualified_runners)} SECURE runners (no memory cache)")
+                self._log(f"✅ Found {len(qualified_runners)} SECURE runners (no memory cache)")
 
             return qualified_runners
 
         except Exception as e:
-            self._log(f" ❌ Error finding runners: {str(e)}")
+            self._log(f"❌ Error finding runners: {str(e)}")
             return []
 
     def preload_trending_cache(self):
         """Only cache runner LISTS on startup - no full analysis"""
         for days_back in [7, 14]:
             runners = self.find_trending_runners_enhanced(days_back=days_back)
-            self._log(f" ✅ Preloaded {len(runners)} runners for {days_back}d")
+            self._log(f"✅ Preloaded {len(runners)} runners for {days_back}d")
 
     # =========================================================================
-    # SCORING
+    # SCORING (unchanged)
     # =========================================================================
 
     def calculate_wallet_relative_score(self, wallet_data):
@@ -865,7 +1106,7 @@ class WalletPumpAnalyzer:
             }
 
     # =========================================================================
-    # 30-DAY RUNNER HISTORY
+    # 30-DAY RUNNER HISTORY (unchanged)
     # =========================================================================
 
     def _check_if_runner(self, token_address, min_multiplier=10.0):
@@ -967,11 +1208,11 @@ class WalletPumpAnalyzer:
             return {'other_runners': other_runners, 'stats': stats}
 
         except Exception as e:
-            self._log(f" ⚠️ Error getting 30-day runners: {str(e)}")
+            self._log(f"⚠️ Error getting 30-day runners: {str(e)}")
             return {'other_runners': [], 'stats': {}}
 
     # =========================================================================
-    # 6-STEP ANALYSIS
+    # 6-STEP ANALYSIS (unchanged)
     # =========================================================================
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
@@ -991,7 +1232,7 @@ class WalletPumpAnalyzer:
 
             if data:
                 traders = data if isinstance(data, list) else []
-                self._log(f" ✓ Found {len(traders)} top traders")
+                self._log(f"✓ Found {len(traders)} top traders")
                 for i, trader in enumerate(traders, 1):
                     wallet = trader.get('wallet')
                     if wallet:
@@ -1035,7 +1276,7 @@ class WalletPumpAnalyzer:
 
                 new_wallets = first_buyer_wallets - all_wallets
                 all_wallets.update(first_buyer_wallets)
-                self._log(f" ✓ Found {len(buyers)} first buyers ({len(new_wallets)} new)")
+                self._log(f"✓ Found {len(buyers)} first buyers ({len(new_wallets)} new)")
 
                 results = asyncio.run(self._async_fetch_first_buys(first_buyer_wallets, token_address))
                 for wallet, first_buy_data in zip(first_buyer_wallets, results):
@@ -1069,7 +1310,7 @@ class WalletPumpAnalyzer:
                 offset += 100
                 time.sleep(0.5)
 
-            self._log(f" ✓ Found {len(all_birdeye_trades)} Birdeye trades")
+            self._log(f"✓ Found {len(all_birdeye_trades)} Birdeye trades")
 
             birdeye_wallets = set()
             for trade in all_birdeye_trades:
@@ -1084,7 +1325,7 @@ class WalletPumpAnalyzer:
 
             new_wallets = birdeye_wallets - all_wallets
             all_wallets.update(birdeye_wallets)
-            self._log(f" ✓ Found {len(new_wallets)} new wallets from Birdeye")
+            self._log(f"✓ Found {len(new_wallets)} new wallets from Birdeye")
 
             if birdeye_wallets:
                 results = asyncio.run(self._async_fetch_first_buys(birdeye_wallets, token_address))
@@ -1113,7 +1354,7 @@ class WalletPumpAnalyzer:
                         wallet_data[wallet] = {'source': 'solana_recent', 'earliest_entry': trade_time}
                 new_wallets = recent_wallets - all_wallets
                 all_wallets.update(recent_wallets)
-                self._log(f" ✓ Found {len(recent_wallets)} recent traders ({len(new_wallets)} new)")
+                self._log(f"✓ Found {len(recent_wallets)} recent traders ({len(new_wallets)} new)")
 
             # STEP 5: PnL
             self._log(f"\n[STEP 5] Fetching PnL for {len(all_wallets)} wallets...")
@@ -1126,8 +1367,8 @@ class WalletPumpAnalyzer:
                 else:
                     wallets_to_fetch.append(wallet)
 
-            self._log(f" ✓ {len(wallets_with_pnl)} wallets already have PnL")
-            self._log(f" → Fetching PnL for {len(wallets_to_fetch)} remaining...")
+            self._log(f"✓ {len(wallets_with_pnl)} wallets already have PnL")
+            self._log(f"→ Fetching PnL for {len(wallets_to_fetch)} remaining...")
 
             qualified_wallets = []
 
@@ -1155,7 +1396,7 @@ class WalletPumpAnalyzer:
                     wallet_data[wallet]['pnl_data'] = pnl_data
                     self._process_wallet_pnl(wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier)
 
-            self._log(f" ✓ Found {len(qualified_wallets)} qualified wallets")
+            self._log(f"✓ Found {len(qualified_wallets)} qualified wallets")
 
             # STEP 6: Score and rank
             self._log("\n[STEP 6] Ranking by absolute score...")
@@ -1202,7 +1443,7 @@ class WalletPumpAnalyzer:
                 })
 
             wallet_results.sort(key=lambda x: x['professional_score'], reverse=True)
-            self._log(f" ✅ Analysis complete: {len(wallet_results)} qualified wallets")
+            self._log(f"✅ Analysis complete: {len(wallet_results)} qualified wallets")
             if wallet_results:
                 self._log(f"   Top score: {wallet_results[0]['professional_score']} ({wallet_results[0]['professional_grade']})")
 
@@ -1245,7 +1486,7 @@ class WalletPumpAnalyzer:
         return False
 
     # =========================================================================
-    # BATCH ANALYSIS - Cross token overlap ranking
+    # BATCH ANALYSIS (unchanged)
     # =========================================================================
 
     def _assign_tier(self, runner_count, aggregate_score, tokens_analyzed):
@@ -1469,7 +1710,7 @@ class WalletPumpAnalyzer:
         return ranked_wallets[:20]
 
     # =========================================================================
-    # REPLACEMENT FINDER
+    # REPLACEMENT FINDER (unchanged)
     # =========================================================================
 
     def find_replacement_wallets(self, declining_wallet_address, user_id='default_user',
@@ -1534,7 +1775,7 @@ class WalletPumpAnalyzer:
                 'consistency_score': wallet_data.get('consistency_score', 0)
             }
         except Exception as e:
-            print(f" ⚠️ Error loading wallet profile: {e}")
+            print(f"⚠️ Error loading wallet profile: {e}")
             return None
 
     def _calculate_similarity_score(self, declining_profile, candidate):

@@ -8,9 +8,11 @@ from db.watchlist_db import WatchlistDatabase
 from collections import defaultdict
 from datetime import datetime
 import os
+import uuid
 
 # Lazy imports
 _wallet_analyzer = None
+_worker_analyzer = None
 _wallet_monitor = None
 _watchlist_db = None
 
@@ -23,16 +25,40 @@ def get_watchlist_db():
 
 
 def get_wallet_analyzer():
+    """
+    Flask-facing analyzer: read-write DuckDB, writes to both Redis and DuckDB.
+    Used by all Flask routes and the Celery flush task.
+    """
     global _wallet_analyzer
     if _wallet_analyzer is None:
         from services.wallet_analyzer import WalletPumpAnalyzer
         _wallet_analyzer = WalletPumpAnalyzer(
             solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
             birdeye_api_key=Config.BIRDEYE_API_KEY,
-            debug_mode=True
+            debug_mode=True,
+            read_only=False  # Flask process: full read-write access
         )
-        print("[WALLET ANALYZER] ✅ Initialized with TokenAnalyzer relative scoring")
+        print("[WALLET ANALYZER] ✅ Initialized (Flask - read-write)")
     return _wallet_analyzer
+
+
+def get_worker_analyzer():
+    """
+    Worker-facing analyzer: DuckDB opened in read-only mode to avoid lock conflicts.
+    Workers write to Redis only; Flask flushes Redis → DuckDB every hour via Celery.
+    Use this in all RQ worker tasks (worker_tasks.py).
+    """
+    global _worker_analyzer
+    if _worker_analyzer is None:
+        from services.wallet_analyzer import WalletPumpAnalyzer
+        _worker_analyzer = WalletPumpAnalyzer(
+            solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
+            birdeye_api_key=Config.BIRDEYE_API_KEY,
+            debug_mode=True,
+            read_only=True  # Worker process: DuckDB read-only, writes to Redis only
+        )
+        print("[WORKER ANALYZER] ✅ Initialized (Worker - read-only DuckDB, Redis writes)")
+    return _worker_analyzer
 
 
 def get_wallet_monitor():
@@ -55,7 +81,7 @@ wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 
 
 # =============================================================================
-# ✅ UPDATED: ASYNC JOB QUEUEING WITH PROGRESS TRACKING
+# ASYNC JOB QUEUEING WITH PROGRESS TRACKING
 # =============================================================================
 
 @wallets_bp.route('/analyze', methods=['POST', 'OPTIONS'])
@@ -72,44 +98,36 @@ def analyze_wallets():
         tokens = data['tokens']
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        # ✅ Sub-point 1: Return 202 immediately
         from flask import current_app
-        q = current_app.config['RQ_QUEUE']
-        
-        job = q.enqueue('tasks.perform_wallet_analysis', {
-            'tokens': tokens,
-            'user_id': user_id,
-            'global_settings': data.get('global_settings', {}),
-            'job_id': None  # Will be set to job.id after creation
-        })
-        
-        # Update job data with actual job_id
-        from redis import Redis
-        redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
-        job_data = {
-            'tokens': tokens,
-            'user_id': user_id,
-            'global_settings': data.get('global_settings', {}),
-            'job_id': job.id
-        }
-        redis.set(f"job_data:{job.id}", json.dumps(job_data), ex=3600)
-        
-        # Insert into analysis_jobs table
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+        q = current_app.config['RQ_QUEUE']
         supabase = get_supabase_client()
+
+        job_id = str(uuid.uuid4())
+
         supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
-            'job_id': job.id,
+            'job_id': job_id,
             'user_id': user_id,
             'status': 'pending',
             'progress': 0,
-            'phase': 'queued'
+            'phase': 'queued',
+            'tokens_total': len(tokens),
+            'tokens_completed': 0
         }).execute()
-        
+
+        job = q.enqueue('services.worker_tasks.perform_wallet_analysis', {
+            'tokens': tokens,
+            'user_id': user_id,
+            'global_settings': data.get('global_settings', {}),
+            'job_id': job_id
+        })
+
         return jsonify({
             'success': True,
-            'job_id': job.id,
+            'job_id': job_id,
             'status': 'pending'
-        }), 202  # ✅ Accepted, not completed
+        }), 202
 
     except Exception as e:
         print(f"\n[ANALYZE ERROR] {str(e)}")
@@ -117,25 +135,25 @@ def analyze_wallets():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
 @wallets_bp.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    from flask import current_app
-    q = current_app.config['RQ_QUEUE']
-    job = q.fetch_job(job_id)
-    if not job:
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+    supabase = get_supabase_client()
+    result = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select('*').eq('job_id', job_id).execute()
+
+    if not result.data:
         return jsonify({'error': 'Job not found'}), 404
-    
-    if job.is_finished:
-        # Get result from Redis
-        from redis import Redis
-        redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
-        result = redis.get(f"job_result:{job_id}")
-        if result:
-            return jsonify(json.loads(result)), 200
-        return jsonify({'error': 'Result expired'}), 404
-    elif job.is_failed:
-        return jsonify({'status': 'failed', 'error': str(job.exc_info)}), 500
-    return jsonify({'status': job.get_status()}), 200
+
+    job = result.data[0]
+
+    if job['status'] == 'completed':
+        return jsonify(job.get('results', {})), 200
+    elif job['status'] == 'failed':
+        return jsonify({'status': 'failed', 'error': job.get('error', 'Unknown error')}), 500
+
+    return jsonify({'status': job['status']}), 200
 
 
 @wallets_bp.route('/jobs/<job_id>/progress', methods=['GET'])
@@ -153,55 +171,65 @@ def get_job_progress(job_id):
         'success': True,
         'status': job['status'],
         'progress': job['progress'],
-        'phase': job.get('phase', '')
+        'phase': job.get('phase', ''),
+        'tokens_total': job.get('tokens_total', 0),
+        'tokens_completed': job.get('tokens_completed', 0)
     })
 
 
 @wallets_bp.route('/analyze/stream', methods=['POST', 'OPTIONS'])
 @optional_auth
 def analyze_stream():
-    """
-    Stream analysis results as each token completes.
-    Uses Server-Sent Events (SSE).
-    """
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     data = request.json
     tokens = data.get('tokens', [])
     user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
-    
+    min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
+
     def generate():
-        from tasks import analyze_single_token_parallel
-        
-        for token in tokens:
+        wallet_analyzer = get_wallet_analyzer()
+
+        yield f"data: {json.dumps({'type': 'progress', 'message': f'Starting analysis of {len(tokens)} tokens...'})}\n\n"
+
+        all_wallets = []
+
+        for i, token in enumerate(tokens, 1):
             try:
-                # Analyze one token
-                result = analyze_single_token_parallel(token, user_id, f"stream_{token['address']}")
-                
-                # Stream result
-                yield f"data: {json.dumps(result)}\n\n"
-                
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Analyzing {token.get(chr(39) + chr(116) + chr(105) + chr(99) + chr(107) + chr(101) + chr(114), chr(116) + chr(111) + chr(107) + chr(101) + chr(110))} ({i}/{len(tokens)})...'})}\n\n"
+
+                wallets = wallet_analyzer.analyze_token_professional(
+                    token_address=token['address'],
+                    token_symbol=token.get('ticker', 'UNKNOWN'),
+                    min_roi_multiplier=min_roi_multiplier,
+                    user_id=user_id
+                )
+
+                for wallet in wallets:
+                    wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
+
+                all_wallets.extend(wallets[:20])
+
             except Exception as e:
-                yield f"data: {json.dumps({'error': str(e), 'token': token})}\n\n"
-        
-        # Send completion signal
-        yield f"event: complete\ndata: {json.dumps({'done': True})}\n\n"
-    
-    return Response(generate(), mimetype='text/event-stream')
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Error on {token.get(chr(116)+chr(105)+chr(99)+chr(107)+chr(101)+chr(114))}: {str(e)}'})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'complete', 'data': {'wallets': all_wallets, 'total': len(all_wallets)}})}\n\n"
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
+    )
 
 
 # =============================================================================
-# SINGLE TOKEN ANALYSIS (NO TOKEN OVERLAP - JUST RELATIVE SCORING)
+# SINGLE TOKEN ANALYSIS
 # =============================================================================
 
 @wallets_bp.route('/analyze/single', methods=['POST', 'OPTIONS'])
 @optional_auth
 def analyze_single_token():
-    """
-    Single token analysis - Just relative scoring within that token
-    (No token overlap needed - only 1 token)
-    """
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -228,7 +256,6 @@ def analyze_single_token():
             user_id=user_id
         )
         
-        # ✅ ADD analyzed_tokens and remove consistency_score
         for wallet in wallets:
             wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
             if 'consistency_score' in wallet:
@@ -256,7 +283,6 @@ def analyze_single_token():
                 'avg_variance': 0,
                 'avg_runner_hits_30d': round(sum(w.get('runner_hits_30d', 0) for w in top_wallets) / len(top_wallets), 1) if top_wallets else 0,
                 'a_plus_consistency': sum(1 for w in top_wallets if w.get('professional_grade') == 'A+')
-
             }
         }), 200
 
@@ -274,7 +300,6 @@ def analyze_single_token():
 @wallets_bp.route('/trending/runners', methods=['GET','OPTIONS'])
 @optional_auth
 def get_trending_runners():
-    """Get trending runners list - ALWAYS security filtered"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -291,7 +316,6 @@ def get_trending_runners():
         days_map = {'7d': 7, '14d': 14, '30d': 30}
         days_back = days_map.get(timeframe, 7)
 
-        # Security filtering is ALWAYS ON (built into find_trending_runners_enhanced)
         runners = wallet_analyzer.find_trending_runners_enhanced(
             days_back=days_back,
             min_multiplier=min_multiplier,
@@ -308,7 +332,7 @@ def get_trending_runners():
             'success': True,
             'runners': filtered_runners,
             'total': len(filtered_runners),
-            'security_filtered': True,  # ✅ Always true
+            'security_filtered': True,
             'security_info': 'All tokens verified: liquidity locked, mint revoked, has social'
         }), 200
 
@@ -322,7 +346,6 @@ def get_trending_runners():
 @wallets_bp.route('/trending/analyze', methods=['POST', 'OPTIONS'])
 @optional_auth
 def analyze_trending_runner():
-    """Analyze single trending runner"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -344,7 +367,6 @@ def analyze_trending_runner():
             user_id=user_id
         )
         
-        # ✅ ADD analyzed_tokens and remove consistency_score
         for wallet in wallets:
             wallet['analyzed_tokens'] = [runner.get('symbol', 'UNKNOWN')]
             if 'consistency_score' in wallet:
@@ -368,9 +390,6 @@ def analyze_trending_runner():
 @wallets_bp.route('/trending/analyze-batch', methods=['POST', 'OPTIONS'])
 @optional_auth
 def analyze_trending_runners_batch():
-    """
-    ✅ CORRECT: Batch trending analysis with TOKEN OVERLAP ranking
-    """
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -391,7 +410,6 @@ def analyze_trending_runners_batch():
         print(f"Using TokenAnalyzer Token Overlap Method")
         print(f"{'='*80}")
 
-        # Use built-in batch analysis (already has token overlap logic)
         smart_money = wallet_analyzer.batch_analyze_runners_professional(
             runners_list=runners,
             min_runner_hits=min_runner_hits,
@@ -399,7 +417,6 @@ def analyze_trending_runners_batch():
             user_id=user_id
         )
         
-        # ✅ ADD analyzed_tokens for batch
         for wallet in smart_money:
             wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
 
@@ -426,7 +443,6 @@ def analyze_trending_runners_batch():
 @wallets_bp.route('/discover', methods=['POST','OPTIONS'])
 @optional_auth
 def auto_discover_wallets():
-    """Auto-discover using trending runners (30 days) - ALWAYS security filtered"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -438,7 +454,6 @@ def auto_discover_wallets():
 
         wallet_analyzer = get_wallet_analyzer()
 
-        # ✅ Security filtering is ALWAYS ON (built into find_trending_runners_enhanced)
         runners = wallet_analyzer.find_trending_runners_enhanced(
             days_back=30,
             min_multiplier=5.0,
@@ -458,7 +473,6 @@ def auto_discover_wallets():
             user_id=user_id
         )
         
-        # ✅ ADD analyzed_tokens for batch
         for wallet in smart_money:
             wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
 
@@ -469,7 +483,7 @@ def auto_discover_wallets():
             'top_wallets': smart_money[:50],
             'smart_money_wallets': smart_money[:50],
             'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners[:10]],
-            'security_filtered': True,  # ✅ Always true
+            'security_filtered': True,
             'security_info': 'All tokens verified: liquidity locked, mint revoked, has social'
         }), 200
 
@@ -481,7 +495,7 @@ def auto_discover_wallets():
 
 
 # =============================================================================
-# WATCHLIST ENDPOINTS - ✅ UPDATED WITH PROPER ERROR HANDLING
+# WATCHLIST ENDPOINTS
 # =============================================================================
 
 @wallets_bp.route('/watchlist/add', methods=['POST', 'OPTIONS'])
@@ -544,7 +558,6 @@ def get_wallet_watchlist():
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
         
-        # SELECT with ALL new columns
         query = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
             'wallet_address, tier, position, movement, positions_changed, '
             'form, status, degradation_alerts, roi_7d, roi_30d, '
@@ -559,7 +572,6 @@ def get_wallet_watchlist():
         if tier:
             query = query.eq('tier', tier)
         
-        # ORDER BY position
         result = query.order('position').execute()
 
         return jsonify({
@@ -577,7 +589,6 @@ def get_wallet_watchlist():
 @wallets_bp.route('/watchlist/remove', methods=['POST', 'OPTIONS'])
 @optional_auth
 def remove_wallet_from_watchlist():
-    """✅ UPDATED: Remove wallet with proper error handling."""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -592,7 +603,6 @@ def remove_wallet_from_watchlist():
                 'error': 'user_id and wallet_address are required'
             }), 400
 
-        # ✅ PRE-CHECK: Verify wallet exists before attempting delete
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
         
@@ -601,13 +611,11 @@ def remove_wallet_from_watchlist():
         ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
 
         if not check.data:
-            # Wallet doesn't exist in watchlist
             return jsonify({
                 'success': False,
                 'error': 'Wallet not found in your watchlist'
             }), 404
 
-        # Now delete it
         db = get_watchlist_db()
         success = db.remove_wallet_from_watchlist(user_id, wallet_address)
 
@@ -617,7 +625,6 @@ def remove_wallet_from_watchlist():
                 'message': 'Wallet removed from watchlist'
             }), 200
         else:
-            # Database delete failed for some reason
             return jsonify({
                 'success': False,
                 'error': 'Failed to remove wallet'
@@ -693,7 +700,6 @@ def get_wallet_watchlist_stats():
 @wallets_bp.route('/watchlist/alerts/update', methods=['POST', 'OPTIONS'])
 @optional_auth
 def update_wallet_alert_settings():
-    """✅ NEW: Update alert settings for a watchlisted wallet."""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -713,7 +719,6 @@ def update_wallet_alert_settings():
                 'error': 'user_id and wallet_address are required'
             }), 400
 
-        # Build update dict
         update_data = {'last_updated': datetime.utcnow().isoformat()}
         if alert_enabled is not None:
             update_data['alert_enabled'] = alert_enabled
@@ -751,7 +756,6 @@ def update_wallet_alert_settings():
 @wallets_bp.route('/watchlist/rerank', methods=['POST', 'OPTIONS'])
 @require_auth
 def rerank_watchlist():
-    """Manually trigger watchlist rerank"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -1075,13 +1079,12 @@ def replace_wallet():
     
     
 # =============================================================================
-# ✅ NEW: WATCHLIST STATS ENDPOINTS
+# WATCHLIST STATS ENDPOINTS
 # =============================================================================
 
 @wallets_bp.route('/watchlist/<wallet_address>/stats', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_wallet_stats(wallet_address):
-    """Get detailed stats for a specific wallet"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -1094,10 +1097,7 @@ def get_wallet_stats(wallet_address):
         from services.watchlist_manager import WatchlistLeagueManager
         manager = WatchlistLeagueManager()
         
-        # Get refreshed metrics
         metrics = manager._refresh_wallet_metrics(wallet_address)
-        
-        # Get recent trades
         trades = manager._get_recent_trades(wallet_address, days=30, limit=10)
         
         return jsonify({
@@ -1117,7 +1117,6 @@ def get_wallet_stats(wallet_address):
 @wallets_bp.route('/watchlist/<wallet_address>/refresh', methods=['POST', 'OPTIONS'])
 @optional_auth
 def refresh_wallet_stats(wallet_address):
-    """Force refresh stats for a specific wallet"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -1134,10 +1133,8 @@ def refresh_wallet_stats(wallet_address):
         manager = WatchlistLeagueManager()
         supabase = get_supabase_client()
         
-        # Refresh metrics
         metrics = manager._refresh_wallet_metrics(wallet_address)
         
-        # Update in database
         supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
             'roi_7d': metrics.get('roi_7d', 0),
             'roi_30d': metrics.get('roi_30d', 0),
@@ -1165,7 +1162,6 @@ def refresh_wallet_stats(wallet_address):
 @wallets_bp.route('/watchlist/add-quick', methods=['POST', 'OPTIONS'])
 @optional_auth
 def add_wallet_quick():
-    """Quick add wallet for testing - bypasses analysis"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -1225,7 +1221,6 @@ def add_wallet_quick():
         }).execute()
         
         print(f"[QUICK ADD] ✅ {wallet_address[:8]}... added to {user_id[:8]}... watchlist")
-        print(f"[QUICK ADD] Alert settings: BUY=True, SELL=True, MIN=$10")
         
         return jsonify({
             'success': True,
@@ -1242,25 +1237,20 @@ def add_wallet_quick():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-    
 
 
 @wallets_bp.route('/premium-elite-100', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_premium_elite_100():
-    """Get Premium Elite 100 - Top performing wallets globally"""
     if request.method == 'OPTIONS':
         return '', 204
     
     try:
         user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
-        sort_by = request.args.get('sort_by', 'score')  # 'score', 'roi', 'runners'
+        sort_by = request.args.get('sort_by', 'score')
         
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
-        
-        # TODO: Check if user has premium subscription
-        # For now, allow all users
         
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
@@ -1284,7 +1274,6 @@ def get_premium_elite_100():
 @wallets_bp.route('/premium-elite-100/export', methods=['GET', 'OPTIONS'])
 @optional_auth
 def export_elite_100():
-    """Export Elite 100 as CSV"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -1302,17 +1291,14 @@ def export_elite_100():
         manager = get_elite_manager()
         wallets = manager.get_cached_elite_100()
         
-        # Create CSV
         output = StringIO()
         writer = csv.writer(output)
         
-        # Header
         writer.writerow([
             'Rank', 'Wallet Address', 'Tier', 'Professional Score', 
             'ROI 30d', 'Runners 30d', 'Win Rate 7d', 'Win Streak'
         ])
         
-        # Data
         for i, wallet in enumerate(wallets, 1):
             writer.writerow([
                 i,
@@ -1341,7 +1327,6 @@ def export_elite_100():
 @wallets_bp.route('/top-100-community', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_top_100_community():
-    """Get Community Top 100 - Most added wallets this week"""
     if request.method == 'OPTIONS':
         return '', 204
     

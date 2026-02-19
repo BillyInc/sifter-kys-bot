@@ -72,7 +72,6 @@ export default function AnalyzePanel({
                 const isSelected = selectedTokens.some(
                   t => t.address?.toLowerCase() === (token.address || token.mint)?.toLowerCase() && t.chain === token.chain
                 );
-                // Normalize token fields - SolanaTracker uses different field names
                 const address = token.address || token.mint || token.poolAddress;
                 const ticker = token.ticker || token.symbol;
                 const liquidity = token.liquidity || token.liquidityUsd;
@@ -161,7 +160,7 @@ export default function AnalyzePanel({
             {isAnalyzing ? (
               <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Analyzing...</>
             ) : (
-              <><BarChart3 size={18} /> Run Analysis (Streaming)</>
+              <><BarChart3 size={18} /> Run Analysis</>
             )}
           </button>
         </div>

@@ -2,6 +2,11 @@
 RQ Worker Tasks - Fixed with depends_on for true parallelism
 No worker ever blocks waiting for child jobs.
 RQ handles dependency resolution internally via Redis.
+
+CACHE STRATEGY:
+- Workers use get_worker_analyzer() → DuckDB read-only, writes to Redis only
+- Flask uses get_wallet_analyzer()  → DuckDB read-write, writes to both
+- Celery flushes Redis → DuckDB every hour via flush_redis_to_duckdb task
 """
 from redis import Redis
 from rq import Queue
@@ -86,28 +91,17 @@ def perform_wallet_analysis(data):
 
 
 def _queue_single_token_pipeline(q, token, user_id, job_id, supabase):
-    """
-    Queue single token 6-step pipeline using depends_on.
-    No worker blocked. RQ triggers each phase automatically.
-
-    Phase 1: Steps 1-4 run in parallel (4 workers)
-    Phase 2: PnL batches run in parallel (depends on phase 1)
-    Phase 3: Score + rank (depends on phase 2)
-    """
     print(f"\n[PIPELINE] Queuing single token: {token.get('ticker')}")
 
-    # ── PHASE 1: fetch data (4 parallel workers, no blocking) ────────────────
-    job1 = q.enqueue('worker_tasks.fetch_top_traders',   {'token': token, 'job_id': job_id})
-    job2 = q.enqueue('worker_tasks.fetch_first_buyers',  {'token': token, 'job_id': job_id})
-    job3 = q.enqueue('worker_tasks.fetch_birdeye_trades',{'token': token, 'job_id': job_id})
-    job4 = q.enqueue('worker_tasks.fetch_recent_trades', {'token': token, 'job_id': job_id})
+    job1 = q.enqueue('services.worker_tasks.fetch_top_traders',   {'token': token, 'job_id': job_id})
+    job2 = q.enqueue('services.worker_tasks.fetch_first_buyers',  {'token': token, 'job_id': job_id})
+    job3 = q.enqueue('services.worker_tasks.fetch_birdeye_trades',{'token': token, 'job_id': job_id})
+    job4 = q.enqueue('services.worker_tasks.fetch_recent_trades', {'token': token, 'job_id': job_id})
 
     print(f"  ✓ Queued Phase 1 jobs: {[j.id[:8] for j in [job1,job2,job3,job4]]}")
 
-    # ── PHASE 2: aggregate phase 1, then split PnL across workers ────────────
-    # This job only starts when ALL 4 phase 1 jobs finish
     pnl_coordinator = q.enqueue(
-        'worker_tasks.coordinate_pnl_phase',
+        'services.worker_tasks.coordinate_pnl_phase',
         {
             'token':       token,
             'job_id':      job_id,
@@ -119,12 +113,6 @@ def _queue_single_token_pipeline(q, token, user_id, job_id, supabase):
 
     print(f"  ✓ Queued PnL coordinator: {pnl_coordinator.id[:8]} (waits for phase 1)")
 
-    # ── PHASE 3: final scoring depends on PnL coordinator ────────────────────
-    # coordinate_pnl_phase itself queues PnL batch jobs and then
-    # queues the final scorer with depends_on those batches.
-    # We store the pnl_coordinator job_id so the scorer can find it.
-
-    # Store pipeline metadata in Redis so phases can find each other
     r = _get_redis()
     r.set(f"pipeline:{job_id}:coordinator", pnl_coordinator.id, ex=3600)
     r.set(f"pipeline:{job_id}:token", json.dumps(token), ex=3600)
@@ -133,10 +121,6 @@ def _queue_single_token_pipeline(q, token, user_id, job_id, supabase):
 
 
 def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
-    """
-    Batch: each token gets its own full pipeline in parallel.
-    Aggregation job depends on ALL token pipelines finishing.
-    """
     print(f"\n[PIPELINE] Queuing batch: {len(tokens)} tokens")
 
     token_final_jobs = []
@@ -144,14 +128,13 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
     for token in tokens:
         sub_job_id = f"{job_id}__{token['address'][:8]}"
 
-        # Queue each token's full 6-step pipeline
-        job1 = q.enqueue('worker_tasks.fetch_top_traders',    {'token': token, 'job_id': sub_job_id})
-        job2 = q.enqueue('worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': sub_job_id})
-        job3 = q.enqueue('worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': sub_job_id})
-        job4 = q.enqueue('worker_tasks.fetch_recent_trades',  {'token': token, 'job_id': sub_job_id})
+        job1 = q.enqueue('services.worker_tasks.fetch_top_traders',    {'token': token, 'job_id': sub_job_id})
+        job2 = q.enqueue('services.worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': sub_job_id})
+        job3 = q.enqueue('services.worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': sub_job_id})
+        job4 = q.enqueue('services.worker_tasks.fetch_recent_trades',  {'token': token, 'job_id': sub_job_id})
 
         pnl_coordinator = q.enqueue(
-            'worker_tasks.coordinate_pnl_phase',
+            'services.worker_tasks.coordinate_pnl_phase',
             {
                 'token':       token,
                 'job_id':      sub_job_id,
@@ -161,9 +144,8 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
             depends_on=Dependency(jobs=[job1, job2, job3, job4])
         )
 
-        # Final scorer for this token
         final_job = q.enqueue(
-            'worker_tasks.score_and_rank_single',
+            'services.worker_tasks.score_and_rank_single',
             {
                 'token':           token,
                 'job_id':          sub_job_id,
@@ -180,9 +162,8 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
 
         print(f"  ✓ Queued pipeline for {token.get('ticker')} [{sub_job_id[:8]}]")
 
-    # Aggregate cross-token overlap - runs after ALL tokens finish
     aggregate_job = q.enqueue(
-        'worker_tasks.aggregate_cross_token',
+        'services.worker_tasks.aggregate_cross_token',
         {
             'tokens':        tokens,
             'job_id':        job_id,
@@ -196,15 +177,16 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
 
 # =============================================================================
 # PHASE 1 WORKERS - All run simultaneously
+# NOTE: All workers use get_worker_analyzer() → read-only DuckDB, Redis writes
 # =============================================================================
 
 def fetch_top_traders(data):
     """Worker: Fetch top 100 traders for token"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     token  = data['token']
     job_id = data['job_id']
 
-    analyzer = get_wallet_analyzer()
+    analyzer = get_worker_analyzer()
     url = f"{analyzer.st_base_url}/top-traders/{token['address']}"
     response = analyzer.fetch_with_retry(
         url, analyzer._get_solanatracker_headers(),
@@ -213,6 +195,10 @@ def fetch_top_traders(data):
 
     wallets     = []
     wallet_data = {}
+    print(f"[DEBUG] API Key: {analyzer.solanatracker_key[:8]}...")
+    print(f"[DEBUG] URL: {url}")
+    response = analyzer.fetch_with_retry(...)
+    print(f"[DEBUG] Response: {response}")
 
     if response:
         traders = response if isinstance(response, list) else []
@@ -220,7 +206,6 @@ def fetch_top_traders(data):
             wallet = trader.get('wallet')
             if wallet:
                 wallets.append(wallet)
-                # Use 6h cached PnL - won't burn credits if cached
                 cached = analyzer._get_cached_pnl_and_entry(wallet, token['address'])
                 wallet_data[wallet] = {
                     'source':         'top_traders',
@@ -237,11 +222,11 @@ def fetch_top_traders(data):
 
 def fetch_first_buyers(data):
     """Worker: Fetch first buyers for token"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     token  = data['token']
     job_id = data['job_id']
 
-    analyzer = get_wallet_analyzer()
+    analyzer = get_worker_analyzer()
     url = f"{analyzer.st_base_url}/first-buyers/{token['address']}"
     response = analyzer.fetch_with_retry(
         url, analyzer._get_solanatracker_headers(),
@@ -255,7 +240,6 @@ def fetch_first_buyers(data):
         buyers = response if isinstance(response, list) else response.get('buyers', [])
         first_buyer_wallets = [b.get('wallet') for b in buyers if b.get('wallet')]
 
-        # Async fetch entry prices
         results = asyncio.run(
             analyzer._async_fetch_first_buys(first_buyer_wallets, token['address'])
         )
@@ -279,11 +263,11 @@ def fetch_first_buyers(data):
 
 def fetch_birdeye_trades(data):
     """Worker: Fetch 30-day Birdeye trades"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     token  = data['token']
     job_id = data['job_id']
 
-    analyzer    = get_wallet_analyzer()
+    analyzer    = get_worker_analyzer()
     current_time = int(time.time())
     after_time   = current_time - (30 * 86400)
     all_trades   = []
@@ -327,11 +311,11 @@ def fetch_birdeye_trades(data):
 
 def fetch_recent_trades(data):
     """Worker: Fetch recent trades from SolanaTracker"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     token  = data['token']
     job_id = data['job_id']
 
-    analyzer = get_wallet_analyzer()
+    analyzer = get_worker_analyzer()
     url    = f"{analyzer.st_base_url}/trades/{token['address']}"
     params = {"sortDirection": "DESC", "limit": 100}
     response = analyzer.fetch_with_retry(
@@ -359,17 +343,10 @@ def fetch_recent_trades(data):
 
 
 # =============================================================================
-# PHASE 2 COORDINATOR - Triggered by RQ when phase 1 finishes
-# No worker blocked - it just merges results and queues PnL jobs
+# PHASE 2 COORDINATOR
 # =============================================================================
 
 def coordinate_pnl_phase(data):
-    """
-    Runs ONCE when all 4 phase 1 jobs finish.
-    Merges wallet lists, queues PnL batches with depends_on,
-    then queues final scorer.
-    No polling loop - this job runs fast and exits.
-    """
     token        = data['token']
     job_id       = data['job_id']
     user_id      = data.get('user_id', 'default_user')
@@ -377,7 +354,6 @@ def coordinate_pnl_phase(data):
 
     print(f"\n[COORDINATOR] Phase 1 complete for {token.get('ticker')} - merging wallets...")
 
-    # Load all phase 1 results
     all_wallets = []
     wallet_data = {}
 
@@ -389,7 +365,6 @@ def coordinate_pnl_phase(data):
                     all_wallets.append(wallet)
                     wallet_data[wallet] = result['wallet_data'].get(wallet, {})
                 else:
-                    # Merge: prefer richer source
                     existing = wallet_data[wallet]
                     new      = result['wallet_data'].get(wallet, {})
                     if new.get('entry_price') and not existing.get('entry_price'):
@@ -399,15 +374,13 @@ def coordinate_pnl_phase(data):
 
     print(f"  ✓ Merged: {len(all_wallets)} unique wallets")
 
-    # Save merged wallet list for PnL workers
     _save_result(f"phase1_merged:{job_id}", {
         'wallets':     all_wallets,
         'wallet_data': wallet_data
     })
 
-    # Split wallets across PnL batch workers
     q          = _get_queue()
-    batch_size = max(1, len(all_wallets) // 5)  # 5 workers
+    batch_size = max(1, len(all_wallets) // 5)
     pnl_jobs   = []
 
     for i in range(0, len(all_wallets), batch_size):
@@ -415,7 +388,7 @@ def coordinate_pnl_phase(data):
         batch_wallets = {w: wallet_data[w] for w in batch}
 
         pnl_job = q.enqueue(
-            'worker_tasks.fetch_pnl_batch',
+            'services.worker_tasks.fetch_pnl_batch',
             {
                 'token':      token,
                 'job_id':     job_id,
@@ -428,9 +401,8 @@ def coordinate_pnl_phase(data):
 
     print(f"  ✓ Queued {len(pnl_jobs)} PnL batch jobs")
 
-    # Queue final scorer - depends on ALL PnL batches
     final_job = q.enqueue(
-        'worker_tasks.score_and_rank_single',
+        'services.worker_tasks.score_and_rank_single',
         {
             'token':        token,
             'job_id':       job_id,
@@ -443,7 +415,6 @@ def coordinate_pnl_phase(data):
 
     print(f"  ✓ Queued scorer: {final_job.id[:8]} (waits for {len(pnl_jobs)} PnL batches)")
 
-    # Store final job ID so batch aggregator can find it
     r = _get_redis()
     r.set(f"pipeline:{job_id}:final_job", final_job.id, ex=3600)
 
@@ -456,7 +427,7 @@ def coordinate_pnl_phase(data):
 
 def fetch_pnl_batch(data):
     """Worker: Fetch PnL for a batch of wallets"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     import aiohttp
     from asyncio import Semaphore as AsyncSemaphore
 
@@ -466,10 +437,9 @@ def fetch_pnl_batch(data):
     wallets    = data['wallets']
     wallet_data = data['wallet_data']
 
-    analyzer  = get_wallet_analyzer()
+    analyzer  = get_worker_analyzer()
     qualified = []
 
-    # Wallets that already have PnL data (from top_traders source)
     already_have_pnl = []
     need_fetch       = []
 
@@ -482,15 +452,13 @@ def fetch_pnl_batch(data):
 
     print(f"[PNL BATCH {batch_idx}] {len(wallets)} wallets | {len(already_have_pnl)} cached | {len(need_fetch)} to fetch")
 
-    # Process wallets that already have PnL
     for wallet in already_have_pnl:
         pnl = wallet_data[wallet]['pnl_data']
         _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
 
-    # Async fetch remaining PnLs in parallel
     async def _fetch_all():
         async with aiohttp.ClientSession() as session:
-            sem   = AsyncSemaphore(2)  # Free tier: 2 concurrent max
+            sem   = AsyncSemaphore(2)
             tasks = []
             for wallet in need_fetch:
                 async def fetch(w=wallet):
@@ -542,7 +510,7 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_in
 
 
 # =============================================================================
-# PHASE 3: SCORE + RANK - Triggered when all PnL batches finish
+# PHASE 3: SCORE + RANK
 # =============================================================================
 
 def score_and_rank_single(data):
@@ -550,21 +518,20 @@ def score_and_rank_single(data):
     Final step for single token.
     Collects all PnL batch results, scores, ranks, saves to Supabase.
     """
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     token       = data['token']
     job_id      = data['job_id']
     user_id     = data.get('user_id', 'default_user')
     batch_count = data['batch_count']
-    parent_job  = data.get('parent_job_id')  # Only set in batch mode
+    parent_job  = data.get('parent_job_id')
 
     print(f"\n[SCORER] Scoring {token.get('ticker')} - collecting {batch_count} PnL batches...")
 
-    analyzer = get_wallet_analyzer()
+    analyzer = get_worker_analyzer()
     supabase = get_supabase_client()
 
-    # Collect all qualified wallets from PnL batches
     qualified_wallets = []
     for i in range(batch_count):
         batch_result = _load_result(f"pnl_batch:{job_id}:{i}")
@@ -573,7 +540,6 @@ def score_and_rank_single(data):
 
     print(f"  ✓ {len(qualified_wallets)} qualified wallets to score")
 
-    # Get ATH (24h cached - won't burn credits)
     ath_data  = analyzer.get_token_ath(token['address'])
     ath_price = ath_data.get('highest_price', 0) if ath_data else 0
 
@@ -582,7 +548,6 @@ def score_and_rank_single(data):
     for wallet_info in qualified_wallets:
         wallet_addr = wallet_info['wallet']
 
-        # 12h cached runner history
         runner_history = analyzer._get_cached_other_runners(
             wallet_addr,
             current_token=token['address'],
@@ -633,10 +598,22 @@ def score_and_rank_single(data):
         'total':   len(wallet_results),
     }
 
-    # Save for batch aggregator to collect
     _save_result(f"token_result:{job_id}", result)
 
-    # If this is a standalone single-token analysis, update Supabase now
+    try:
+        target_job_id = parent_job if parent_job else job_id
+        current = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
+            'tokens_completed'
+        ).eq('job_id', target_job_id).execute()
+
+        current_count = current.data[0]['tokens_completed'] if current.data else 0
+
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+            'tokens_completed': current_count + 1
+        }).eq('job_id', target_job_id).execute()
+    except Exception as e:
+        print(f"[SCORER] Failed to increment tokens_completed: {e}")
+
     if not parent_job:
         supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
             'status':   'completed',
@@ -651,14 +628,12 @@ def score_and_rank_single(data):
 
 # =============================================================================
 # BATCH AGGREGATOR - Cross-token overlap ranking
-# Triggered by RQ when ALL token pipelines finish
 # =============================================================================
 
 def aggregate_cross_token(data):
     """
     Collect results from all token pipelines.
     Rank by cross-token appearance first, then aggregate score.
-    Triggered automatically by RQ when all token final jobs finish.
     """
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     from collections import defaultdict
@@ -671,7 +646,6 @@ def aggregate_cross_token(data):
 
     print(f"\n[AGGREGATOR] Cross-token ranking for {len(tokens)} tokens...")
 
-    # Collect all per-token results
     all_token_results = []
     for sub_job_id in sub_job_ids:
         result = _load_result(f"token_result:{sub_job_id}")
@@ -680,7 +654,6 @@ def aggregate_cross_token(data):
 
     print(f"  ✓ Loaded {len(all_token_results)}/{len(tokens)} token results")
 
-    # Build cross-token wallet map
     wallet_hits = defaultdict(lambda: {
         'wallet':              None,
         'runners_hit':         [],
@@ -721,7 +694,6 @@ def aggregate_cross_token(data):
                 wallet_hits[addr]['distance_to_ath_vals'].append(wallet['distance_to_ath_pct'])
             wallet_hits[addr]['roi_multipliers'].append(wallet.get('roi_multiplier', 0))
 
-    # Rank: cross-token first, then aggregate score
     ranked = []
     for addr, d in wallet_hits.items():
         n        = len(d['professional_scores'])
@@ -752,8 +724,6 @@ def aggregate_cross_token(data):
             'professional_grade':      _calculate_grade(avg_score),
             'roi_details':             d['roi_details'][:5],
             'is_fresh':                True,
-
-            # Frontend compatibility
             'analyzed_tokens':  d['runners_hit'],
             'other_runners': [
                 {
@@ -766,10 +736,8 @@ def aggregate_cross_token(data):
             ],
         })
 
-    # Primary sort: cross-token appearance count, then aggregate score
     ranked.sort(key=lambda x: (x['runner_count'], x['aggregate_score']), reverse=True)
 
-    # Fallback if no overlap
     if not any(r['runner_count'] > 1 for r in ranked):
         print(f"  ⚠️ No cross-token overlap - ranking by individual score")
         ranked.sort(key=lambda x: x['aggregate_score'], reverse=True)
@@ -782,7 +750,6 @@ def aggregate_cross_token(data):
         'total':   len(ranked),
     }
 
-    # Update Supabase - job complete
     supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
         'status':   'completed',
         'phase':    'done',
@@ -795,15 +762,15 @@ def aggregate_cross_token(data):
 
 
 # =============================================================================
-# CACHE WARMUP - Startup only, runner LISTS not full analysis
+# CACHE WARMUP
 # =============================================================================
 
 def preload_trending_cache():
     """Queue cache warmup jobs - runner lists only, no full analysis"""
     q = _get_queue()
 
-    job7  = q.enqueue('worker_tasks.warm_cache_runners', {'days_back': 7})
-    job14 = q.enqueue('worker_tasks.warm_cache_runners', {'days_back': 14})
+    job7  = q.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 7})
+    job14 = q.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 14})
 
     print(f"[CACHE WARMUP] Queued 7d and 14d runner list warmup")
     return [job7.id, job14.id]
@@ -811,9 +778,9 @@ def preload_trending_cache():
 
 def warm_cache_runners(data):
     """Worker: Cache runner list only - NO full analysis"""
-    from routes.wallets import get_wallet_analyzer
+    from routes.wallets import get_worker_analyzer  # ← worker analyzer (read-only DuckDB)
     days_back = data['days_back']
-    analyzer  = get_wallet_analyzer()
+    analyzer  = get_worker_analyzer()
 
     print(f"[WARMUP {days_back}D] Finding runners...")
     runners = analyzer.find_trending_runners_enhanced(
