@@ -913,10 +913,11 @@ class WalletPumpAnalyzer:
 
     def calculate_wallet_relative_score(self, wallet_data):
         try:
-            entry_price         = wallet_data.get('entry_price', 0)
-            ath_price           = wallet_data.get('ath_price', 0)
-            realized_multiplier = wallet_data.get('realized_multiplier', 0)
-            total_multiplier    = wallet_data.get('total_multiplier', 0)
+            # FIX: Use 'or 0' to handle None values gracefully
+            entry_price         = wallet_data.get('entry_price') or 0
+            ath_price           = wallet_data.get('ath_price') or 0
+            realized_multiplier = wallet_data.get('realized_multiplier') or 0
+            total_multiplier    = wallet_data.get('total_multiplier') or 0
 
             if entry_price > 0 and ath_price > 0:
                 distance_to_ath_pct     = ((ath_price - entry_price) / ath_price) * 100
@@ -1122,6 +1123,7 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 2: First buyers
+            # FIX: Extract entry_price using first_buy math (no API cost)
             # ------------------------------------------------------------------
             self._log("\n[STEP 2] Fetching first buyers...")
             url = f"{self.st_base_url}/first-buyers/{token_address}"
@@ -1135,17 +1137,26 @@ class WalletPumpAnalyzer:
                     if wallet:
                         first_buyer_wallets.add(wallet)
                         first_buy_time = buyer.get('first_buy_time', 0)
+
+                        # FIX: Extract entry_price from first_buy math
+                        first_buy  = buyer.get('first_buy', {})
+                        amount     = first_buy.get('amount', 0)
+                        volume_usd = first_buy.get('volume_usd', 0)
+                        entry_price = (volume_usd / amount) if amount > 0 else None
+
                         if wallet not in all_wallets:
                             wallet_data[wallet] = {
                                 'source':         'first_buyers',
                                 'pnl_data':       buyer,
                                 'earliest_entry': first_buy_time,
-                                'entry_price':    None,   # derived in _process_wallet_pnl
+                                'entry_price':    entry_price,  # FIX: set here
                             }
                         else:
                             wallet_data[wallet]['pnl_data']       = buyer
                             wallet_data[wallet]['earliest_entry'] = first_buy_time
                             wallet_data[wallet]['source']         = 'first_buyers'
+                            if entry_price and not wallet_data[wallet].get('entry_price'):
+                                wallet_data[wallet]['entry_price'] = entry_price
 
                 new_wallets = first_buyer_wallets - all_wallets
                 all_wallets.update(first_buyer_wallets)
@@ -1153,8 +1164,7 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 3: Birdeye trades — launch-based 5-day window
-            # OLD: last 30 days from now → captured late entries
-            # NEW: first 5 days after launch → true early buyers only
+            # FIX: Use from.price (not price_pair), fetch launch time for window
             # ------------------------------------------------------------------
             self._log("\n[STEP 3] Fetching Birdeye trades (first 5 days from launch)...")
 
@@ -1212,10 +1222,13 @@ class WalletPumpAnalyzer:
                 wallet = trade.get('owner')
                 if wallet and wallet not in all_wallets:
                     birdeye_wallets.add(wallet)
+                    # FIX: Use from.price (correct field), not price_pair
+                    from_data    = trade.get('from', {})
+                    actual_price = from_data.get('price')
                     wallet_data[wallet] = {
                         'source':         'birdeye_trades',
                         'earliest_entry': trade.get('block_unix_time'),
-                        'entry_price':    trade.get('price_pair'),   # direct from trade data
+                        'entry_price':    actual_price,  # FIX: correct field
                     }
 
             new_wallets = birdeye_wallets - all_wallets
@@ -1224,10 +1237,6 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 4: Fetch entry prices for Top Traders
-            # Replaces the removed recent trades step.
-            # Top Traders have PnL but no price — fetch their first buy price here.
-            # Birdeye wallets already have price_pair.
-            # First Buyers derive price in _process_wallet_pnl via first_buy math.
             # ------------------------------------------------------------------
             self._log("\n[STEP 4] Fetching entry prices for Top Traders...")
             top_trader_wallets = [
@@ -1252,8 +1261,6 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 5: PnL fetch + qualify
-            # Only Birdeye wallets need PnL fetched here.
-            # Top Traders and First Buyers already have pnl_data from their endpoints.
             # ------------------------------------------------------------------
             self._log(f"\n[STEP 5] Fetching PnL for {len(all_wallets)} wallets...")
             wallets_with_pnl = []

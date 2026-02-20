@@ -13,6 +13,7 @@ import PremiumElite100Panel from './components/panels/PremiumElite100Panel';
 import QuickAddWalletPanel from './components/panels/QuickAddWalletPanel';
 import ProfilePanel from './components/panels/ProfilePanel';
 import HelpSupportPanel from './components/panels/HelpSupportPanel';
+import ResultsPanel from './components/panels/ResultsPanel';
 
 import WalletActivityMonitor from './WalletActivityMonitor';
 import WalletAlertSettings from './WalletAlertSettings';
@@ -24,6 +25,11 @@ export default function SifterKYS() {
 
   const [openPanel, setOpenPanel] = useState(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [resultsPanel, setResultsPanel] = useState({
+    isOpen: false,
+    type: null, // 'single-token', 'batch-token', 'trending-single', 'trending-batch', 'discovery'
+    data: null
+  });
 
   const [mode, setMode] = useState('wallet');
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,15 +47,13 @@ export default function SifterKYS() {
   const [tMinusWindow, setTMinusWindow] = useState(4);
   const [tPlusWindow, setTPlusWindow] = useState(2);
 
-  const [walletResults, setWalletResults] = useState(null);
-  const [batchResults, setBatchResults] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState('');
 
   const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
   const [replacementModalWallet, setReplacementModalWallet] = useState(null);
   const [replacementData, setReplacementData] = useState(null);
-  
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const [userPoints, setUserPoints] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -62,6 +66,11 @@ export default function SifterKYS() {
 
   const handleClosePanel = () => {
     setOpenPanel(null);
+  };
+
+  // ✅ CHANGE 1: Stable helper so both handleAnalysisPolling and panels use the same function
+  const handleResultsReady = (data, type) => {
+    setResultsPanel({ isOpen: true, type, data });
   };
 
   const getPanelConfig = (panelId) => {
@@ -239,7 +248,6 @@ export default function SifterKYS() {
     }
 
     setIsAnalyzing(true);
-    setWalletResults(null);
     setStreamingMessage(`Analyzing 0 of ${selectedTokens.length} token${selectedTokens.length !== 1 ? 's' : ''}...`);
 
     try {
@@ -296,7 +304,10 @@ export default function SifterKYS() {
             });
             const resultData = await resultRes.json();
 
-            setWalletResults(resultData);
+            // ✅ CHANGE 2: Use handleResultsReady instead of setResultsPanel directly
+            handleResultsReady(resultData, 'single-token');
+            setDashboardRefreshKey(k => k + 1);
+
             setStreamingMessage('Analysis complete!');
             setIsAnalyzing(false);
 
@@ -333,9 +344,16 @@ export default function SifterKYS() {
         },
         body: JSON.stringify({
           user_id: userId,
-          wallet_address: walletData.wallet_address || walletData.wallet,
-          tags: walletData.tags || [],
-          notes: walletData.notes || '',
+          wallet: {
+            wallet: walletData.wallet_address,
+            professional_score: walletData.professional_score,
+            tier: walletData.tier,
+            roi_percent: walletData.roi_percent,
+            runner_hits_30d: walletData.runner_hits_30d,
+            runner_success_rate: walletData.runner_success_rate,
+            total_invested: walletData.total_invested,
+            tokens_hit: walletData.runners_hit || []
+          }
         }),
       });
 
@@ -466,8 +484,6 @@ export default function SifterKYS() {
           user={user}
           onOpenPanel={handleOpenPanel}
           recentActivity={[]}
-          analysisResults={walletResults}
-          isAnalyzing={isAnalyzing}
         />
       </div>
 
@@ -509,6 +525,7 @@ export default function SifterKYS() {
             setSelectedTokens={setSelectedTokens}
             formatNumber={formatNumber}
             formatPrice={formatPrice}
+            onResultsReady={handleResultsReady}  // ✅ CHANGE 3: was missing
           />
         )}
 
@@ -519,6 +536,7 @@ export default function SifterKYS() {
             onClose={handleClosePanel}
             formatNumber={formatNumber}
             formatPrice={formatPrice}
+            onResultsReady={handleResultsReady}
           />
         )}
 
@@ -529,6 +547,7 @@ export default function SifterKYS() {
             onClose={handleClosePanel}
             onAddToWatchlist={addToWalletWatchlist}
             formatNumber={formatNumber}
+            onResultsReady={handleResultsReady}
           />
         )}
 
@@ -576,11 +595,24 @@ export default function SifterKYS() {
             onNavigate={handleOpenPanel}
             onSignOut={signOut}
             getAccessToken={getAccessToken}
+            refreshKey={dashboardRefreshKey}
           />
         )}
 
         {openPanel === 'help' && <HelpSupportPanel userId={userId} apiUrl={API_URL} />}
       </SlideOutPanel>
+
+      {/* ✅ CHANGE 4: ResultsPanel rendered directly as full-screen overlay — no SlideOutPanel wrapper */}
+      {resultsPanel.isOpen && (
+        <ResultsPanel
+          data={resultsPanel.data}
+          resultType={resultsPanel.type}
+          onClose={() => setResultsPanel({ isOpen: false, type: null, data: null })}
+          onAddToWatchlist={addToWalletWatchlist}
+          formatNumber={formatNumber}
+          formatPrice={formatPrice}
+        />
+      )}
 
       <footer className="fixed bottom-0 w-full bg-black/80 border-t border-white/10 py-2 z-30">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-500">
