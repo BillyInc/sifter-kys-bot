@@ -16,20 +16,22 @@ import redis as redis_lib
 import os
 
 # ============================================================
-# CACHE TTL CONSTANTS - Tuned for SolanaTracker free tier
+# CACHE TTL CONSTANTS
 # ============================================================
 CACHE_TTL_PNL         = 21600   # 6 hours
 CACHE_TTL_RUNNERS     = 43200   # 12 hours
 CACHE_TTL_TOKEN_INFO  = 86400   # 24 hours
 CACHE_TTL_LAUNCH      = 86400   # 24 hours
 CACHE_TTL_TRENDING    = 600     # 10 min
+CACHE_TTL_QUAL        = 43200   # 12 h — slot held in leaderboard
+CACHE_TTL_QUAL_NEG    = 3600    # 1 h  — failed tokens suppressed
+MAX_RUNNERS           = 20      # leaderboard capacity
 
-# Redis TTLs (slightly longer than DuckDB TTLs to allow graceful fallback)
 REDIS_TTL_PNL         = CACHE_TTL_PNL + 3600
 REDIS_TTL_RUNNERS     = CACHE_TTL_RUNNERS + 3600
 REDIS_TTL_TOKEN_INFO  = CACHE_TTL_TOKEN_INFO + 3600
 REDIS_TTL_LAUNCH      = CACHE_TTL_LAUNCH + 3600
-REDIS_TTL_TRENDING    = CACHE_TTL_TRENDING + 300  # 15 min
+REDIS_TTL_TRENDING    = CACHE_TTL_TRENDING + 300
 
 
 class WalletPumpAnalyzer:
@@ -37,26 +39,42 @@ class WalletPumpAnalyzer:
     HYBRID CACHE WALLET ANALYZER
     Redis = Hot cache (fast reads, all workers write)
     DuckDB = Cold storage (persistent, flushed from Redis every hour via Celery)
-    Cache maximized for SolanaTracker free tier (10k credits/month)
+
+    WALLET SOURCES (3):
+      1. top_traders   — wallets ranked by realized PnL (active traders, exited positions)
+      2. first_buyers  — wallets that entered earliest by time
+      3. top_holders   — wallets holding the largest current positions
+                         Catches conviction holders (no/partial sells) invisible to top_traders.
+                         Qualifies via total_multiplier (realized + unrealized >= 3x).
 
     SCORING:
-    Single token:  60% entry timing | 30% total ROI | 10% realized ROI
-    Batch:         60% entry timing | 30% total ROI | 10% entry consistency
-                   (consistency = variance of entry_price/launch_price across tokens)
+      Single token:  60% entry timing | 30% total ROI | 10% realized ROI
+      Batch cross-token:    60% avg entry timing | 30% avg total ROI | 10% entry consistency
+      Batch single-token:   individual professional_score (same as single token mode)
+
+    TRENDING LEADERBOARD:
+      Tokens qualify by pumping >= min_multiplier within window.
+      Leaderboard ranked by MULTIPLIER (static) until Live button refreshes.
+      Live button refreshes market data AND re-ranks by MOMENTUM SCORE:
+        - Volume surge (40%)
+        - Price momentum (30%)
+        - Holder growth (20%)
+        - Liquidity depth (10%)
+        - Multiplier provides up to 20% bonus
+      Tokens that pump again get their 7-day window extended.
     """
     def __init__(self, solanatracker_api_key, birdeye_api_key=None, debug_mode=True, read_only=False):
         self.solanatracker_key = solanatracker_api_key.strip()
-        self.birdeye_key = birdeye_api_key or "a49c49de31d34574967c13bd35f3c523"
-        self.st_base_url = "https://data.solanatracker.io"
-        self.birdeye_base_url = "https://public-api.birdeye.so"
-        self.debug_mode = debug_mode
-        self.read_only = read_only
-        self.duckdb_path = 'wallet_analytics.duckdb'
+        # birdeye_api_key retained for future premium access — not used in analysis
+        self.birdeye_key       = birdeye_api_key or ""
+        self.st_base_url       = "https://data.solanatracker.io"
+        self.birdeye_base_url  = "https://public-api.birdeye.so"
+        self.debug_mode        = debug_mode
+        self.read_only         = read_only
+        self.duckdb_path       = 'wallet_analytics.duckdb'
 
-        # Check if we're in worker mode (should skip DuckDB)
         self.worker_mode = os.environ.get('WORKER_MODE') == 'true'
 
-        # Initialize DuckDB connection (skip for workers to avoid lock conflicts)
         self.con = None
         if not self.worker_mode:
             try:
@@ -74,30 +92,28 @@ class WalletPumpAnalyzer:
         self._redis = self._init_redis()
 
         self.max_workers = 8
-        self.birdeye_semaphore = Semaphore(2)
-        self.solana_tracker_semaphore = Semaphore(1)
-        self.pnl_semaphore = Semaphore(1)
-        self.birdeye_async_semaphore = AsyncSemaphore(2)
+        self.solana_tracker_semaphore       = Semaphore(1)
+        self.pnl_semaphore                  = Semaphore(1)
         self.solana_tracker_async_semaphore = AsyncSemaphore(1)
-        self.pnl_async_semaphore = AsyncSemaphore(1)
+        self.pnl_async_semaphore            = AsyncSemaphore(1)
         self.executor = None
 
-        # Keep memory cache as L1 cache, Redis as L2
         self._trending_cache = {}
-        self._cache_expiry = {}
+        self._cache_expiry   = {}
 
-        # Only init DB tables if we have a connection and are in read-write mode
         if self.con and not read_only and not self.worker_mode:
             self._init_db()
 
-        self._log(f"Initialized (read_only={read_only}, worker_mode={self.worker_mode}) | Redis: {'✅' if self._redis else '❌ fallback to DuckDB'}")
+        self._log(
+            f"Initialized (read_only={read_only}, worker_mode={self.worker_mode}) | "
+            f"Redis: {'✅' if self._redis else '❌ fallback to DuckDB'}"
+        )
 
     # =========================================================================
     # REDIS INIT + HELPERS
     # =========================================================================
 
     def _init_redis(self):
-        import os
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
         try:
             r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=3)
@@ -142,11 +158,8 @@ class WalletPumpAnalyzer:
         data = self._redis_get(redis_key)
         if data is not None:
             return data, 'redis'
-
-        # Skip DuckDB if no connection or in worker mode
         if not self.con or self.worker_mode:
             return None, None
-
         try:
             result = self.con.execute(duckdb_query, duckdb_params).fetchone()
             if result:
@@ -157,10 +170,7 @@ class WalletPumpAnalyzer:
 
     def _save_to_cache(self, redis_key, redis_value, redis_ttl,
                        duckdb_query=None, duckdb_params=None):
-        # Always write to Redis
         self._redis_set(redis_key, redis_value, redis_ttl)
-
-        # Only write to DuckDB if we have a connection and are not in worker mode
         if self.con and not self.read_only and not self.worker_mode and duckdb_query and duckdb_params:
             try:
                 self.con.execute(duckdb_query, duckdb_params)
@@ -174,79 +184,57 @@ class WalletPumpAnalyzer:
     def _init_db(self):
         if not self.con or self.worker_mode:
             return
-
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS wallet_token_cache (
-                wallet TEXT,
-                token TEXT,
-                realized REAL,
-                unrealized REAL,
-                total_invested REAL,
-                entry_price REAL,
-                first_buy_time BIGINT,
-                last_updated REAL,
-                runner_multiplier REAL,
+                wallet TEXT, token TEXT,
+                realized REAL, unrealized REAL, total_invested REAL,
+                entry_price REAL, first_buy_time BIGINT,
+                last_updated REAL, runner_multiplier REAL,
                 PRIMARY KEY (wallet, token)
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS wallet_runner_cache (
                 wallet STRING PRIMARY KEY,
-                other_runners JSON,
-                stats JSON,
-                last_updated FLOAT
+                other_runners JSON, stats JSON, last_updated FLOAT
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS token_runner_cache (
-                token STRING PRIMARY KEY,
-                runner_info JSON,
-                last_updated FLOAT
+                token STRING PRIMARY KEY, runner_info JSON, last_updated FLOAT
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS token_launch_cache (
-                token TEXT PRIMARY KEY,
-                launch_price REAL,
-                last_updated REAL
+                token TEXT PRIMARY KEY, launch_price REAL, last_updated REAL
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS token_info_cache (
-                token TEXT PRIMARY KEY,
-                symbol TEXT,
-                name TEXT,
-                liquidity REAL,
-                volume_24h REAL,
-                price REAL,
-                holders INTEGER,
-                age_days REAL,
-                last_updated REAL
+                token TEXT PRIMARY KEY, symbol TEXT, name TEXT,
+                liquidity REAL, volume_24h REAL, price REAL,
+                holders INTEGER, age_days REAL, last_updated REAL
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS token_ath_cache (
-                token TEXT PRIMARY KEY,
-                highest_price REAL,
-                timestamp INTEGER,
-                last_updated REAL
+                token TEXT PRIMARY KEY, highest_price REAL,
+                timestamp INTEGER, last_updated REAL
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS token_security_cache (
-                token TEXT PRIMARY KEY,
-                security_data JSON,
-                last_updated REAL
+                token TEXT PRIMARY KEY, security_data JSON, last_updated REAL
             )
         """)
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS trending_runners_cache (
-                cache_key TEXT PRIMARY KEY,
-                runners JSON,
-                last_updated REAL
+                cache_key TEXT PRIMARY KEY, runners JSON, last_updated REAL
             )
         """)
-        self.con.execute("CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_token_cache(wallet, token)")
+        self.con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wallet_token ON wallet_token_cache(wallet, token)"
+        )
 
     def _log(self, message):
         if self.debug_mode:
@@ -255,15 +243,7 @@ class WalletPumpAnalyzer:
     def _get_solanatracker_headers(self):
         return {'accept': 'application/json', 'x-api-key': self.solanatracker_key}
 
-    def _get_birdeye_headers(self):
-        return {
-            "x-chain": "solana",
-            "accept": "application/json",
-            "X-API-KEY": self.birdeye_key
-        }
-
-    def fetch_with_retry(self, url: str, headers: dict, params: dict = None,
-                        semaphore: Semaphore = None, max_retries: int = 3):
+    def fetch_with_retry(self, url, headers, params=None, semaphore=None, max_retries=3):
         for attempt in range(max_retries):
             try:
                 if semaphore:
@@ -284,8 +264,6 @@ class WalletPumpAnalyzer:
                     self._log(f"Rate limited. Waiting {wait_time}s...")
                     time.sleep(wait_time + 2)
                     continue
-                elif response.status_code == 500:
-                    return None
                 else:
                     return None
             except Exception as e:
@@ -293,14 +271,15 @@ class WalletPumpAnalyzer:
                     time.sleep(2 ** attempt)
         return None
 
-    async def async_fetch_with_retry(self, session, url: str, headers: dict, params: dict = None,
-                                     semaphore: AsyncSemaphore = None, max_retries: int = 3):
+    async def async_fetch_with_retry(self, session, url, headers, params=None,
+                                     semaphore=None, max_retries=3):
         timeout = aiohttp.ClientTimeout(total=15)
         for attempt in range(max_retries):
             try:
+                kwargs = dict(headers=headers, params=params, timeout=timeout)
                 if semaphore:
                     async with semaphore:
-                        async with session.get(url, headers=headers, params=params, timeout=timeout) as response:
+                        async with session.get(url, **kwargs) as response:
                             if response.status == 200:
                                 return await response.json()
                             elif response.status == 404:
@@ -308,13 +287,10 @@ class WalletPumpAnalyzer:
                             elif response.status == 429:
                                 wait_time = int(response.headers.get('Retry-After', 10))
                                 await asyncio.sleep(wait_time + 2 ** attempt)
-                            elif response.status == 500:
-                                return None
                             else:
-                                self._log(f"[ASYNC] HTTP {response.status} for {url[:60]}")
                                 return None
                 else:
-                    async with session.get(url, headers=headers, params=params, timeout=timeout) as response:
+                    async with session.get(url, **kwargs) as response:
                         if response.status == 200:
                             return await response.json()
                         elif response.status == 404:
@@ -323,18 +299,11 @@ class WalletPumpAnalyzer:
                             wait_time = int(response.headers.get('Retry-After', 10))
                             await asyncio.sleep(wait_time + 2 ** attempt)
                         else:
-                            self._log(f"[ASYNC] HTTP {response.status} for {url[:60]}")
                             return None
-            except aiohttp.ClientError as e:
-                self._log(f"[ASYNC] ClientError attempt {attempt+1}/{max_retries} for {url[:60]}: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-            except asyncio.TimeoutError:
-                self._log(f"[ASYNC] Timeout attempt {attempt+1}/{max_retries} for {url[:60]}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
             except Exception as e:
-                self._log(f"[ASYNC] Unexpected error attempt {attempt+1}/{max_retries} for {url[:60]}: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
         return None
@@ -344,15 +313,13 @@ class WalletPumpAnalyzer:
     # =========================================================================
 
     def _get_cached_pnl_and_entry(self, wallet, token):
-        now = time.time()
+        now       = time.time()
         redis_key = f"pnl:{wallet}:{token}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
-            self._log(f"Redis hit (PnL) for {wallet[:8]}... / {token[:8]}...")
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
@@ -360,9 +327,7 @@ class WalletPumpAnalyzer:
                     FROM wallet_token_cache
                     WHERE wallet = ? AND token = ? AND last_updated > ?
                 """, [wallet, token, now - CACHE_TTL_PNL]).fetchone()
-
                 if result:
-                    self._log(f"DuckDB hit (PnL) for {wallet[:8]}... / {token[:8]}...")
                     data = {
                         'realized': result[0], 'unrealized': result[1],
                         'total_invested': result[2], 'entry_price': result[3],
@@ -373,76 +338,52 @@ class WalletPumpAnalyzer:
             except Exception as e:
                 self._log(f"DuckDB PnL read error: {e}")
 
-        self._log(f"Cache miss (PnL) for {wallet[:8]}... / {token[:8]}... Fetching...")
-        pnl = self.get_wallet_pnl_solanatracker(wallet, token)
+        pnl       = self.get_wallet_pnl_solanatracker(wallet, token)
         first_buy = self.get_first_buy_for_wallet(wallet, token)
 
-        if pnl and first_buy:
+        if pnl:
             data = {
-                'realized': pnl.get('realized', 0),
-                'unrealized': pnl.get('unrealized', 0),
+                'realized':      pnl.get('realized', 0),
+                'unrealized':    pnl.get('unrealized', 0),
                 'total_invested': pnl.get('total_invested') or pnl.get('totalInvested', 0),
-                'entry_price': first_buy.get('price'),
-                'first_buy_time': first_buy.get('time')
+                'entry_price':   first_buy.get('price') if first_buy else None,
+                'first_buy_time': first_buy.get('time') if first_buy else None
             }
             self._save_to_cache(
                 redis_key, data, REDIS_TTL_PNL,
                 duckdb_query="""
                     INSERT OR REPLACE INTO wallet_token_cache
-                    (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
+                    (wallet, token, realized, unrealized, total_invested,
+                     entry_price, first_buy_time, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                duckdb_params=[wallet, token, data['realized'], data['unrealized'],
-                               data['total_invested'], data['entry_price'],
-                               data['first_buy_time'], now]
+                duckdb_params=[
+                    wallet, token, data['realized'], data['unrealized'],
+                    data['total_invested'], data['entry_price'],
+                    data['first_buy_time'], now
+                ]
             )
             return data
-
-        if pnl and not first_buy:
-            data = {
-                'realized': pnl.get('realized', 0),
-                'unrealized': pnl.get('unrealized', 0),
-                'total_invested': pnl.get('total_invested') or pnl.get('totalInvested', 0),
-                'entry_price': None,
-                'first_buy_time': None
-            }
-            self._save_to_cache(
-                redis_key, data, REDIS_TTL_PNL,
-                duckdb_query="""
-                    INSERT OR REPLACE INTO wallet_token_cache
-                    (wallet, token, realized, unrealized, total_invested, entry_price, first_buy_time, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                duckdb_params=[wallet, token, data['realized'], data['unrealized'],
-                               data['total_invested'], None, None, now]
-            )
-            return data
-
         return None
 
-    def _get_cached_other_runners(self, wallet, current_token=None, min_multiplier=5.0):
-        now = time.time()
+    def _get_cached_other_runners(self, wallet, current_token=None, min_multiplier=10.0):
+        now       = time.time()
         redis_key = f"runners:{wallet}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
-            self._log(f"Redis hit (runners) for {wallet[:8]}...")
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
-                    SELECT other_runners, stats
-                    FROM wallet_runner_cache
+                    SELECT other_runners, stats FROM wallet_runner_cache
                     WHERE wallet = ? AND last_updated > ?
                 """, [wallet, now - CACHE_TTL_RUNNERS]).fetchone()
-
                 if result:
-                    self._log(f"DuckDB hit (runners) for {wallet[:8]}...")
                     data = {
                         'other_runners': json.loads(result[0]),
-                        'stats': json.loads(result[1])
+                        'stats':         json.loads(result[1])
                     }
                     self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
                     return data
@@ -455,24 +396,24 @@ class WalletPumpAnalyzer:
                 redis_key, runners, REDIS_TTL_RUNNERS,
                 duckdb_query="""
                     INSERT OR REPLACE INTO wallet_runner_cache
-                    (wallet, other_runners, stats, last_updated)
-                    VALUES (?, ?, ?, ?)
+                    (wallet, other_runners, stats, last_updated) VALUES (?, ?, ?, ?)
                 """,
-                duckdb_params=[wallet, json.dumps(runners['other_runners']),
-                               json.dumps(runners['stats']), now]
+                duckdb_params=[
+                    wallet, json.dumps(runners['other_runners']),
+                    json.dumps(runners['stats']), now
+                ]
             )
             return runners
         return {'other_runners': [], 'stats': {}}
 
     def _get_cached_check_if_runner(self, token, min_multiplier=5.0):
-        now = time.time()
+        now       = time.time()
         redis_key = f"token_runner:{token}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute(
@@ -497,14 +438,13 @@ class WalletPumpAnalyzer:
         return None
 
     def _get_token_launch_price(self, token_address):
-        now = time.time()
+        now       = time.time()
         redis_key = f"launch_price:{token_address}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
             return cached.get('price')
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
@@ -518,35 +458,34 @@ class WalletPumpAnalyzer:
                 self._log(f"DuckDB launch_price read error: {e}")
 
         try:
-            url = f"{self.st_base_url}/tokens/{token_address}"
+            url  = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
             if data and data.get('pools'):
-                pools = data['pools']
-                if pools:
-                    primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-                    launch_price = primary_pool.get('price', {}).get('usd', 0)
-                    if launch_price and launch_price > 0:
-                        self._save_to_cache(
-                            redis_key, {'price': launch_price}, REDIS_TTL_LAUNCH,
-                            duckdb_query="INSERT OR REPLACE INTO token_launch_cache (token, launch_price, last_updated) VALUES (?, ?, ?)",
-                            duckdb_params=[token_address, launch_price, now]
-                        )
-                        return launch_price
+                primary_pool = max(data['pools'], key=lambda p: p.get('liquidity', {}).get('usd', 0))
+                launch_price = primary_pool.get('price', {}).get('usd', 0)
+                if launch_price and launch_price > 0:
+                    self._save_to_cache(
+                        redis_key, {'price': launch_price}, REDIS_TTL_LAUNCH,
+                        duckdb_query="""
+                            INSERT OR REPLACE INTO token_launch_cache
+                            (token, launch_price, last_updated) VALUES (?, ?, ?)
+                        """,
+                        duckdb_params=[token_address, launch_price, now]
+                    )
+                    return launch_price
         except Exception as e:
             self._log(f"Error fetching launch price: {e}")
         return None
 
     def get_token_ath(self, token_address):
-        now = time.time()
+        now       = time.time()
         redis_key = f"token_ath:{token_address}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
-            self._log(f"Redis hit (ATH) for {token_address[:8]}...")
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
@@ -561,14 +500,20 @@ class WalletPumpAnalyzer:
                 self._log(f"DuckDB ATH read error: {e}")
 
         try:
-            url = f"{self.st_base_url}/tokens/{token_address}/ath"
+            url  = f"{self.st_base_url}/tokens/{token_address}/ath"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
             if data:
                 self._save_to_cache(
                     redis_key, data, REDIS_TTL_TOKEN_INFO,
-                    duckdb_query="INSERT OR REPLACE INTO token_ath_cache (token, highest_price, timestamp, last_updated) VALUES (?, ?, ?, ?)",
-                    duckdb_params=[token_address, data.get('highest_price', 0), data.get('timestamp', 0), now]
+                    duckdb_query="""
+                        INSERT OR REPLACE INTO token_ath_cache
+                        (token, highest_price, timestamp, last_updated) VALUES (?, ?, ?, ?)
+                    """,
+                    duckdb_params=[
+                        token_address, data.get('highest_price', 0),
+                        data.get('timestamp', 0), now
+                    ]
                 )
                 return data
         except Exception as e:
@@ -576,21 +521,18 @@ class WalletPumpAnalyzer:
         return None
 
     def _get_token_detailed_info(self, token_address):
-        now = time.time()
+        now       = time.time()
         redis_key = f"token_info:{token_address}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
-            self._log(f"Redis hit (token_info) for {token_address[:8]}...")
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
                     SELECT symbol, name, liquidity, volume_24h, price, holders, age_days
-                    FROM token_info_cache
-                    WHERE token = ? AND last_updated > ?
+                    FROM token_info_cache WHERE token = ? AND last_updated > ?
                 """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
                 if result:
                     info = {
@@ -606,19 +548,15 @@ class WalletPumpAnalyzer:
                 self._log(f"DuckDB token_info read error: {e}")
 
         try:
-            url = f"{self.st_base_url}/tokens/{token_address}"
+            url  = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
-            if not data:
+            if not data or not data.get('pools'):
                 return None
 
-            pools = data.get('pools', [])
-            if not pools:
-                return None
-
-            primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-            token_meta = data.get('token', {})
-            creation_time = token_meta.get('creation', {}).get('created_time', 0)
+            primary_pool   = max(data['pools'], key=lambda p: p.get('liquidity', {}).get('usd', 0))
+            token_meta     = data.get('token', {})
+            creation_time  = token_meta.get('creation', {}).get('created_time', 0)
             token_age_days = (time.time() - creation_time) / 86400 if creation_time > 0 else 0
 
             info = {
@@ -633,7 +571,6 @@ class WalletPumpAnalyzer:
                 'age':           f"{token_age_days:.1f}d" if token_age_days > 0 else 'N/A',
                 'creation_time': creation_time,
             }
-
             self._save_to_cache(
                 redis_key, info, REDIS_TTL_TOKEN_INFO,
                 duckdb_query="""
@@ -641,26 +578,25 @@ class WalletPumpAnalyzer:
                     (token, symbol, name, liquidity, volume_24h, price, holders, age_days, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                duckdb_params=[token_address, info['symbol'], info['name'],
-                               info['liquidity'], info['volume_24h'], info['price'],
-                               info['holders'], info['age_days'], now]
+                duckdb_params=[
+                    token_address, info['symbol'], info['name'],
+                    info['liquidity'], info['volume_24h'], info['price'],
+                    info['holders'], info['age_days'], now
+                ]
             )
             return info
-
         except Exception as e:
             self._log(f"⚠️ Token info error: {str(e)}")
             return None
 
     def _check_token_security(self, token_address):
-        now = time.time()
+        now       = time.time()
         redis_key = f"token_security:{token_address}"
 
         cached = self._redis_get(redis_key)
         if cached is not None:
-            self._log(f"Redis hit (security) for {token_address[:8]}...")
             return cached
 
-        # Skip DuckDB if no connection or in worker mode
         if self.con and not self.worker_mode:
             try:
                 result = self.con.execute("""
@@ -675,59 +611,51 @@ class WalletPumpAnalyzer:
                 self._log(f"DuckDB security read error: {e}")
 
         try:
-            url = f"{self.st_base_url}/tokens/{token_address}"
+            url  = f"{self.st_base_url}/tokens/{token_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
-            if not data:
+            if not data or not data.get('pools'):
                 return None
 
-            pools = data.get('pools', [])
-            if not pools:
-                return None
+            token_meta   = data.get('token', {})
+            symbol       = token_meta.get('symbol', token_address[:8])
+            primary_pool = max(data['pools'], key=lambda p: p.get('liquidity', {}).get('usd', 0))
 
-            token_meta = data.get('token', {})
-            symbol = token_meta.get('symbol', token_address[:8])
-            primary_pool = max(pools, key=lambda p: p.get('liquidity', {}).get('usd', 0))
-
-            security_obj = primary_pool.get('security', {})
-            mint_authority   = security_obj.get('mintAuthority')
-            freeze_authority = security_obj.get('freezeAuthority')
-            is_mint_revoked  = mint_authority is None
-            freeze_revoked   = freeze_authority is None
-
-            lp_burn_pct = primary_pool.get('lpBurn', 0) or 0
-            is_liquidity_locked = lp_burn_pct >= 90
-
-            strict_socials = token_meta.get('strictSocials', {})
-            social_count = sum(1 for v in strict_socials.values() if v) if strict_socials else 0
+            security_obj     = primary_pool.get('security', {})
+            is_mint_revoked  = security_obj.get('mintAuthority') is None
+            freeze_revoked   = security_obj.get('freezeAuthority') is None
+            lp_burn_pct      = primary_pool.get('lpBurn', 0) or 0
+            is_liq_locked    = lp_burn_pct >= 90
+            strict_socials   = token_meta.get('strictSocials', {})
+            social_count     = sum(1 for v in strict_socials.values() if v) if strict_socials else 0
             jupiter_verified = data.get('risk', {}).get('jupiterVerified', False)
-            has_social = social_count >= 1 or jupiter_verified
+            has_social       = social_count >= 1 or jupiter_verified
 
-            self._log(
-                f"   Security [{symbol}]: mint_revoked={is_mint_revoked}, "
-                f"lpBurn={lp_burn_pct}% -> liq_locked={is_liquidity_locked}, has_social={has_social}"
-            )
-
-            passes = is_mint_revoked and is_liquidity_locked and has_social
+            passes = is_mint_revoked and is_liq_locked and has_social
             security_data = {
-                'is_mint_revoked': is_mint_revoked, 'is_liquidity_locked': is_liquidity_locked,
-                'freeze_revoked': freeze_revoked, 'has_social': has_social,
-                'social_count': social_count, 'socials': strict_socials, 'passes_security': passes,
+                'is_mint_revoked':     is_mint_revoked,
+                'is_liquidity_locked': is_liq_locked,
+                'freeze_revoked':      freeze_revoked,
+                'has_social':          has_social,
+                'social_count':        social_count,
+                'socials':             strict_socials,
+                'passes_security':     passes,
             }
-
             self._save_to_cache(
                 redis_key, security_data, REDIS_TTL_TOKEN_INFO,
-                duckdb_query="INSERT OR REPLACE INTO token_security_cache (token, security_data, last_updated) VALUES (?, ?, ?)",
+                duckdb_query="""
+                    INSERT OR REPLACE INTO token_security_cache
+                    (token, security_data, last_updated) VALUES (?, ?, ?)
+                """,
                 duckdb_params=[token_address, json.dumps(security_data), now]
             )
             return security_data
-
         except Exception as e:
             self._log(f"Security check error for {token_address}: {e}")
             return None
 
     # =========================================================================
-    # DATA FETCHING METHODS
+    # DATA FETCHING
     # =========================================================================
 
     def get_wallet_pnl_solanatracker(self, wallet_address, token_address):
@@ -752,15 +680,13 @@ class WalletPumpAnalyzer:
         last_processed = result[0] if result else (now - (30 * 24 * 60 * 60)) * 1000
 
         try:
-            url = f"{self.st_base_url}/wallet/{wallet_address}/trades"
+            url    = f"{self.st_base_url}/wallet/{wallet_address}/trades"
             params = {'limit': limit, 'since_time': last_processed}
             response = requests.get(url, headers=self._get_solanatracker_headers(),
                                     params=params, timeout=30)
-
             if response.status_code == 200:
-                data = response.json()
+                data   = response.json()
                 trades = data.get('trades', [])
-
                 if trades and self.con and not self.read_only and not self.worker_mode:
                     latest_time = max(t.get('time', 0) for t in trades)
                     try:
@@ -770,17 +696,15 @@ class WalletPumpAnalyzer:
                         )
                     except Exception:
                         pass
-
                 return trades
             return []
-
         except Exception as e:
             self._log(f"⚠️ Error getting 30-day trades: {str(e)}")
             return []
 
     def get_first_buy_for_wallet(self, wallet_address, token_address):
         try:
-            url = f"{self.st_base_url}/trades/{token_address}/by-wallet/{wallet_address}"
+            url  = f"{self.st_base_url}/trades/{token_address}/by-wallet/{wallet_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
             if data and data.get('trades'):
@@ -793,7 +717,7 @@ class WalletPumpAnalyzer:
             return None
 
     async def _async_get_first_buy(self, session, wallet, token):
-        url = f"{self.st_base_url}/trades/{token}/by-wallet/{wallet}"
+        url  = f"{self.st_base_url}/trades/{token}/by-wallet/{wallet}"
         data = await self.async_fetch_with_retry(
             session, url, self._get_solanatracker_headers(),
             semaphore=self.solana_tracker_async_semaphore
@@ -815,15 +739,27 @@ class WalletPumpAnalyzer:
     # =========================================================================
 
     def _get_price_range_in_period(self, token_address, days_back):
+        """
+        Best pump multiplier within the last days_back days, using the O(n)
+        best-profit algorithm.
+
+        Iterates candles oldest→newest. Tracks running minimum low. At each
+        candle computes high / running_min_low. Returns the maximum ratio found.
+
+        Because the low must come before (or at) the high in time, this always
+        measures a genuine pump move — never a dump inflating the denominator.
+        Works for new and old tokens: no reference to launch price, only to
+        candle data within the requested window.
+        """
         try:
-            time_to = int(time.time())
+            time_to   = int(time.time())
             time_from = time_to - (days_back * 86400)
             candle_type = '1h' if days_back <= 7 else '4h'
 
-            url = f"{self.st_base_url}/chart/{token_address}"
+            url    = f"{self.st_base_url}/chart/{token_address}"
             params = {'type': candle_type, 'time_from': time_from, 'time_to': time_to, 'currency': 'usd'}
-            data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
-                                         params=params, semaphore=self.solana_tracker_semaphore)
+            data   = self.fetch_with_retry(url, self._get_solanatracker_headers(),
+                                           params=params, semaphore=self.solana_tracker_semaphore)
             if not data:
                 return None
 
@@ -831,161 +767,274 @@ class WalletPumpAnalyzer:
             if not candles:
                 return None
 
-            low_prices  = [c.get('low', float('inf')) for c in candles if c.get('low')]
-            high_prices = [c.get('high', 0) for c in candles if c.get('high')]
-            if not low_prices or not high_prices:
+            best_multiplier    = 0.0
+            best_low           = None
+            best_high          = None
+            running_min_low    = float('inf')
+
+            for candle in candles:
+                low  = candle.get('low')
+                high = candle.get('high')
+                if low is None or high is None or low <= 0:
+                    continue
+
+                if low < running_min_low:
+                    running_min_low = low
+
+                if running_min_low > 0:
+                    mult = high / running_min_low
+                    if mult > best_multiplier:
+                        best_multiplier = mult
+                        best_low        = running_min_low
+                        best_high       = high
+
+            if best_multiplier == 0 or best_low is None:
                 return None
 
-            lowest_price  = min(low_prices)
-            highest_price = max(high_prices)
             return {
-                'lowest_price': lowest_price, 'highest_price': highest_price,
-                'multiplier': highest_price / lowest_price if lowest_price > 0 else 0,
-                'candle_count': len(candles)
+                'lowest_price':  best_low,
+                'highest_price': best_high,
+                'multiplier':    best_multiplier,
+                'candle_count':  len(candles),
+                'qualified_at':  int(time.time()),
             }
         except Exception as e:
-            self._log(f"⚠️ Price range error: {str(e)}")
+            self._log(f"⚠️ Price range error: {e}")
             return None
 
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
-        cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
-        now = datetime.now()
-        redis_key = f"trending:{cache_key}"
+        """
+        Maintain a ranked leaderboard of tokens that pumped >= min_multiplier.
 
-        redis_cached = self._redis_get(redis_key)
-        if redis_cached is not None:
-            self._log(f"Redis hit (trending) for {cache_key}")
-            return redis_cached
+        On each call:
+          1. Load the persisted leaderboard from Redis (incumbents keep slots).
+          2. Fetch the platform's current trending candidates.
+          3. For each candidate NOT already on the board:
+             - Skip if it recently failed (negative qual cache).
+             - Run security check.
+             - Run price check (_get_price_range_in_period).
+             - If qualifies:
+                 a. Free slot → add it.
+                 b. Board full → compare vs weakest incumbent.
+                    If new token wins → displace weakest, weakest qual cache cleared
+                    so it can re-qualify later if it pumps again.
+          4. For incumbents IN the current platform feed whose qual cache has
+             expired (12h passed): re-evaluate in case they pumped again and
+             deserve a higher rank.
+          5. Save updated leaderboard. Return it.
+        """
+        from datetime import datetime, timedelta
 
-        if days_back == 30:
-            self._log(f"⚡ Skipping memory cache for 30d (one-off autodiscovery)")
-        else:
-            if cache_key in self._trending_cache:
-                cache_age = now - self._cache_expiry[cache_key]
-                if cache_age < timedelta(seconds=CACHE_TTL_TRENDING):
-                    self._log(f"Memory cache hit ({cache_key}) - age: {cache_age.seconds}s")
-                    return self._trending_cache[cache_key]
+        cache_key      = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
+        now            = datetime.now()
+        list_cache_key = f"trending:{cache_key}"
+        board_key      = f"trending_leaderboard:{cache_key}"
+
+        # ── Fast path: 10-min list cache still hot ────────────────────────────────
+        cached = self._redis_get(list_cache_key)
+        if cached is not None:
+            return cached
+
+        if days_back != 30 and cache_key in self._trending_cache:
+            age = now - self._cache_expiry.get(cache_key, now)
+            if age < timedelta(seconds=CACHE_TTL_TRENDING):
+                return self._trending_cache[cache_key]
 
         if self.con and not self.worker_mode:
             try:
-                result = self.con.execute("""
+                row = self.con.execute("""
                     SELECT runners FROM trending_runners_cache
                     WHERE cache_key = ? AND last_updated > ?
                 """, [cache_key, time.time() - CACHE_TTL_TRENDING]).fetchone()
-                if result:
-                    runners = json.loads(result[0])
-                    self._log(f"DuckDB hit (trending) for {cache_key}")
-                    self._redis_set(redis_key, runners, REDIS_TTL_TRENDING)
+                if row:
+                    runners = json.loads(row[0])
+                    self._redis_set(list_cache_key, runners, REDIS_TTL_TRENDING)
                     return runners
             except Exception as e:
                 self._log(f"DuckDB trending read error: {e}")
 
-        self._log(f"\n{'='*80}")
-        self._log(f"FINDING TRENDING RUNNERS: {days_back} days, {min_multiplier}x+")
-        self._log(f"🔒 SECURITY FILTER: ACTIVE")
-        self._log(f"{'='*80}")
+        # ── Load persisted leaderboard ────────────────────────────────────────────
+        leaderboard      = self._redis_get(board_key) or []
+        board_by_address = {r['address']: r for r in leaderboard}
 
+        self._log(f"\n{'='*70}")
+        self._log(f"LEADERBOARD UPDATE {days_back}d {min_multiplier}x+ "
+                  f"({len(leaderboard)}/{MAX_RUNNERS} slots)")
+        self._log(f"{'='*70}")
+
+        # ── Fetch platform candidates ─────────────────────────────────────────────
         try:
-            url = f"{self.st_base_url}/tokens/trending"
-            response = self.fetch_with_retry(url, self._get_solanatracker_headers(),
-                                             semaphore=self.solana_tracker_semaphore)
+            response = self.fetch_with_retry(
+                f"{self.st_base_url}/tokens/trending",
+                self._get_solanatracker_headers(),
+                semaphore=self.solana_tracker_semaphore
+            )
             if not response:
-                self._log(f"❌ Failed to fetch trending list")
-                return []
-
+                self._log("Platform API unavailable — returning existing leaderboard")
+                self._redis_set(list_cache_key, leaderboard, REDIS_TTL_TRENDING)
+                return leaderboard
             trending_data = response if isinstance(response, list) else []
-            qualified_runners = []
+        except Exception as e:
+            self._log(f"❌ Trending fetch error: {e}")
+            return leaderboard
 
-            for item in trending_data[:20]:
-                try:
-                    token = item.get('token', {})
-                    pools = item.get('pools', [])
-                    if not pools or not token:
-                        continue
-
-                    mint      = token.get('mint')
-                    pool      = pools[0]
-                    liquidity = pool.get('liquidity', {}).get('usd', 0)
-
-                    if liquidity < min_liquidity:
-                        continue
-
-                    security = self._check_token_security(mint)
-                    if not security or not security['passes_security']:
-                        self._log(f"🔒 {token.get('symbol')} failed security - SKIPPED")
-                        continue
-
-                    price_range = self._get_price_range_in_period(mint, days_back)
-                    if not price_range or price_range['multiplier'] < min_multiplier:
-                        continue
-
-                    token_info = self._get_token_detailed_info(mint)
-                    if not token_info:
-                        continue
-
-                    ath_data      = self.get_token_ath(mint)
-                    token_age_days = token_info.get('age_days', 0)
-
-                    runner_data = {
-                        'symbol': token.get('symbol', 'UNKNOWN'),
-                        'ticker': token.get('symbol', 'UNKNOWN'),
-                        'name': token.get('name', 'Unknown'),
-                        'address': mint,
-                        'chain': 'solana',
-                        'multiplier': round(price_range['multiplier'], 2),
-                        'period_days': days_back,
-                        'lowest_price': price_range['lowest_price'],
-                        'highest_price': price_range['highest_price'],
-                        'current_price': token_info['price'],
-                        'ath_price': ath_data.get('highest_price', 0) if ath_data else 0,
-                        'ath_time': ath_data.get('timestamp', 0) if ath_data else 0,
-                        'liquidity': liquidity,
-                        'volume_24h': token_info['volume_24h'],
-                        'holders': token_info['holders'],
-                        'token_age_days': round(token_age_days, 1),
-                        'age': token_info.get('age', 'N/A'),
-                        'pair_address': pool.get('poolId', mint),
-                        'security': {
-                            'mint_revoked': security['is_mint_revoked'],
-                            'liquidity_locked': security['is_liquidity_locked'],
-                            'has_social': security['has_social'],
-                            'social_count': security['social_count']
-                        }
-                    }
-
-                    qualified_runners.append(runner_data)
-                    time.sleep(0.3)
-
-                except Exception as e:
-                    self._log(f"⚠️ Token skip: {str(e)}")
+        for item in trending_data[:20]:
+            try:
+                token = item.get('token', {})
+                pools = item.get('pools', [])
+                if not pools or not token:
                     continue
 
-            qualified_runners.sort(key=lambda x: x['multiplier'], reverse=True)
+                mint      = token.get('mint')
+                pool      = pools[0]
+                liquidity = pool.get('liquidity', {}).get('usd', 0)
+                symbol    = token.get('symbol', '?')
 
-            self._redis_set(redis_key, qualified_runners, REDIS_TTL_TRENDING)
+                if liquidity < min_liquidity:
+                    continue
 
-            if self.con and not self.worker_mode:
-                try:
-                    self.con.execute("""
-                        INSERT OR REPLACE INTO trending_runners_cache
-                        (cache_key, runners, last_updated)
-                        VALUES (?, ?, ?)
-                    """, [cache_key, json.dumps(qualified_runners), time.time()])
-                except Exception as e:
-                    self._log(f"DuckDB trending write error: {e}")
+                qual_key = f"trending_qual:{mint}:{cache_key}"
 
-            if days_back != 30:
-                self._trending_cache[cache_key] = qualified_runners
-                self._cache_expiry[cache_key] = now
-                self._log(f"✅ Found {len(qualified_runners)} SECURE runners (cached {CACHE_TTL_TRENDING//60} min)")
-            else:
-                self._log(f"✅ Found {len(qualified_runners)} SECURE runners (no memory cache)")
+                # ── INCUMBENT: already on leaderboard ─────────────────────────────
+                if mint in board_by_address:
+                    cached_qual = self._redis_get(qual_key)
+                    if cached_qual is None:
+                        # Qual cache expired (12h passed) — re-evaluate.
+                        # Token may have pumped again and earned a higher rank.
+                        price_range = self._get_price_range_in_period(mint, days_back)
+                        if price_range:
+                            old_mult = board_by_address[mint]['multiplier']
+                            new_mult = round(price_range['multiplier'], 2)
+                            if new_mult > old_mult:
+                                self._log(f"  ⬆ {symbol} re-pumped {old_mult}x→{new_mult}x")
+                                board_by_address[mint].update({
+                                    'multiplier':    new_mult,
+                                    'lowest_price':  price_range['lowest_price'],
+                                    'highest_price': price_range['highest_price'],
+                                    'qualified_at':  price_range['qualified_at'],
+                                })
+                            # Refresh qual cache whether or not multiplier improved
+                            self._redis_set(qual_key, {
+                                'qualified':    True,
+                                'multiplier':   new_mult,
+                                'qualified_at': price_range['qualified_at'],
+                            }, CACHE_TTL_QUAL)
+                        else:
+                            # Price API returned nothing — keep incumbent as-is,
+                            # re-extend qual cache so we don't spam the API
+                            self._redis_set(qual_key, {
+                                'qualified':    True,
+                                'multiplier':   board_by_address[mint]['multiplier'],
+                                'qualified_at': int(time.time()),
+                            }, CACHE_TTL_QUAL)
+                    continue
 
-            return qualified_runners
+                # ── NEW CANDIDATE ─────────────────────────────────────────────────
+                cached_qual = self._redis_get(qual_key)
+                if cached_qual is not None and not cached_qual.get('qualified'):
+                    continue   # recently failed — skip
 
-        except Exception as e:
-            self._log(f"❌ Error finding runners: {str(e)}")
-            return []
+                security = self._check_token_security(mint)
+                if not security or not security['passes_security']:
+                    continue
+
+                price_range = self._get_price_range_in_period(mint, days_back)
+
+                if not price_range or price_range['multiplier'] < min_multiplier:
+                    self._redis_set(qual_key, {'qualified': False}, CACHE_TTL_QUAL_NEG)
+                    continue
+
+                # Build the runner record
+                token_info = self._get_token_detailed_info(mint)
+                if not token_info:
+                    continue
+
+                ath_data   = self.get_token_ath(mint)
+                new_runner = {
+                    'symbol':         symbol,
+                    'ticker':         symbol,
+                    'name':           token.get('name', 'Unknown'),
+                    'address':        mint,
+                    'chain':          'solana',
+                    'multiplier':     round(price_range['multiplier'], 2),
+                    'period_days':    days_back,
+                    'lowest_price':   price_range['lowest_price'],
+                    'highest_price':  price_range['highest_price'],
+                    'current_price':  token_info['price'],
+                    'ath_price':      ath_data.get('highest_price', 0) if ath_data else 0,
+                    'ath_time':       ath_data.get('timestamp', 0)     if ath_data else 0,
+                    'liquidity':      liquidity,
+                    'volume_24h':     token_info['volume_24h'],
+                    'holders':        token_info['holders'],
+                    'token_age_days': round(token_info.get('age_days', 0), 1),
+                    'age':            token_info.get('age', 'N/A'),
+                    'pair_address':   pool.get('poolId', mint),
+                    'qualified_at':   price_range['qualified_at'],
+                    'security': {
+                        'mint_revoked':     security['is_mint_revoked'],
+                        'liquidity_locked': security['is_liquidity_locked'],
+                        'has_social':       security['has_social'],
+                        'social_count':     security['social_count'],
+                    },
+                }
+
+                if len(board_by_address) < MAX_RUNNERS:
+                    # Free slot
+                    board_by_address[mint] = new_runner
+                    self._log(f"  ✅ {symbol} added ({new_runner['multiplier']}x) "
+                              f"— {len(board_by_address)}/{MAX_RUNNERS} slots")
+                else:
+                    # Board full — only displace the weakest if we beat it
+                    weakest = min(board_by_address.values(), key=lambda r: r['multiplier'])
+                    if new_runner['multiplier'] > weakest['multiplier']:
+                        self._log(f"  🔄 {symbol} ({new_runner['multiplier']}x) displaces "
+                                  f"{weakest['symbol']} ({weakest['multiplier']}x)")
+                        # Clear displaced token's qual cache so it can re-qualify
+                        # if it pumps again in future
+                        self._redis_delete(f"trending_qual:{weakest['address']}:{cache_key}")
+                        del board_by_address[weakest['address']]
+                        board_by_address[mint] = new_runner
+                    else:
+                        self._log(f"  ✗ {symbol} ({new_runner['multiplier']}x) not strong enough "
+                                  f"— weakest is {weakest['symbol']} ({weakest['multiplier']}x)")
+                        self._redis_set(qual_key, {'qualified': False}, CACHE_TTL_QUAL_NEG)
+                        continue
+
+                # Store positive qual result for this token
+                self._redis_set(qual_key, {
+                    'qualified':    True,
+                    'multiplier':   new_runner['multiplier'],
+                    'qualified_at': price_range['qualified_at'],
+                }, CACHE_TTL_QUAL)
+
+                time.sleep(0.3)
+
+            except Exception as e:
+                self._log(f"⚠️ Token skip: {e}")
+                continue
+
+        # ── Sort and persist ──────────────────────────────────────────────────────
+        leaderboard = sorted(board_by_address.values(),
+                             key=lambda r: r['multiplier'], reverse=True)
+
+        self._redis_set(board_key,      leaderboard, CACHE_TTL_QUAL)
+        self._redis_set(list_cache_key, leaderboard, REDIS_TTL_TRENDING)
+
+        if self.con and not self.worker_mode:
+            try:
+                self.con.execute("""
+                    INSERT OR REPLACE INTO trending_runners_cache
+                    (cache_key, runners, last_updated) VALUES (?, ?, ?)
+                """, [cache_key, json.dumps(leaderboard), time.time()])
+            except Exception as e:
+                self._log(f"DuckDB write error: {e}")
+
+        if days_back != 30:
+            self._trending_cache[cache_key] = leaderboard
+            self._cache_expiry[cache_key]   = now
+
+        self._log(f"✅ Leaderboard: {len(leaderboard)} runners")
+        return leaderboard
 
     def preload_trending_cache(self):
         for days_back in [7, 14]:
@@ -993,37 +1042,152 @@ class WalletPumpAnalyzer:
             self._log(f"✅ Preloaded {len(runners)} runners for {days_back}d")
 
     # =========================================================================
+    # MOMENTUM SCORING + LIVE REFRESH
+    # =========================================================================
+
+    def _calculate_momentum_score(self, runner):
+        """
+        Calculate live momentum score based on current stats.
+        
+        Score components:
+        - Volume surge (40%): volume_24h normalized
+        - Price momentum (30%): 24h price change % (using multiplier as proxy)
+        - Holder growth (20%): holder count
+        - Liquidity depth (10%): current liquidity
+        - Multiplier provides floor/boost (up to 20% bonus)
+        """
+        try:
+            score = 0
+            
+            # Volume surge (0-40 points)
+            volume = runner.get('volume_24h', 0)
+            if volume > 0:
+                volume_score = min(40, (volume / 100000) * 10)  # $100k volume = 10 points
+                score += volume_score
+            
+            # Price momentum (0-30 points) - using multiplier as proxy
+            multiplier = runner.get('multiplier', 1)
+            price_score = min(30, (multiplier - 1) * 5)  # 7x gain = 30 points
+            score += price_score
+            
+            # Holder growth (0-20 points)
+            holders = runner.get('holders', 0)
+            holder_score = min(20, holders / 100)  # 2000 holders = 20 points
+            score += holder_score
+            
+            # Liquidity depth (0-10 points)
+            liquidity = runner.get('liquidity', 0)
+            liquidity_score = min(10, liquidity / 50000)  # $500k liquidity = 10 points
+            score += liquidity_score
+            
+            # Multiplier provides floor/boost (up to 20% bonus)
+            multiplier_bonus = min(20, runner.get('multiplier', 1) * 2)  # 10x = 20% bonus
+            score = score * (1 + multiplier_bonus / 100)
+            
+            return round(score, 2)
+            
+        except Exception as e:
+            self._log(f"  ⚠️ Momentum score error: {e}")
+            return runner.get('multiplier', 1) * 10  # Fallback
+
+    def refresh_runner_market_data(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
+        """
+        Live button: Refresh market data AND re-rank based on momentum scores.
+        
+        This NOW does what you originally wanted:
+        - Updates price/volume/holders/liquidity for all runners
+        - Checks if token pumped again (extends window if qualified_at updates)
+        - Recalculates momentum score for each runner
+        - Reshuffles leaderboard based on new scores
+        - Tokens with surging volume/price rise, dead tokens sink
+        
+        The 7-day window extends if a token pumps again (new qualified_at time)
+        """
+        cache_key      = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
+        board_key      = f"trending_leaderboard:{cache_key}"
+        list_cache_key = f"trending:{cache_key}"
+
+        leaderboard = self._redis_get(board_key)
+        if not leaderboard:
+            # Nothing persisted yet — fall back to a full scan
+            return self.find_trending_runners_enhanced(days_back, min_multiplier, min_liquidity)
+
+        self._log(f"\n[LIVE] Refreshing market data and re-ranking {len(leaderboard)} runners...")
+
+        updated_runners = []
+        for runner in leaderboard:
+            try:
+                # 1. Fetch fresh market data
+                info = self._get_token_detailed_info(runner['address'])
+                if info:
+                    runner['current_price'] = info['price']
+                    runner['volume_24h'] = info['volume_24h']
+                    runner['holders'] = info['holders']
+                    runner['liquidity'] = info.get('liquidity', runner.get('liquidity', 0))
+                
+                # 2. Check if token pumped again (extends window)
+                price_range = self._get_price_range_in_period(runner['address'], days_back)
+                if price_range and price_range['multiplier'] >= min_multiplier:
+                    # Token pumped again! Extend window and update multiplier
+                    if price_range['qualified_at'] > runner.get('qualified_at', 0):
+                        self._log(f"  🔥 {runner['symbol']} pumped again! Extending window")
+                        runner['multiplier'] = round(price_range['multiplier'], 2)
+                        runner['lowest_price'] = price_range['lowest_price']
+                        runner['highest_price'] = price_range['highest_price']
+                        runner['qualified_at'] = price_range['qualified_at']
+                        
+                        # Update qual cache with new timestamp
+                        qual_key = f"trending_qual:{runner['address']}:{cache_key}"
+                        self._redis_set(qual_key, {
+                            'qualified': True,
+                            'multiplier': runner['multiplier'],
+                            'qualified_at': runner['qualified_at'],
+                        }, CACHE_TTL_QUAL)
+                
+                # 3. Calculate momentum score
+                runner['momentum_score'] = self._calculate_momentum_score(runner)
+                updated_runners.append(runner)
+                
+            except Exception as e:
+                self._log(f"  ⚠️ Market data failed for {runner.get('symbol')}: {e}")
+                # Keep runner but use old data
+                runner['momentum_score'] = self._calculate_momentum_score(runner)
+                updated_runners.append(runner)
+
+        # 4. RE-RANK based on momentum score, NOT multiplier!
+        updated_runners.sort(key=lambda r: r['momentum_score'], reverse=True)
+
+        # 5. Add rank positions for display
+        for idx, runner in enumerate(updated_runners, 1):
+            runner['rank'] = idx
+            runner['rank_change'] = runner.get('rank', idx) - idx  # Track movement
+
+        # 6. Persist new order
+        self._redis_set(board_key, updated_runners, CACHE_TTL_QUAL)
+        self._redis_set(list_cache_key, updated_runners, REDIS_TTL_TRENDING)
+
+        self._log(f"[LIVE] Done — {len(updated_runners)} runners re-ranked by momentum")
+        return updated_runners
+
+    # =========================================================================
     # SCORING
     #
-    # Single token:  60% entry timing | 30% total ROI | 10% realized ROI
-    # Batch:         60% entry timing | 30% total ROI | 10% entry consistency
-    #
-    # Entry consistency = variance of (entry_price / launch_price) across tokens
-    # Low variance = entered early and consistently = high score
-    # consistency_score param is only passed in batch mode
+    # Single token:        60% entry timing | 30% total ROI | 10% realized ROI
+    # Batch cross-token:   60% avg entry timing | 30% avg total ROI | 10% entry consistency
+    # Batch single-token:  individual professional_score (same as single token)
     # =========================================================================
 
     def calculate_wallet_relative_score(self, wallet_data, consistency_score=None):
-        """
-        Score a wallet's performance on a single token.
-
-        Args:
-            wallet_data: dict with entry_price, ath_price, realized/total multipliers
-            consistency_score: if provided (batch mode), replaces realized ROI for 10%.
-                               Computed as variance of entry_price/launch_price across tokens.
-                               None means single-token mode — use realized ROI for 10%.
-        """
         try:
             entry_price         = wallet_data.get('entry_price') or 0
             ath_price           = wallet_data.get('ath_price') or 0
             realized_multiplier = wallet_data.get('realized_multiplier') or 0
             total_multiplier    = wallet_data.get('total_multiplier') or 0
 
-            # 60% — how early the entry was relative to ATH
+            # 60% — entry timing relative to ATH
             if entry_price > 0 and ath_price > 0:
                 distance_to_ath_pct     = ((ath_price - entry_price) / ath_price) * 100
                 entry_to_ath_multiplier = ath_price / entry_price
-
                 if distance_to_ath_pct >= 99:   entry_score = 100
                 elif distance_to_ath_pct >= 95: entry_score = 90
                 elif distance_to_ath_pct >= 90: entry_score = 80
@@ -1032,11 +1196,11 @@ class WalletPumpAnalyzer:
                 elif distance_to_ath_pct >= 50: entry_score = 50
                 else:                           entry_score = distance_to_ath_pct
             else:
-                entry_score = 0
-                distance_to_ath_pct = 0
+                entry_score             = 0
+                distance_to_ath_pct     = 0
                 entry_to_ath_multiplier = 0
 
-            # 30% — total ROI (realized + unrealized). Holders score same as sellers.
+            # 30% — total ROI (realized + unrealized)
             if total_multiplier >= 100:  total_roi_score = 100
             elif total_multiplier >= 50: total_roi_score = 90
             elif total_multiplier >= 25: total_roi_score = 80
@@ -1045,16 +1209,11 @@ class WalletPumpAnalyzer:
             elif total_multiplier >= 3:  total_roi_score = 50
             else:                        total_roi_score = (total_multiplier / 3) * 50
 
-            # 10% — realized ROI (single token) OR entry consistency (batch)
-            # Realized ROI: secondary signal for single token — rewards wallets that locked in profit
-            # Consistency: variance of entry_price/launch_price multiplier across all tokens traded
-            #              low variance = consistently enters early = rewarded
+            # 10% — realized ROI (single token) OR entry consistency (batch cross-token)
             if consistency_score is not None:
-                # Batch mode: use pre-computed consistency (0-100 scale)
-                tenth_score = consistency_score
-                score_breakdown_key = 'consistency_score'
+                tenth_score          = consistency_score
+                score_breakdown_key  = 'consistency_score'
             else:
-                # Single token mode: use realized ROI
                 if realized_multiplier >= 100:  tenth_score = 100
                 elif realized_multiplier >= 50: tenth_score = 90
                 elif realized_multiplier >= 25: tenth_score = 80
@@ -1113,13 +1272,15 @@ class WalletPumpAnalyzer:
                 return None
             ath_data = self.get_token_ath(token_address)
             return {
-                'address': token_address, 'symbol': token_info['symbol'],
-                'name': token_info['name'], 'multiplier': round(price_range['multiplier'], 2),
+                'address':       token_address,
+                'symbol':        token_info['symbol'],
+                'name':          token_info['name'],
+                'multiplier':    round(price_range['multiplier'], 2),
                 'current_price': token_info['price'],
-                'ath_price': ath_data.get('highest_price', 0) if ath_data else 0,
-                'liquidity': token_info['liquidity']
+                'ath_price':     ath_data.get('highest_price', 0) if ath_data else 0,
+                'liquidity':     token_info['liquidity']
             }
-        except:
+        except Exception:
             return None
 
     def get_wallet_other_runners(self, wallet_address, current_token_address=None, min_multiplier=10.0):
@@ -1135,7 +1296,6 @@ class WalletPumpAnalyzer:
                     token_addresses.add(token_addr)
 
             other_runners = []
-
             for token_addr in list(token_addresses)[:10]:
                 runner_info = self._get_cached_check_if_runner(token_addr, min_multiplier)
                 if not runner_info:
@@ -1143,24 +1303,23 @@ class WalletPumpAnalyzer:
                 cached = self._get_cached_pnl_and_entry(wallet_address, token_addr)
                 if not cached:
                     continue
-
                 realized = cached['realized']
                 invested = cached['total_invested']
                 if invested <= 0:
                     continue
-
-                roi_mult = (realized + invested) / invested
+                roi_mult              = (realized + invested) / invested
                 runner_info['roi_multiplier'] = round(roi_mult, 2)
-                runner_info['invested']        = round(invested, 2)
-                runner_info['realized']        = round(realized, 2)
-
+                runner_info['invested']       = round(invested, 2)
+                runner_info['realized']       = round(realized, 2)
                 if cached['entry_price']:
                     entry_price = cached['entry_price']
                     ath_price   = runner_info.get('ath_price', 0)
                     runner_info['entry_price'] = entry_price
                     if entry_price > 0 and ath_price > 0:
                         runner_info['entry_to_ath_multiplier'] = round(ath_price / entry_price, 2)
-                        runner_info['distance_to_ath_pct']     = round(((ath_price - entry_price) / ath_price) * 100, 2)
+                        runner_info['distance_to_ath_pct']     = round(
+                            ((ath_price - entry_price) / ath_price) * 100, 2
+                        )
                     else:
                         runner_info['entry_to_ath_multiplier'] = None
                         runner_info['distance_to_ath_pct']     = None
@@ -1168,7 +1327,6 @@ class WalletPumpAnalyzer:
                     runner_info['entry_price']             = None
                     runner_info['entry_to_ath_multiplier'] = None
                     runner_info['distance_to_ath_pct']     = None
-
                 other_runners.append(runner_info)
                 time.sleep(0.2)
 
@@ -1176,19 +1334,15 @@ class WalletPumpAnalyzer:
             if other_runners:
                 successful = sum(1 for r in other_runners if r.get('roi_multiplier', 0) > 1)
                 stats['success_rate'] = round(successful / len(other_runners) * 100, 1)
-
                 roi_values = [r.get('roi_multiplier', 0) for r in other_runners if r.get('roi_multiplier')]
                 if roi_values:
                     stats['avg_roi'] = round(sum(roi_values) / len(roi_values), 2)
-
                 entry_to_ath_values = [r.get('entry_to_ath_multiplier', 0) for r in other_runners if r.get('entry_to_ath_multiplier')]
                 if entry_to_ath_values:
                     stats['avg_entry_to_ath'] = round(sum(entry_to_ath_values) / len(entry_to_ath_values), 2)
-
-                distance_pct_values = [r.get('distance_to_ath_pct', 0) for r in other_runners if r.get('distance_to_ath_pct')]
-                if distance_pct_values:
-                    stats['avg_distance_to_ath_pct'] = round(sum(distance_pct_values) / len(distance_pct_values), 2)
-
+                distance_values = [r.get('distance_to_ath_pct', 0) for r in other_runners if r.get('distance_to_ath_pct')]
+                if distance_values:
+                    stats['avg_distance_to_ath_pct'] = round(sum(distance_values) / len(distance_values), 2)
                 stats['total_invested']      = round(sum(r.get('invested', 0) for r in other_runners), 2)
                 stats['total_realized']      = round(sum(r.get('realized', 0) for r in other_runners), 2)
                 stats['total_other_runners'] = len(other_runners)
@@ -1200,13 +1354,19 @@ class WalletPumpAnalyzer:
             return {'other_runners': [], 'stats': {}}
 
     # =========================================================================
-    # 5-STEP ANALYSIS (single token — uses realized ROI for 10%)
+    # 4-STEP SINGLE TOKEN ANALYSIS
+    # (Birdeye removed — now 4 steps: top_traders, first_buyers, top_holders,
+    #  entry prices, PnL + qualify, score + rank)
+    #
+    # top_holders added as Step 3: fetches top 500 holders sorted by position size.
+    # Catches conviction holders (unrealized PnL, partial exits) invisible to top_traders.
+    # Qualifies via total_multiplier (realized + unrealized >= 3x).
     # =========================================================================
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
                                    min_roi_multiplier=3.0, user_id='default_user'):
         self._log(f"\n{'='*80}")
-        self._log(f"5-STEP ANALYSIS: {token_symbol}")
+        self._log(f"4-STEP ANALYSIS: {token_symbol}")
         self._log(f"{'='*80}")
 
         try:
@@ -1214,10 +1374,10 @@ class WalletPumpAnalyzer:
             wallet_data = {}
 
             # ------------------------------------------------------------------
-            # STEP 1: Top traders
+            # STEP 1: Top traders (realized PnL ranked)
             # ------------------------------------------------------------------
             self._log("\n[STEP 1] Fetching top traders...")
-            url = f"{self.st_base_url}/top-traders/{token_address}"
+            url  = f"{self.st_base_url}/top-traders/{token_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
             if data:
@@ -1235,10 +1395,10 @@ class WalletPumpAnalyzer:
                         }
 
             # ------------------------------------------------------------------
-            # STEP 2: First buyers
+            # STEP 2: First buyers (earliest entries by time)
             # ------------------------------------------------------------------
             self._log("\n[STEP 2] Fetching first buyers...")
-            url = f"{self.st_base_url}/first-buyers/{token_address}"
+            url  = f"{self.st_base_url}/first-buyers/{token_address}"
             data = self.fetch_with_retry(url, self._get_solanatracker_headers(),
                                          semaphore=self.solana_tracker_semaphore)
             if data:
@@ -1248,23 +1408,22 @@ class WalletPumpAnalyzer:
                     wallet = buyer.get('wallet')
                     if wallet:
                         first_buyer_wallets.add(wallet)
-                        first_buy_time = buyer.get('first_buy_time', 0)
-
-                        first_buy  = buyer.get('first_buy', {})
-                        amount     = first_buy.get('amount', 0)
-                        volume_usd = first_buy.get('volume_usd', 0)
+                        first_buy   = buyer.get('first_buy', {})
+                        amount      = first_buy.get('amount', 0)
+                        volume_usd  = first_buy.get('volume_usd', 0)
                         entry_price = (volume_usd / amount) if amount > 0 else None
 
                         if wallet not in all_wallets:
                             wallet_data[wallet] = {
                                 'source':         'first_buyers',
                                 'pnl_data':       buyer,
-                                'earliest_entry': first_buy_time,
+                                'earliest_entry': buyer.get('first_buy_time', 0),
                                 'entry_price':    entry_price,
                             }
                         else:
+                            # Backfill entry data onto existing top_trader record
                             wallet_data[wallet]['pnl_data']       = buyer
-                            wallet_data[wallet]['earliest_entry'] = first_buy_time
+                            wallet_data[wallet]['earliest_entry'] = buyer.get('first_buy_time', 0)
                             wallet_data[wallet]['source']         = 'first_buyers'
                             if entry_price and not wallet_data[wallet].get('entry_price'):
                                 wallet_data[wallet]['entry_price'] = entry_price
@@ -1274,78 +1433,51 @@ class WalletPumpAnalyzer:
                 self._log(f"✓ Found {len(buyers)} first buyers ({len(new_wallets)} new)")
 
             # ------------------------------------------------------------------
-            # STEP 3: Birdeye trades
+            # STEP 3: Top holders (conviction holders, partial/non-sellers)
+            # Sorted by position size descending — top 500 is sufficient signal.
+            # Holders outside top 500 by amount are not meaningful candidates.
+            # These wallets have no pnl_data yet — fetched in Step 5.
             # ------------------------------------------------------------------
-            self._log("\n[STEP 3] Fetching Birdeye trades (first 5 days from launch)...")
+            self._log("\n[STEP 3] Fetching top holders...")
+            url  = f"{self.st_base_url}/tokens/{token_address}/holders/paginated"
+            data = self.fetch_with_retry(
+                url, self._get_solanatracker_headers(),
+                params={'limit': 500},
+                semaphore=self.solana_tracker_semaphore
+            )
+            if data and data.get('accounts'):
+                holder_wallets = set()
+                for account in data['accounts']:
+                    wallet = account.get('wallet')
+                    if wallet:
+                        holder_wallets.add(wallet)
+                        if wallet not in all_wallets:
+                            wallet_data[wallet] = {
+                                'source':         'top_holders',
+                                'pnl_data':       None,
+                                'earliest_entry': None,
+                                'entry_price':    None,
+                                'holding_amount': account.get('amount', 0),
+                                'holding_usd':    account.get('value', {}).get('usd', 0),
+                                'holding_pct':    account.get('percentage', 0),
+                            }
+                        else:
+                            # Wallet already known — just attach holder position data
+                            wallet_data[wallet]['holding_amount'] = account.get('amount', 0)
+                            wallet_data[wallet]['holding_usd']    = account.get('value', {}).get('usd', 0)
+                            wallet_data[wallet]['holding_pct']    = account.get('percentage', 0)
 
-            launch_time = None
-            try:
-                ti_url  = f"{self.st_base_url}/tokens/{token_address}"
-                ti_data = self.fetch_with_retry(ti_url, self._get_solanatracker_headers(),
-                                                semaphore=self.solana_tracker_semaphore)
-                if ti_data:
-                    launch_time = ti_data.get('token', {}).get('creation', {}).get('created_time')
-            except Exception as e:
-                self._log(f"⚠️ Could not fetch launch time for Birdeye window: {e}")
-
-            current_time = int(time.time())
-            if launch_time and launch_time > 0:
-                after_time  = int(launch_time)
-                before_time = int(launch_time) + (5 * 86400)
-                self._log(f"  Launch window: {after_time} → {before_time} (first 5 days)")
+                new_wallets = holder_wallets - all_wallets
+                all_wallets.update(holder_wallets)
+                self._log(
+                    f"✓ Found {len(data['accounts'])} top holders "
+                    f"({len(new_wallets)} new | total supply holders: {data.get('total', '?')})"
+                )
             else:
-                after_time  = current_time - (30 * 86400)
-                before_time = current_time
-                self._log(f"  Launch time unavailable — falling back to last 30 days")
-
-            all_birdeye_trades = []
-            offset = 0
-            while offset < 10000:
-                params = {
-                    "address":    token_address,
-                    "offset":     offset,
-                    "limit":      100,
-                    "after_time": after_time,
-                    "before_time": before_time,
-                    "sort_by":    "block_unix_time",
-                    "sort_type":  "asc",
-                    "tx_type":    "all",
-                }
-                url  = f"{self.birdeye_base_url}/defi/v3/token/txs"
-                data = self.fetch_with_retry(url, self._get_birdeye_headers(), params,
-                                             semaphore=self.birdeye_semaphore)
-                if not data or not data.get('success'):
-                    break
-                trades = data.get('data', {}).get('items', [])
-                if not trades:
-                    break
-                all_birdeye_trades.extend(trades)
-                if len(trades) < 100:
-                    break
-                offset += 100
-                time.sleep(0.5)
-
-            self._log(f"✓ Found {len(all_birdeye_trades)} Birdeye trades")
-
-            birdeye_wallets = set()
-            for trade in all_birdeye_trades:
-                wallet = trade.get('owner')
-                if wallet and wallet not in all_wallets:
-                    birdeye_wallets.add(wallet)
-                    from_data    = trade.get('from', {})
-                    actual_price = from_data.get('price')
-                    wallet_data[wallet] = {
-                        'source':         'birdeye_trades',
-                        'earliest_entry': trade.get('block_unix_time'),
-                        'entry_price':    actual_price,
-                    }
-
-            new_wallets = birdeye_wallets - all_wallets
-            all_wallets.update(birdeye_wallets)
-            self._log(f"✓ Found {len(new_wallets)} new wallets from Birdeye")
+                self._log("  Holders endpoint returned no data — continuing without holder source")
 
             # ------------------------------------------------------------------
-            # STEP 4: Fetch entry prices for Top Traders
+            # STEP 4: Fetch entry prices for Top Traders without one
             # ------------------------------------------------------------------
             self._log("\n[STEP 4] Fetching entry prices for Top Traders...")
             top_trader_wallets = [
@@ -1364,15 +1496,18 @@ class WalletPumpAnalyzer:
                             first_buy_data.get('time') or wallet_data[wallet].get('earliest_entry')
                         )
                         resolved += 1
-                self._log(f"✓ Resolved entry prices for {resolved}/{len(top_trader_wallets)} Top Trader wallets")
+                self._log(f"✓ Resolved {resolved}/{len(top_trader_wallets)} entry prices")
             else:
-                self._log(f"  No Top Trader wallets need price fetch")
+                self._log("  No Top Trader wallets need price fetch")
 
             # ------------------------------------------------------------------
             # STEP 5: PnL fetch + qualify
-            # Qualification accepts realized OR total >= min_roi_multiplier
+            # top_traders + first_buyers already have pnl_data → qualify directly
+            # top_holders have no pnl_data → fetch PnL (async, semaphore=1)
+            # Qualification: realized OR total >= min_roi_multiplier, invested >= $100
             # ------------------------------------------------------------------
             self._log(f"\n[STEP 5] Fetching PnL for {len(all_wallets)} wallets...")
+
             wallets_with_pnl = []
             wallets_to_fetch = []
 
@@ -1382,14 +1517,16 @@ class WalletPumpAnalyzer:
                 else:
                     wallets_to_fetch.append(wallet)
 
-            self._log(f"✓ {len(wallets_with_pnl)} wallets already have PnL (Top Traders + First Buyers)")
-            self._log(f"→ Fetching PnL for {len(wallets_to_fetch)} Birdeye wallets...")
+            self._log(f"✓ {len(wallets_with_pnl)} wallets have PnL "
+                      f"(top_traders + first_buyers)")
+            self._log(f"→ Fetching PnL for {len(wallets_to_fetch)} holder wallets...")
 
             qualified_wallets = []
 
             for wallet in wallets_with_pnl:
                 pnl_data = wallet_data[wallet]['pnl_data']
-                self._process_wallet_pnl(wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier)
+                self._process_wallet_pnl(wallet, pnl_data, wallet_data,
+                                         qualified_wallets, min_roi_multiplier)
 
             async def _async_fetch_pnls():
                 async with aiohttp.ClientSession() as session:
@@ -1405,18 +1542,18 @@ class WalletPumpAnalyzer:
                         tasks.append(fetch_pnl())
                     return await asyncio.gather(*tasks)
 
-            results = asyncio.run(_async_fetch_pnls())
-            for wallet, pnl_data in zip(wallets_to_fetch, results):
-                if pnl_data:
-                    wallet_data[wallet]['pnl_data'] = pnl_data
-                    self._process_wallet_pnl(wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier)
-                else:
-                    self._log(f"[STEP 5] ⚠️  {wallet[:8]} API returned None — skipped")
+            if wallets_to_fetch:
+                results = asyncio.run(_async_fetch_pnls())
+                for wallet, pnl_data in zip(wallets_to_fetch, results):
+                    if pnl_data:
+                        wallet_data[wallet]['pnl_data'] = pnl_data
+                        self._process_wallet_pnl(wallet, pnl_data, wallet_data,
+                                                 qualified_wallets, min_roi_multiplier)
 
             self._log(f"✓ Found {len(qualified_wallets)} qualified wallets")
 
             # ------------------------------------------------------------------
-            # Score and rank — single token mode (10% = realized ROI)
+            # Score and rank — single token mode
             # ------------------------------------------------------------------
             self._log("\n[SCORING] Ranking by professional score...")
             ath_data  = self.get_token_ath(token_address)
@@ -1425,9 +1562,10 @@ class WalletPumpAnalyzer:
             wallet_results = []
             for wallet_info in qualified_wallets:
                 wallet_address = wallet_info['wallet']
-                runner_history = self._get_cached_other_runners(wallet_address, current_token=token_address, min_multiplier=10.0)
+                runner_history = self._get_cached_other_runners(
+                    wallet_address, current_token=token_address, min_multiplier=10.0
+                )
                 wallet_info['ath_price'] = ath_price
-                # Single token: no consistency_score passed → uses realized ROI for 10%
                 scoring_data = self.calculate_wallet_relative_score(wallet_info)
 
                 if scoring_data['professional_score'] >= 90:   tier = 'S'
@@ -1435,10 +1573,11 @@ class WalletPumpAnalyzer:
                 elif scoring_data['professional_score'] >= 70: tier = 'B'
                 else:                                          tier = 'C'
 
-                wallet_results.append({
+                wallet_result = {
                     'wallet':                  wallet_address,
                     'source':                  wallet_info['source'],
                     'tier':                    tier,
+                    'is_cross_token':          False,
                     'roi_percent':             round((wallet_info['realized_multiplier'] - 1) * 100, 2),
                     'roi_multiplier':          round(wallet_info['realized_multiplier'], 2),
                     'entry_to_ath_multiplier': scoring_data.get('entry_to_ath_multiplier'),
@@ -1460,24 +1599,36 @@ class WalletPumpAnalyzer:
                     'first_buy_time':          wallet_info.get('earliest_entry'),
                     'entry_price':             wallet_info.get('entry_price'),
                     'ath_price':               ath_price,
-                    'is_fresh':                True
-                })
+                    'is_fresh':                True,
+                }
+
+                # Carry through holder conviction fields if present
+                for holder_field in ['holding_amount', 'holding_usd', 'holding_pct']:
+                    if wallet_info.get(holder_field):
+                        wallet_result[holder_field] = wallet_info[holder_field]
+
+                wallet_results.append(wallet_result)
 
             wallet_results.sort(key=lambda x: x['professional_score'], reverse=True)
             self._log(f"✅ Analysis complete: {len(wallet_results)} qualified wallets")
             if wallet_results:
-                self._log(f"   Top score: {wallet_results[0]['professional_score']} ({wallet_results[0]['professional_grade']})")
+                self._log(
+                    f"   Top score: {wallet_results[0]['professional_score']} "
+                    f"({wallet_results[0]['professional_grade']})"
+                )
 
             return wallet_results
 
         finally:
             pass
 
-    def _process_wallet_pnl(self, wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier):
+    def _process_wallet_pnl(self, wallet, pnl_data, wallet_data,
+                             qualified_wallets, min_roi_multiplier):
         """
         Qualification: realized OR total multiplier >= threshold.
-        A holder on 3x unrealized qualifies the same as someone who sold at 3x.
+        Conviction holders with all-unrealized gains qualify the same as sellers.
         Min invested: $100.
+        Holder position fields carried through if present.
         """
         realized       = pnl_data.get('realized', 0)
         unrealized     = pnl_data.get('unrealized', 0)
@@ -1492,16 +1643,24 @@ class WalletPumpAnalyzer:
         total_multiplier    = (realized + unrealized + total_invested) / total_invested
 
         if realized_multiplier < min_roi_multiplier and total_multiplier < min_roi_multiplier:
-            print(f"[QUALIFY] ❌ {wallet[:8]} [{source}] FAIL — realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x (min={min_roi_multiplier:.1f}x) invested=${total_invested:.2f}")
+            print(
+                f"[QUALIFY] ❌ {wallet[:8]} [{source}] FAIL — "
+                f"realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x "
+                f"(min={min_roi_multiplier:.1f}x) invested=${total_invested:.2f}"
+            )
             return False
 
         earliest_entry = wallet_data[wallet].get('earliest_entry')
         if not earliest_entry:
             earliest_entry = pnl_data.get('first_buy_time', 0)
 
-        print(f"[QUALIFY] ✅ {wallet[:8]} [{source}] PASS — invested=${total_invested:.2f} realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x")
+        print(
+            f"[QUALIFY] ✅ {wallet[:8]} [{source}] PASS — "
+            f"invested=${total_invested:.2f} "
+            f"realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x"
+        )
 
-        qualified_wallets.append({
+        wallet_entry = {
             'wallet':              wallet,
             'source':              source,
             'realized':            realized,
@@ -1511,14 +1670,24 @@ class WalletPumpAnalyzer:
             'total_multiplier':    total_multiplier,
             'earliest_entry':      earliest_entry,
             'entry_price':         wallet_data[wallet].get('entry_price'),
-            'cost_basis':          pnl_data.get('cost_basis', 0)
-        })
+            'cost_basis':          pnl_data.get('cost_basis', 0),
+        }
+
+        # Carry through holder position fields for frontend conviction display
+        for holder_field in ['holding_amount', 'holding_usd', 'holding_pct']:
+            if wallet_data[wallet].get(holder_field):
+                wallet_entry[holder_field] = wallet_data[wallet][holder_field]
+
+        qualified_wallets.append(wallet_entry)
         return True
 
     # =========================================================================
-    # BATCH ANALYSIS
-    # Uses entry consistency (10%) instead of realized ROI for the 10% slot
-    # Consistency = variance of entry_price/launch_price multiplier across tokens
+    # BATCH ANALYSIS (synchronous path — mirrors distributed worker logic)
+    #
+    # Cross-token wallets:  scored with aggregate formula (60/30/10)
+    # Single-token wallets: scored individually (professional_score)
+    # Merged: cross-token first, fill to 20 with best single-token
+    # Tagged: is_cross_token on every wallet for frontend display
     # =========================================================================
 
     def _assign_tier(self, runner_count, aggregate_score, tokens_analyzed):
@@ -1531,28 +1700,8 @@ class WalletPumpAnalyzer:
         else:                                                      return 'C'
 
     def _calculate_consistency(self, wallet_address, tokens_traded_list):
-        """
-        Compute entry consistency score (0-100) from variance of
-        entry_price / launch_price multiplier across all tokens traded.
-
-        Low variance = consistently enters near launch = high score.
-        High variance = inconsistent entry timing = low score.
-
-        Typical ratio values:
-          1.0x = entered exactly at launch price
-          2.0x = entered when price was 2x from launch
-          5.0x = entered when price was 5x from launch
-
-        Variance thresholds (practical calibration):
-          0.0  → 100 (perfect consistency)
-          0.5  → 95
-          1.0  → 90
-          5.0  → 50
-          10.0 → 0
-        """
         if len(tokens_traded_list) < 2:
-            return 50  # neutral — can't compute variance from one token
-
+            return 50
         entry_ratios = []
         for token_address in tokens_traded_list:
             launch_price = self._get_token_launch_price(token_address)
@@ -1565,14 +1714,10 @@ class WalletPumpAnalyzer:
             if entry_price == 0:
                 continue
             entry_ratios.append(entry_price / launch_price)
-
         if len(entry_ratios) < 2:
-            return 50  # not enough data points
-
+            return 50
         try:
             variance = statistics.variance(entry_ratios)
-            # Scale: variance * 10 → 100 to 0 range
-            # variance of 10 maps to score 0, variance of 0 maps to score 100
             return round(max(0, 100 - (variance * 10)), 1)
         except Exception:
             return 50
@@ -1591,13 +1736,14 @@ class WalletPumpAnalyzer:
             'professional_scores':   [],
             'entry_to_ath_vals':     [],
             'distance_to_ath_vals':  [],
-            'roi_multipliers':       [],       # realized ROI per token (for reference)
-            'total_roi_multipliers': [],       # total ROI (realized + unrealized) — used for 30%
+            'roi_multipliers':       [],
+            'total_roi_multipliers': [],
+            # Keep raw wallet result for individual scoring fallback
+            'raw_wallet_results':    [],
         })
 
         for idx, runner in enumerate(runners_list, 1):
             self._log(f"\n[{idx}/{len(runners_list)}] Analyzing {runner.get('symbol', 'UNKNOWN')}")
-
             wallets = self.analyze_token_professional(
                 token_address=runner['address'],
                 token_symbol=runner.get('symbol', 'UNKNOWN'),
@@ -1625,199 +1771,109 @@ class WalletPumpAnalyzer:
                     'distance_to_ath_pct':     wallet.get('distance_to_ath_pct'),
                     'entry_price':             wallet.get('entry_price'),
                 })
-
                 wallet_hits[wallet_addr]['professional_scores'].append(wallet['professional_score'])
+                wallet_hits[wallet_addr]['raw_wallet_results'].append(wallet)
                 if wallet.get('entry_to_ath_multiplier'):
                     wallet_hits[wallet_addr]['entry_to_ath_vals'].append(wallet['entry_to_ath_multiplier'])
                 if wallet.get('distance_to_ath_pct'):
                     wallet_hits[wallet_addr]['distance_to_ath_vals'].append(wallet['distance_to_ath_pct'])
                 wallet_hits[wallet_addr]['roi_multipliers'].append(wallet['roi_multiplier'])
-                # Track total ROI (realized + unrealized) for the 30% scoring component
                 wallet_hits[wallet_addr]['total_roi_multipliers'].append(
                     wallet.get('total_multiplier') or wallet['roi_multiplier']
                 )
 
-        smart_money = []
-        no_overlap_fallback = False
+        cross_token_wallets  = []
+        single_token_wallets = []
 
-        def _build_entry(wallet_addr, data, tokens_analyzed):
-            avg_distance_to_ath = (
-                sum(data['distance_to_ath_vals']) / len(data['distance_to_ath_vals'])
-                if data['distance_to_ath_vals'] else 0
-            )
-            # 30% — total ROI (realized + unrealized), not just realized
-            avg_total_roi = (
-                sum(data['total_roi_multipliers']) / len(data['total_roi_multipliers'])
-                if data['total_roi_multipliers'] else 0
-            )
-            # 10% — entry consistency (variance of entry_price/launch_price across tokens)
-            consistency_score = self._calculate_consistency(
-                wallet_addr, list(data['runners_hit_addresses'])
-            )
+        for wallet_addr, d in wallet_hits.items():
+            runner_count  = len(d['runners_hit'])
+            avg_dist      = sum(d['distance_to_ath_vals']) / len(d['distance_to_ath_vals']) if d['distance_to_ath_vals'] else 0
+            avg_total_roi = sum(d['total_roi_multipliers']) / len(d['total_roi_multipliers']) if d['total_roi_multipliers'] else 0
+            avg_ath       = sum(d['entry_to_ath_vals']) / len(d['entry_to_ath_vals']) if d['entry_to_ath_vals'] else None
 
-            # Aggregate score: 60/30/10 with total ROI and consistency
-            aggregate_score = (
-                0.60 * avg_distance_to_ath +
-                0.30 * (avg_total_roi / 10 * 100) +
-                0.10 * consistency_score
-            )
+            if runner_count >= min_runner_hits:
+                # Cross-token: aggregate score
+                consistency_score = self._calculate_consistency(
+                    wallet_addr, list(d['runners_hit_addresses'])
+                )
+                aggregate_score = (
+                    0.60 * avg_dist +
+                    0.30 * (avg_total_roi / 10 * 100) +
+                    0.10 * consistency_score
+                )
+                tier = self._assign_tier(runner_count, aggregate_score, len(runners_list))
 
-            tier = self._assign_tier(len(data['runners_hit']), aggregate_score, tokens_analyzed)
-            variance = (
-                statistics.variance(data['professional_scores'])
-                if len(data['professional_scores']) > 1 else 0
-            )
+                full_history  = self._get_cached_other_runners(wallet_addr)
+                outside_batch = [
+                    r for r in full_history['other_runners']
+                    if r['address'] not in d['runners_hit_addresses']
+                ]
 
-            if variance < 10:   consistency_grade = 'A+'
-            elif variance < 20: consistency_grade = 'A'
-            elif variance < 30: consistency_grade = 'B'
-            elif variance < 40: consistency_grade = 'C'
-            else:               consistency_grade = 'D'
+                cross_token_wallets.append({
+                    'wallet':                      wallet_addr,
+                    'is_cross_token':              True,
+                    'runner_count':                runner_count,
+                    'runners_hit':                 d['runners_hit'],
+                    'avg_distance_to_ath_pct':     round(avg_dist, 2),
+                    'avg_total_roi':               round(avg_total_roi, 2),
+                    'avg_entry_to_ath_multiplier': round(avg_ath, 2) if avg_ath else None,
+                    'consistency_score':           consistency_score,
+                    'aggregate_score':             round(aggregate_score, 2),
+                    'tier':                        tier,
+                    'roi_details':                 d['roi_details'][:5],
+                    'outside_batch_runners':       outside_batch[:5],
+                    'full_30d_stats':              full_history['stats'],
+                    'is_fresh':                    True,
+                    'score_breakdown': {
+                        'entry_score':       round(0.60 * avg_dist, 2),
+                        'total_roi_score':   round(0.30 * (avg_total_roi / 10 * 100), 2),
+                        'consistency_score': round(0.10 * consistency_score, 2),
+                    }
+                })
 
-            full_history  = self._get_cached_other_runners(wallet_addr)
-            outside_batch = [r for r in full_history['other_runners'] if r['address'] not in data['runners_hit_addresses']]
+            else:
+                # Single-token: individual professional_score
+                # Use best-scoring token result for this wallet
+                best_result = max(d['raw_wallet_results'], key=lambda w: w['professional_score'])
+                single_token_wallets.append({
+                    **best_result,
+                    'is_cross_token': False,
+                    'runner_count':   runner_count,
+                    'runners_hit':    d['runners_hit'],
+                    'roi_details':    d['roi_details'][:5],
+                })
 
-            avg_score = sum(data['professional_scores']) / len(data['professional_scores'])
-            avg_realized_roi = (
-                sum(data['roi_multipliers']) / len(data['roi_multipliers'])
-                if data['roi_multipliers'] else 0
-            )
-            avg_entry_to_ath = (
-                round(sum(data['entry_to_ath_vals']) / len(data['entry_to_ath_vals']), 2)
-                if data['entry_to_ath_vals'] else None
-            )
+        cross_token_wallets.sort(
+            key=lambda x: (x['runner_count'], x['aggregate_score']), reverse=True
+        )
+        single_token_wallets.sort(
+            key=lambda x: x['professional_score'], reverse=True
+        )
 
-            return {
-                'wallet':                      wallet_addr,
-                'runner_count':                len(data['runners_hit']),
-                'runners_hit':                 data['runners_hit'],
-                'avg_distance_to_ath_pct':     round(avg_distance_to_ath, 2),
-                'avg_total_roi':               round(avg_total_roi, 2),
-                'avg_roi':                     round(avg_realized_roi, 2),  # kept for compat
-                'consistency_score':           consistency_score,
-                'aggregate_score':             round(aggregate_score, 2),
-                'tier':                        tier,
-                'avg_professional_score':      round(avg_score, 2),
-                'avg_entry_to_ath_multiplier': avg_entry_to_ath,
-                'variance':                    round(variance, 2),
-                'consistency_grade':           consistency_grade,
-                'roi_details':                 data['roi_details'][:5],
-                'total_runners_30d':           len(data['runners_hit']) + len(outside_batch),
-                'outside_batch_runners':       outside_batch[:5],
-                'full_30d_stats':              full_history['stats'],
-                'is_fresh':                    True,
-                'score_breakdown': {
-                    'entry_score':       round(0.60 * avg_distance_to_ath, 2),
-                    'total_roi_score':   round(0.30 * (avg_total_roi / 10 * 100), 2),
-                    'consistency_score': round(0.10 * consistency_score, 2),
-                }
-            }
+        cross_top       = cross_token_wallets[:20]
+        slots_remaining = max(0, 20 - len(cross_top))
+        single_fill     = single_token_wallets[:slots_remaining]
+        final_results   = cross_top + single_fill
 
-        # Apply min_runner_hits filter — wallets that don't appear across enough tokens excluded
-        for wallet_addr, data in wallet_hits.items():
-            if len(data['runners_hit']) >= min_runner_hits:
-                smart_money.append(_build_entry(wallet_addr, data, len(runners_list)))
-
-        if not smart_money:
-            self._log(f"\n⚠️ No cross-token overlap — showing all wallets ranked individually")
-            no_overlap_fallback = True
-            for wallet_addr, data in wallet_hits.items():
-                entry = _build_entry(wallet_addr, data, len(runners_list))
-                entry['no_overlap_fallback'] = True
-                smart_money.append(entry)
-            smart_money.sort(key=lambda x: x['aggregate_score'], reverse=True)
-        else:
-            # Primary: most tokens participated → Secondary: aggregate score
-            smart_money.sort(key=lambda x: (x['runner_count'], x['aggregate_score']), reverse=True)
-
-        self._log(f"\n✅ Found {len(smart_money)} {'individual' if no_overlap_fallback else 'cross-token'} wallets")
-        return smart_money
+        self._log(
+            f"\n✅ Batch complete: {len(cross_top)} cross-token + "
+            f"{len(single_fill)} single-token fill = {len(final_results)} total"
+        )
+        return final_results
 
     def batch_analyze_tokens(self, tokens, min_roi_multiplier=3.0, user_id='default_user'):
-        wallet_hits = defaultdict(lambda: {
-            'wallet': None, 'tokens_hit': [], 'token_addresses': set(),
-            'performances': [], 'entry_to_ath_values': [],
-            'realized_roi_values': [], 'total_roi_values': [], 'professional_scores': []
-        })
-
-        for idx, token in enumerate(tokens, 1):
-            print(f"\n[{idx}/{len(tokens)}] ANALYZING: {token['ticker']}")
-            wallets = self.analyze_token_professional(
-                token_address=token['address'],
-                token_symbol=token.get('ticker', 'UNKNOWN'),
-                min_roi_multiplier=min_roi_multiplier,
-                user_id=user_id
-            )
-
-            for wallet in wallets:
-                addr = wallet['wallet']
-                if wallet_hits[addr]['wallet'] is None:
-                    wallet_hits[addr]['wallet'] = addr
-                if token['ticker'] not in wallet_hits[addr]['tokens_hit']:
-                    wallet_hits[addr]['tokens_hit'].append(token['ticker'])
-                    wallet_hits[addr]['token_addresses'].add(token['address'])
-                wallet_hits[addr]['performances'].append({
-                    'token':                   token['ticker'],
-                    'token_address':           token['address'],
-                    'professional_score':      wallet['professional_score'],
-                    'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
-                    'realized_roi':            wallet['roi_multiplier'],
-                    'total_roi':               wallet.get('total_multiplier'),
-                    'invested':                wallet.get('total_invested', 0),
-                    'realized':                wallet.get('realized_profit', 0),
-                    'entry_price':             wallet.get('entry_price'),
-                })
-                wallet_hits[addr]['professional_scores'].append(wallet['professional_score'])
-                if wallet.get('entry_to_ath_multiplier'):
-                    wallet_hits[addr]['entry_to_ath_values'].append(wallet['entry_to_ath_multiplier'])
-                wallet_hits[addr]['realized_roi_values'].append(wallet['roi_multiplier'])
-                wallet_hits[addr]['total_roi_values'].append(
-                    wallet.get('total_multiplier') or wallet['roi_multiplier']
-                )
-
-        def _build_ranked(addr, data):
-            avg_score        = sum(data['professional_scores']) / len(data['professional_scores']) if data['professional_scores'] else 0
-            avg_entry_to_ath = sum(data['entry_to_ath_values']) / len(data['entry_to_ath_values']) if data['entry_to_ath_values'] else None
-            avg_total_roi    = sum(data['total_roi_values']) / len(data['total_roi_values']) if data['total_roi_values'] else 0
-            consistency_score = self._calculate_consistency(addr, list(data['token_addresses']))
-            variance          = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
-            if variance < 10:   cg = 'A+'
-            elif variance < 20: cg = 'A'
-            elif variance < 30: cg = 'B'
-            elif variance < 40: cg = 'C'
-            else:               cg = 'D'
-            return {
-                'wallet':                      addr,
-                'token_count':                 len(data['tokens_hit']),
-                'tokens_hit':                  data['tokens_hit'],
-                'avg_professional_score':      round(avg_score, 2),
-                'avg_entry_to_ath_multiplier': round(avg_entry_to_ath, 2) if avg_entry_to_ath else None,
-                'avg_total_roi':               round(avg_total_roi, 2),
-                'consistency_score':           consistency_score,
-                'consistency_grade':           cg,
-                'variance':                    round(variance, 2),
-                'performances':                data['performances'][:5],
-                'professional_grade':          'A+' if avg_score >= 90 else 'A' if avg_score >= 85 else 'B',
-                'runner_hits_30d':             0,
-                'is_fresh':                    True
+        """Legacy synchronous batch — delegates to batch_analyze_runners_professional."""
+        runners = [
+            {
+                'address': t['address'],
+                'symbol':  t.get('ticker', t.get('symbol', 'UNKNOWN')),
             }
-
-        ranked_wallets = [_build_ranked(addr, data) for addr, data in wallet_hits.items()]
-
-        if not ranked_wallets:
-            for addr, data in wallet_hits.items():
-                if sum(p.get('invested', 0) for p in data['performances']) >= 100:
-                    entry = _build_ranked(addr, data)
-                    entry['no_overlap_fallback'] = True
-                    ranked_wallets.append(entry)
-            ranked_wallets.sort(key=lambda x: x['avg_professional_score'], reverse=True)
-        else:
-            ranked_wallets.sort(
-                key=lambda x: (x['token_count'], x['avg_professional_score'], -x['variance']),
-                reverse=True
-            )
-
-        return ranked_wallets[:20]
+            for t in tokens
+        ]
+        return self.batch_analyze_runners_professional(
+            runners, min_runner_hits=2,
+            min_roi_multiplier=min_roi_multiplier, user_id=user_id
+        )
 
     # =========================================================================
     # REPLACEMENT FINDER
@@ -1825,20 +1881,16 @@ class WalletPumpAnalyzer:
 
     def find_replacement_wallets(self, declining_wallet_address, user_id='default_user',
                                  min_professional_score=85, max_results=3):
-        print(f"\n{'='*80}")
-        print(f"FINDING REPLACEMENTS FOR: {declining_wallet_address[:8]}...")
-
         declining_profile = self._get_wallet_profile_from_watchlist(user_id, declining_wallet_address)
         if not declining_profile:
             return []
-
         runners = self.find_trending_runners_enhanced(days_back=30, min_multiplier=5.0, min_liquidity=50000)
         if not runners:
             return []
 
         all_candidates = []
         for runner in runners[:10]:
-            wallets = self.analyze_token_professional(
+            wallets   = self.analyze_token_professional(
                 token_address=runner['address'],
                 token_symbol=runner['symbol'],
                 min_roi_multiplier=3.0,
@@ -1867,7 +1919,7 @@ class WalletPumpAnalyzer:
     def _get_wallet_profile_from_watchlist(self, user_id, wallet_address):
         try:
             from db.watchlist_db import WatchlistDatabase
-            db = WatchlistDatabase()
+            db        = WatchlistDatabase()
             watchlist = db.get_wallet_watchlist(user_id)
             wallet_data = next((w for w in watchlist if w['wallet_address'] == wallet_address), None)
             if not wallet_data:
@@ -1899,10 +1951,9 @@ class WalletPumpAnalyzer:
         else:
             token_score = 0.5
 
-        tier_values = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
+        tier_values          = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
         declining_tier_value = tier_values.get(declining_profile['tier'], 1)
-        candidate_tier       = candidate.get('tier', 'C')
-        candidate_tier_value = tier_values.get(candidate_tier, 1)
+        candidate_tier_value = tier_values.get(candidate.get('tier', 'C'), 1)
 
         if candidate_tier_value >= declining_tier_value:     tier_score = 1.0
         elif candidate_tier_value == declining_tier_value-1: tier_score = 0.7
@@ -1923,8 +1974,10 @@ class WalletPumpAnalyzer:
             activity_score * 0.20 + consistency_score * 0.10
         )
         return {'total_score': total_score, 'breakdown': {
-            'token_overlap': token_score, 'tier_match': tier_score,
-            'activity_level': activity_score, 'consistency': consistency_score
+            'token_overlap':  token_score,
+            'tier_match':     tier_score,
+            'activity_level': activity_score,
+            'consistency':    consistency_score
         }}
 
     def _explain_why_better(self, declining_profile, candidate):

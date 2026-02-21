@@ -110,7 +110,7 @@ export function useRecents({ apiUrl, userId, getAccessToken, panelKey }) {
     } catch (e) {
       console.error('[RECENTS] Clear error:', e);
       loadRecents(); // revert on failure
-    }
+    }s
   }, [apiUrl, scopedUserId, authHeaders, loadRecents]);
 
   return {

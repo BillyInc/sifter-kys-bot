@@ -15,7 +15,7 @@ import ProfilePanel       from './components/panels/ProfilePanel';
 import HelpSupportPanel   from './components/panels/HelpSupportPanel';
 import ResultsPanel       from './components/panels/ResultsPanel';
 import RecentResultsList  from './components/RecentResultsList';
-import { useRecents }     from './hooks/useRecentResults';
+import { useRecents }     from './components/hooks/useRecentResults';
 
 import WalletActivityMonitor  from './WalletActivityMonitor';
 import WalletAlertSettings    from './WalletAlertSettings';
@@ -557,8 +557,14 @@ export default function SifterKYS() {
           />
         )}
 
+        {/* ✅ getAccessToken now passed so auth header is sent — no more "user_id required" */}
         {openPanel === 'quickadd' && (
-          <QuickAddWalletPanel userId={userId} apiUrl={API_URL} onSuccess={handleClosePanel} />
+          <QuickAddWalletPanel
+            userId={userId}
+            apiUrl={API_URL}
+            onSuccess={handleClosePanel}
+            getAccessToken={getAccessToken}
+          />
         )}
 
         {openPanel === 'profile' && (
