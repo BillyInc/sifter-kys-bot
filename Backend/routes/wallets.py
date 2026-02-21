@@ -113,7 +113,8 @@ def analyze_wallets():
             'progress': 0,
             'phase': 'queued',
             'tokens_total': len(tokens),
-            'tokens_completed': 0
+            'tokens_completed': 0,
+            'token_address': tokens[0]['address'] if len(tokens) == 1 else None
         }).execute()
 
         job = q.enqueue('services.worker_tasks.perform_wallet_analysis', {
@@ -316,6 +317,7 @@ def get_trending_runners():
         days_map = {'7d': 7, '14d': 14, '30d': 30}
         days_back = days_map.get(timeframe, 7)
 
+        # This now checks Redis/DuckDB cache first
         runners = wallet_analyzer.find_trending_runners_enhanced(
             days_back=days_back,
             min_multiplier=min_multiplier,
@@ -358,27 +360,42 @@ def analyze_trending_runner():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        wallet_analyzer = get_wallet_analyzer()
-
-        wallets = wallet_analyzer.analyze_token_professional(
-            token_address=runner['address'],
-            token_symbol=runner.get('symbol', 'UNKNOWN'),
-            min_roi_multiplier=min_roi_multiplier,
-            user_id=user_id
-        )
+        from flask import current_app
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        for wallet in wallets:
-            wallet['analyzed_tokens'] = [runner.get('symbol', 'UNKNOWN')]
-            if 'consistency_score' in wallet:
-                del wallet['consistency_score']
-
+        q = current_app.config['RQ_QUEUE']
+        supabase = get_supabase_client()
+        
+        job_id = str(uuid.uuid4())
+        
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
+            'job_id': job_id,
+            'user_id': user_id,
+            'status': 'pending',
+            'progress': 0,
+            'phase': 'queued',
+            'tokens_total': 1,
+            'tokens_completed': 0,
+            'token_address': runner['address']
+        }).execute()
+        
+        # Queue the analysis job
+        q.enqueue('services.worker_tasks.perform_wallet_analysis', {
+            'tokens': [{
+                'address': runner['address'],
+                'ticker': runner.get('symbol', 'UNKNOWN'),
+                'chain': runner.get('chain', 'solana')
+            }],
+            'user_id': user_id,
+            'global_settings': {'min_roi_multiplier': min_roi_multiplier},
+            'job_id': job_id
+        })
+        
         return jsonify({
             'success': True,
-            'runner': runner,
-            'wallets': wallets[:20],
-            'total_wallets': len(wallets),
-            'tokens_analyzed': [runner.get('symbol', 'UNKNOWN')],
-        }), 200
+            'job_id': job_id,
+            'status': 'pending'
+        }), 202
 
     except Exception as e:
         print(f"\n[RUNNER ANALYSIS ERROR] {str(e)}")
@@ -399,35 +416,42 @@ def analyze_trending_runners_batch():
             return jsonify({'error': 'runners array required'}), 400
 
         runners = data['runners']
-        min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         min_runner_hits = data.get('min_runner_hits', 2)
+        min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        wallet_analyzer = get_wallet_analyzer()
-
-        print(f"\n{'='*80}")
-        print(f"BATCH TRENDING ANALYSIS: {len(runners)} runners")
-        print(f"Using TokenAnalyzer Token Overlap Method")
-        print(f"{'='*80}")
-
-        smart_money = wallet_analyzer.batch_analyze_runners_professional(
-            runners_list=runners,
-            min_runner_hits=min_runner_hits,
-            min_roi_multiplier=min_roi_multiplier,
-            user_id=user_id
-        )
+        from flask import current_app
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        for wallet in smart_money:
-            wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
-
+        q = current_app.config['RQ_QUEUE']
+        supabase = get_supabase_client()
+        
+        job_id = str(uuid.uuid4())
+        
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
+            'job_id': job_id,
+            'user_id': user_id,
+            'status': 'pending',
+            'progress': 0,
+            'phase': 'queued',
+            'tokens_total': len(runners),
+            'tokens_completed': 0
+        }).execute()
+        
+        # Queue the batch analysis job
+        q.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
+            'runners': runners,
+            'user_id': user_id,
+            'min_runner_hits': min_runner_hits,
+            'min_roi_multiplier': min_roi_multiplier,
+            'job_id': job_id
+        })
+        
         return jsonify({
             'success': True,
-            'runners_analyzed': len(runners),
-            'wallets_discovered': len(smart_money),
-            'smart_money_wallets': smart_money[:50],
-            'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners],
-            'mode': 'batch_trending_token_overlap',
-        }), 200
+            'job_id': job_id,
+            'status': 'pending'
+        }), 202
 
     except Exception as e:
         print(f"\n[BATCH TRENDING ERROR] {str(e)}")
@@ -452,40 +476,37 @@ def auto_discover_wallets():
         min_runner_hits = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
-        wallet_analyzer = get_wallet_analyzer()
-
-        runners = wallet_analyzer.find_trending_runners_enhanced(
-            days_back=30,
-            min_multiplier=5.0,
-            min_liquidity=50000
-        )
-
-        if not runners:
-            return jsonify({
-                'success': False,
-                'error': 'No secure trending runners found'
-            }), 200
-
-        smart_money = wallet_analyzer.batch_analyze_runners_professional(
-            runners_list=runners[:10],
-            min_runner_hits=min_runner_hits,
-            min_roi_multiplier=min_roi_multiplier,
-            user_id=user_id
-        )
+        from flask import current_app
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        for wallet in smart_money:
-            wallet['analyzed_tokens'] = wallet.get('runners_hit', [])
-
+        q = current_app.config['RQ_QUEUE']
+        supabase = get_supabase_client()
+        
+        job_id = str(uuid.uuid4())
+        
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
+            'job_id': job_id,
+            'user_id': user_id,
+            'status': 'pending',
+            'progress': 0,
+            'phase': 'queued',
+            'tokens_total': 10,
+            'tokens_completed': 0
+        }).execute()
+        
+        # Queue the auto-discovery job
+        q.enqueue('services.worker_tasks.perform_auto_discovery', {
+            'user_id': user_id,
+            'min_runner_hits': min_runner_hits,
+            'min_roi_multiplier': min_roi_multiplier,
+            'job_id': job_id
+        })
+        
         return jsonify({
             'success': True,
-            'runners_analyzed': min(len(runners), 10),
-            'wallets_discovered': len(smart_money),
-            'top_wallets': smart_money[:50],
-            'smart_money_wallets': smart_money[:50],
-            'tokens_analyzed': [r.get('symbol', 'UNKNOWN') for r in runners[:10]],
-            'security_filtered': True,
-            'security_info': 'All tokens verified: liquidity locked, mint revoked, has social'
-        }), 200
+            'job_id': job_id,
+            'status': 'pending'
+        }), 202
 
     except Exception as e:
         print(f"\n[DISCOVER ERROR] {str(e)}")

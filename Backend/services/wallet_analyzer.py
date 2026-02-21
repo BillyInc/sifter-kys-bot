@@ -909,16 +909,19 @@ class WalletPumpAnalyzer:
 
     # =========================================================================
     # SCORING
+    # FIX: 30% weight now uses total_multiplier (realized + unrealized).
+    #      Holders who bought early and haven't sold are scored fairly.
+    #      10% weight uses realized_multiplier as a secondary signal.
     # =========================================================================
 
     def calculate_wallet_relative_score(self, wallet_data):
         try:
-            # FIX: Use 'or 0' to handle None values gracefully
             entry_price         = wallet_data.get('entry_price') or 0
             ath_price           = wallet_data.get('ath_price') or 0
             realized_multiplier = wallet_data.get('realized_multiplier') or 0
             total_multiplier    = wallet_data.get('total_multiplier') or 0
 
+            # 60% — how early the entry was relative to ATH
             if entry_price > 0 and ath_price > 0:
                 distance_to_ath_pct     = ((ath_price - entry_price) / ath_price) * 100
                 entry_to_ath_multiplier = ath_price / entry_price
@@ -935,6 +938,16 @@ class WalletPumpAnalyzer:
                 distance_to_ath_pct = 0
                 entry_to_ath_multiplier = 0
 
+            # 30% — total ROI (realized + unrealized). Holders score same as sellers.
+            if total_multiplier >= 100:  total_roi_score = 100
+            elif total_multiplier >= 50: total_roi_score = 90
+            elif total_multiplier >= 25: total_roi_score = 80
+            elif total_multiplier >= 10: total_roi_score = 70
+            elif total_multiplier >= 5:  total_roi_score = 60
+            elif total_multiplier >= 3:  total_roi_score = 50
+            else:                        total_roi_score = (total_multiplier / 3) * 50
+
+            # 10% — realized ROI. Secondary signal — rewards wallets that locked in profit.
             if realized_multiplier >= 100:  realized_score = 100
             elif realized_multiplier >= 50: realized_score = 90
             elif realized_multiplier >= 25: realized_score = 80
@@ -943,14 +956,8 @@ class WalletPumpAnalyzer:
             elif realized_multiplier >= 3:  realized_score = 50
             else:                           realized_score = (realized_multiplier / 3) * 50
 
-            if total_multiplier >= 100:  total_score = 100
-            elif total_multiplier >= 50: total_score = 90
-            elif total_multiplier >= 25: total_score = 80
-            elif total_multiplier >= 10: total_score = 70
-            elif total_multiplier >= 5:  total_score = 60
-            else:                        total_score = (total_multiplier / 5) * 60
-
-            professional_score = (0.60 * entry_score + 0.30 * realized_score + 0.10 * total_score)
+            # FIX: was (0.60 * entry + 0.30 * realized + 0.10 * total)
+            professional_score = (0.60 * entry_score + 0.30 * total_roi_score + 0.10 * realized_score)
 
             if professional_score >= 90:   grade = 'A+'
             elif professional_score >= 85: grade = 'A'
@@ -964,16 +971,16 @@ class WalletPumpAnalyzer:
             else:                          grade = 'F'
 
             return {
-                'professional_score':    round(professional_score, 2),
-                'professional_grade':    grade,
+                'professional_score':      round(professional_score, 2),
+                'professional_grade':      grade,
                 'entry_to_ath_multiplier': round(entry_to_ath_multiplier, 2) if entry_to_ath_multiplier else None,
-                'distance_to_ath_pct':   round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
-                'realized_multiplier':   round(realized_multiplier, 2) if realized_multiplier else None,
-                'total_multiplier':      round(total_multiplier, 2) if total_multiplier else None,
+                'distance_to_ath_pct':     round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
+                'realized_multiplier':     round(realized_multiplier, 2) if realized_multiplier else None,
+                'total_multiplier':        round(total_multiplier, 2) if total_multiplier else None,
                 'score_breakdown': {
                     'entry_score':    round(entry_score, 2),
-                    'realized_score': round(realized_score, 2),
-                    'total_score':    round(total_score, 2)
+                    'total_roi_score':  round(total_roi_score, 2),   # renamed for clarity
+                    'realized_score': round(realized_score, 2)
                 }
             }
         except Exception as e:
@@ -982,7 +989,7 @@ class WalletPumpAnalyzer:
                 'professional_score': 0, 'professional_grade': 'F',
                 'entry_to_ath_multiplier': None, 'distance_to_ath_pct': None,
                 'realized_multiplier': None, 'total_multiplier': None,
-                'score_breakdown': {'entry_score': 0, 'realized_score': 0, 'total_score': 0}
+                'score_breakdown': {'entry_score': 0, 'total_roi_score': 0, 'realized_score': 0}
             }
 
     # =========================================================================
@@ -1075,8 +1082,8 @@ class WalletPumpAnalyzer:
                 if distance_pct_values:
                     stats['avg_distance_to_ath_pct'] = round(sum(distance_pct_values) / len(distance_pct_values), 2)
 
-                stats['total_invested']    = round(sum(r.get('invested', 0) for r in other_runners), 2)
-                stats['total_realized']    = round(sum(r.get('realized', 0) for r in other_runners), 2)
+                stats['total_invested']      = round(sum(r.get('invested', 0) for r in other_runners), 2)
+                stats['total_realized']      = round(sum(r.get('realized', 0) for r in other_runners), 2)
                 stats['total_other_runners'] = len(other_runners)
 
             return {'other_runners': other_runners, 'stats': stats}
@@ -1087,7 +1094,6 @@ class WalletPumpAnalyzer:
 
     # =========================================================================
     # 5-STEP ANALYSIS
-    # (formerly 6-step — recent trades removed; dedicated entry price step added)
     # =========================================================================
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
@@ -1118,12 +1124,11 @@ class WalletPumpAnalyzer:
                             'source':         'top_traders',
                             'pnl_data':       trader,
                             'earliest_entry': None,
-                            'entry_price':    None,   # resolved in Step 4
+                            'entry_price':    None,
                         }
 
             # ------------------------------------------------------------------
             # STEP 2: First buyers
-            # FIX: Extract entry_price using first_buy math (no API cost)
             # ------------------------------------------------------------------
             self._log("\n[STEP 2] Fetching first buyers...")
             url = f"{self.st_base_url}/first-buyers/{token_address}"
@@ -1138,7 +1143,6 @@ class WalletPumpAnalyzer:
                         first_buyer_wallets.add(wallet)
                         first_buy_time = buyer.get('first_buy_time', 0)
 
-                        # FIX: Extract entry_price from first_buy math
                         first_buy  = buyer.get('first_buy', {})
                         amount     = first_buy.get('amount', 0)
                         volume_usd = first_buy.get('volume_usd', 0)
@@ -1149,7 +1153,7 @@ class WalletPumpAnalyzer:
                                 'source':         'first_buyers',
                                 'pnl_data':       buyer,
                                 'earliest_entry': first_buy_time,
-                                'entry_price':    entry_price,  # FIX: set here
+                                'entry_price':    entry_price,
                             }
                         else:
                             wallet_data[wallet]['pnl_data']       = buyer
@@ -1163,8 +1167,7 @@ class WalletPumpAnalyzer:
                 self._log(f"✓ Found {len(buyers)} first buyers ({len(new_wallets)} new)")
 
             # ------------------------------------------------------------------
-            # STEP 3: Birdeye trades — launch-based 5-day window
-            # FIX: Use from.price (not price_pair), fetch launch time for window
+            # STEP 3: Birdeye trades
             # ------------------------------------------------------------------
             self._log("\n[STEP 3] Fetching Birdeye trades (first 5 days from launch)...")
 
@@ -1222,13 +1225,12 @@ class WalletPumpAnalyzer:
                 wallet = trade.get('owner')
                 if wallet and wallet not in all_wallets:
                     birdeye_wallets.add(wallet)
-                    # FIX: Use from.price (correct field), not price_pair
                     from_data    = trade.get('from', {})
                     actual_price = from_data.get('price')
                     wallet_data[wallet] = {
                         'source':         'birdeye_trades',
                         'earliest_entry': trade.get('block_unix_time'),
-                        'entry_price':    actual_price,  # FIX: correct field
+                        'entry_price':    actual_price,
                     }
 
             new_wallets = birdeye_wallets - all_wallets
@@ -1261,6 +1263,7 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 5: PnL fetch + qualify
+            # FIX: qualification now accepts realized OR total >= min_roi_multiplier
             # ------------------------------------------------------------------
             self._log(f"\n[STEP 5] Fetching PnL for {len(all_wallets)} wallets...")
             wallets_with_pnl = []
@@ -1325,30 +1328,30 @@ class WalletPumpAnalyzer:
                 else:                                          tier = 'C'
 
                 wallet_results.append({
-                    'wallet': wallet_address,
-                    'source': wallet_info['source'],
-                    'tier': tier,
-                    'roi_percent': round((wallet_info['realized_multiplier'] - 1) * 100, 2),
-                    'roi_multiplier': round(wallet_info['realized_multiplier'], 2),
+                    'wallet':                  wallet_address,
+                    'source':                  wallet_info['source'],
+                    'tier':                    tier,
+                    'roi_percent':             round((wallet_info['realized_multiplier'] - 1) * 100, 2),
+                    'roi_multiplier':          round(wallet_info['realized_multiplier'], 2),
                     'entry_to_ath_multiplier': scoring_data.get('entry_to_ath_multiplier'),
-                    'distance_to_ath_pct': scoring_data.get('distance_to_ath_pct'),
-                    'realized_profit': wallet_info['realized'],
-                    'unrealized_profit': wallet_info['unrealized'],
-                    'total_invested': wallet_info['total_invested'],
-                    'cost_basis': wallet_info.get('cost_basis', 0),
-                    'realized_multiplier': scoring_data.get('realized_multiplier'),
-                    'total_multiplier': scoring_data.get('total_multiplier'),
-                    'professional_score': scoring_data['professional_score'],
-                    'professional_grade': scoring_data['professional_grade'],
-                    'score_breakdown': scoring_data['score_breakdown'],
-                    'runner_hits_30d': runner_history['stats'].get('total_other_runners', 0),
-                    'runner_success_rate': runner_history['stats'].get('success_rate', 0),
-                    'runner_avg_roi': runner_history['stats'].get('avg_roi', 0),
-                    'other_runners': runner_history['other_runners'][:5],
-                    'other_runners_stats': runner_history['stats'],
-                    'first_buy_time': wallet_info.get('earliest_entry'),
-                    'entry_price': wallet_info.get('entry_price'),
-                    'is_fresh': True
+                    'distance_to_ath_pct':     scoring_data.get('distance_to_ath_pct'),
+                    'realized_profit':         wallet_info['realized'],
+                    'unrealized_profit':       wallet_info['unrealized'],
+                    'total_invested':          wallet_info['total_invested'],
+                    'cost_basis':              wallet_info.get('cost_basis', 0),
+                    'realized_multiplier':     scoring_data.get('realized_multiplier'),
+                    'total_multiplier':        scoring_data.get('total_multiplier'),
+                    'professional_score':      scoring_data['professional_score'],
+                    'professional_grade':      scoring_data['professional_grade'],
+                    'score_breakdown':         scoring_data['score_breakdown'],
+                    'runner_hits_30d':         runner_history['stats'].get('total_other_runners', 0),
+                    'runner_success_rate':     runner_history['stats'].get('success_rate', 0),
+                    'runner_avg_roi':          runner_history['stats'].get('avg_roi', 0),
+                    'other_runners':           runner_history['other_runners'][:5],
+                    'other_runners_stats':     runner_history['stats'],
+                    'first_buy_time':          wallet_info.get('earliest_entry'),
+                    'entry_price':             wallet_info.get('entry_price'),
+                    'is_fresh':                True
                 })
 
             wallet_results.sort(key=lambda x: x['professional_score'], reverse=True)
@@ -1362,10 +1365,15 @@ class WalletPumpAnalyzer:
             pass
 
     def _process_wallet_pnl(self, wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier):
-        realized      = pnl_data.get('realized', 0)
-        unrealized    = pnl_data.get('unrealized', 0)
+        """
+        FIX: Qualification now accepts realized OR total multiplier >= threshold.
+        A holder who bought early and is sitting on 3x unrealized is just as valid
+        as one who realized 3x.
+        """
+        realized       = pnl_data.get('realized', 0)
+        unrealized     = pnl_data.get('unrealized', 0)
         total_invested = pnl_data.get('total_invested') or pnl_data.get('totalInvested', 0)
-        source        = wallet_data[wallet].get('source', 'unknown')
+        source         = wallet_data[wallet].get('source', 'unknown')
 
         if not total_invested or total_invested < 100:
             print(f"[QUALIFY] ❌ {wallet[:8]} [{source}] FAIL — invested=${total_invested:.2f} (min=$100)")
@@ -1373,10 +1381,9 @@ class WalletPumpAnalyzer:
 
         realized_multiplier = (realized + total_invested) / total_invested
         total_multiplier    = (realized + unrealized + total_invested) / total_invested
-        roi_pct             = (realized_multiplier - 1) * 100
-        min_roi_pct         = (min_roi_multiplier - 1) * 100
 
-        if roi_pct < min_roi_pct:
+        # FIX: pass if EITHER realized or total hits the threshold
+        if realized_multiplier < min_roi_multiplier and total_multiplier < min_roi_multiplier:
             print(f"[QUALIFY] ❌ {wallet[:8]} [{source}] FAIL — realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x (min={min_roi_multiplier:.1f}x) invested=${total_invested:.2f}")
             return False
 
@@ -1387,16 +1394,16 @@ class WalletPumpAnalyzer:
         print(f"[QUALIFY] ✅ {wallet[:8]} [{source}] PASS — invested=${total_invested:.2f} realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x")
 
         qualified_wallets.append({
-            'wallet':               wallet,
-            'source':               source,
-            'realized':             realized,
-            'unrealized':           unrealized,
-            'total_invested':       total_invested,
-            'realized_multiplier':  realized_multiplier,
-            'total_multiplier':     total_multiplier,
-            'earliest_entry':       earliest_entry,
-            'entry_price':          wallet_data[wallet].get('entry_price'),
-            'cost_basis':           pnl_data.get('cost_basis', 0)
+            'wallet':              wallet,
+            'source':              source,
+            'realized':            realized,
+            'unrealized':          unrealized,
+            'total_invested':      total_invested,
+            'realized_multiplier': realized_multiplier,
+            'total_multiplier':    total_multiplier,
+            'earliest_entry':      earliest_entry,
+            'entry_price':         wallet_data[wallet].get('entry_price'),
+            'cost_basis':          pnl_data.get('cost_basis', 0)
         })
         return True
 
@@ -1473,14 +1480,14 @@ class WalletPumpAnalyzer:
                     wallet_hits[wallet_addr]['runners_hit_addresses'].add(runner['address'])
 
                 wallet_hits[wallet_addr]['roi_details'].append({
-                    'runner': runner['symbol'],
-                    'runner_address': runner['address'],
-                    'roi_percent': wallet['roi_percent'],
-                    'roi_multiplier': wallet['roi_multiplier'],
-                    'professional_score': wallet['professional_score'],
-                    'professional_grade': wallet['professional_grade'],
+                    'runner':                  runner['symbol'],
+                    'runner_address':          runner['address'],
+                    'roi_percent':             wallet['roi_percent'],
+                    'roi_multiplier':          wallet['roi_multiplier'],
+                    'professional_score':      wallet['professional_score'],
+                    'professional_grade':      wallet['professional_grade'],
                     'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
-                    'distance_to_ath_pct': wallet.get('distance_to_ath_pct')
+                    'distance_to_ath_pct':     wallet.get('distance_to_ath_pct')
                 })
 
                 wallet_hits[wallet_addr]['professional_scores'].append(wallet['professional_score'])
@@ -1507,27 +1514,27 @@ class WalletPumpAnalyzer:
             elif variance < 40: consistency_grade = 'C'
             else:               consistency_grade = 'D'
 
-            full_history   = self._get_cached_other_runners(wallet_addr)
-            outside_batch  = [r for r in full_history['other_runners'] if r['address'] not in data['runners_hit_addresses']]
+            full_history  = self._get_cached_other_runners(wallet_addr)
+            outside_batch = [r for r in full_history['other_runners'] if r['address'] not in data['runners_hit_addresses']]
 
             return {
-                'wallet': wallet_addr,
-                'runner_count': len(data['runners_hit']),
-                'runners_hit': data['runners_hit'],
-                'avg_distance_to_ath_pct': round(avg_distance_to_ath, 2),
-                'avg_roi': round(avg_roi, 2),
-                'consistency_score': consistency_score,
-                'aggregate_score': round(aggregate_score, 2),
-                'tier': tier,
-                'avg_professional_score': round(sum(data['professional_scores']) / len(data['professional_scores']), 2),
+                'wallet':                      wallet_addr,
+                'runner_count':                len(data['runners_hit']),
+                'runners_hit':                 data['runners_hit'],
+                'avg_distance_to_ath_pct':     round(avg_distance_to_ath, 2),
+                'avg_roi':                     round(avg_roi, 2),
+                'consistency_score':           consistency_score,
+                'aggregate_score':             round(aggregate_score, 2),
+                'tier':                        tier,
+                'avg_professional_score':      round(sum(data['professional_scores']) / len(data['professional_scores']), 2),
                 'avg_entry_to_ath_multiplier': round(sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']), 2) if data['entry_to_ath_multipliers'] else None,
-                'variance': round(variance, 2),
-                'consistency_grade': consistency_grade,
-                'roi_details': data['roi_details'][:5],
-                'total_runners_30d': len(data['runners_hit']) + len(outside_batch),
-                'outside_batch_runners': outside_batch[:5],
-                'full_30d_stats': full_history['stats'],
-                'is_fresh': True
+                'variance':                    round(variance, 2),
+                'consistency_grade':           consistency_grade,
+                'roi_details':                 data['roi_details'][:5],
+                'total_runners_30d':           len(data['runners_hit']) + len(outside_batch),
+                'outside_batch_runners':       outside_batch[:5],
+                'full_30d_stats':              full_history['stats'],
+                'is_fresh':                    True
             }
 
         for wallet_addr, data in wallet_hits.items():
@@ -1572,13 +1579,14 @@ class WalletPumpAnalyzer:
                     wallet_hits[addr]['tokens_hit'].append(token['ticker'])
                     wallet_hits[addr]['token_addresses'].add(token['address'])
                 wallet_hits[addr]['performances'].append({
-                    'token': token['ticker'], 'token_address': token['address'],
-                    'professional_score': wallet['professional_score'],
+                    'token':                   token['ticker'],
+                    'token_address':           token['address'],
+                    'professional_score':      wallet['professional_score'],
                     'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
-                    'realized_roi': wallet['roi_multiplier'],
-                    'total_roi': wallet.get('total_multiplier'),
-                    'invested': wallet.get('total_invested', 0),
-                    'realized': wallet.get('realized_profit', 0)
+                    'realized_roi':            wallet['roi_multiplier'],
+                    'total_roi':               wallet.get('total_multiplier'),
+                    'invested':                wallet.get('total_invested', 0),
+                    'realized':                wallet.get('realized_profit', 0)
                 })
                 wallet_hits[addr]['professional_scores'].append(wallet['professional_score'])
                 if wallet.get('entry_to_ath_multiplier'):
@@ -1586,25 +1594,28 @@ class WalletPumpAnalyzer:
                 wallet_hits[addr]['realized_roi_values'].append(wallet['roi_multiplier'])
 
         def _build_ranked(addr, data):
-            avg_score       = sum(data['professional_scores']) / len(data['professional_scores']) if data['professional_scores'] else 0
+            avg_score        = sum(data['professional_scores']) / len(data['professional_scores']) if data['professional_scores'] else 0
             avg_entry_to_ath = sum(data['entry_to_ath_values']) / len(data['entry_to_ath_values']) if data['entry_to_ath_values'] else None
             avg_realized_roi = sum(data['realized_roi_values']) / len(data['realized_roi_values']) if data['realized_roi_values'] else 0
-            variance        = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
+            variance         = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
             if variance < 10:   cg = 'A+'
             elif variance < 20: cg = 'A'
             elif variance < 30: cg = 'B'
             elif variance < 40: cg = 'C'
             else:               cg = 'D'
             return {
-                'wallet': addr, 'token_count': len(data['tokens_hit']),
-                'tokens_hit': data['tokens_hit'],
-                'avg_professional_score': round(avg_score, 2),
+                'wallet':                      addr,
+                'token_count':                 len(data['tokens_hit']),
+                'tokens_hit':                  data['tokens_hit'],
+                'avg_professional_score':      round(avg_score, 2),
                 'avg_entry_to_ath_multiplier': round(avg_entry_to_ath, 2) if avg_entry_to_ath else None,
-                'avg_realized_roi': round(avg_realized_roi, 2),
-                'consistency_grade': cg, 'variance': round(variance, 2),
-                'performances': data['performances'][:5],
-                'professional_grade': 'A+' if avg_score >= 90 else 'A' if avg_score >= 85 else 'B',
-                'runner_hits_30d': 0, 'is_fresh': True
+                'avg_realized_roi':            round(avg_realized_roi, 2),
+                'consistency_grade':           cg,
+                'variance':                    round(variance, 2),
+                'performances':                data['performances'][:5],
+                'professional_grade':          'A+' if avg_score >= 90 else 'A' if avg_score >= 85 else 'B',
+                'runner_hits_30d':             0,
+                'is_fresh':                    True
             }
 
         ranked_wallets = [_build_ranked(addr, data) for addr, data in wallet_hits.items()]
@@ -1658,9 +1669,9 @@ class WalletPumpAnalyzer:
             if similarity['total_score'] > 0.3:
                 scored_candidates.append({
                     **candidate,
-                    'similarity_score': similarity['total_score'],
+                    'similarity_score':    similarity['total_score'],
                     'similarity_breakdown': similarity['breakdown'],
-                    'why_better': self._explain_why_better(declining_profile, candidate)
+                    'why_better':          self._explain_why_better(declining_profile, candidate)
                 })
 
         scored_candidates.sort(
@@ -1681,12 +1692,12 @@ class WalletPumpAnalyzer:
             if not isinstance(tokens_traded, list):
                 tokens_traded = [t.strip() for t in str(tokens_traded).split(',')]
             return {
-                'wallet_address': wallet_address,
-                'tier': wallet_data.get('tier', 'C'),
+                'wallet_address':    wallet_address,
+                'tier':              wallet_data.get('tier', 'C'),
                 'professional_score': wallet_data.get('avg_professional_score', 0),
-                'tokens_traded': tokens_traded,
-                'avg_roi': wallet_data.get('avg_roi_to_peak', 0),
-                'pump_count': wallet_data.get('pump_count', 0),
+                'tokens_traded':     tokens_traded,
+                'avg_roi':           wallet_data.get('avg_roi_to_peak', 0),
+                'pump_count':        wallet_data.get('pump_count', 0),
                 'consistency_score': wallet_data.get('consistency_score', 0)
             }
         except Exception as e:
@@ -1698,16 +1709,16 @@ class WalletPumpAnalyzer:
         candidate_tokens = {r['symbol'] for r in candidate.get('other_runners', [])}
 
         if declining_tokens and candidate_tokens:
-            overlap = len(declining_tokens & candidate_tokens)
-            total   = len(declining_tokens | candidate_tokens)
+            overlap     = len(declining_tokens & candidate_tokens)
+            total       = len(declining_tokens | candidate_tokens)
             token_score = overlap / total if total > 0 else 0
         else:
             token_score = 0.5
 
         tier_values = {'S': 4, 'A': 3, 'B': 2, 'C': 1}
-        declining_tier_value  = tier_values.get(declining_profile['tier'], 1)
-        candidate_tier        = candidate.get('tier', 'C')
-        candidate_tier_value  = tier_values.get(candidate_tier, 1)
+        declining_tier_value = tier_values.get(declining_profile['tier'], 1)
+        candidate_tier       = candidate.get('tier', 'C')
+        candidate_tier_value = tier_values.get(candidate_tier, 1)
 
         if candidate_tier_value >= declining_tier_value:     tier_score = 1.0
         elif candidate_tier_value == declining_tier_value-1: tier_score = 0.7

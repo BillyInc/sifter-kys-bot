@@ -1,33 +1,56 @@
 """
-RQ Worker Tasks - Fixed with depends_on for true parallelism
-No worker ever blocks waiting for child jobs.
-RQ handles dependency resolution internally via Redis.
+RQ Worker Tasks - Production Ready
+Fixes applied:
+  1. Supabase cache check before queuing any pipeline (instant results for repeat searches)
+  2. Queue separation: high / batch / compute (no deadlocks, priority guaranteed)
+  3. Fixed batch_size = 10 (was // 5, left workers idle)
+  4. Coordinators always go to compute queue (deadlock prevention)
+  5. Batch workers always go to batch queue
+  6. Phase 1 workers always go to high queue
+  7. Qualification accepts realized OR total multiplier >= threshold (holders qualify)
+  8. Batch mode caches each token individually to Supabase for future single-token lookups
+  9. ATH invalidation: skip Redis cache warm if ATH moved >10% since analysis ran
+
+LOCAL TESTING (WSL):
+  Terminal 1:  rq worker high high high
+  Terminal 2:  rq worker batch batch batch batch batch batch batch batch
+  Terminal 3:  rq worker compute compute
+  Total: 13 workers
+
+PRODUCTION (Oracle A1 Flex - 8 OCPU):
+  rq worker high  × 10
+  rq worker batch × 40
+  rq worker compute × 8
+  Total: 58 workers (safe for 8 OCPU)
+
+QUEUE ASSIGNMENT RULES:
+  high    → fetch_top_traders, fetch_first_buyers, fetch_birdeye_trades
+  batch   → fetch_entry_prices_batch, fetch_pnl_batch, fetch_runner_history_batch
+  compute → coordinate_entry_prices, coordinate_pnl_phase, merge_entry_prices,
+             score_and_rank_single, merge_and_save_final, aggregate_cross_token
+
+DEADLOCK RULE: Coordinators that spawn child jobs MUST be on compute queue.
+  If a coordinator lands on batch and all batch workers are busy waiting for it,
+  you get a deadlock. compute queue is always separate and never blocked by batch.
 
 CACHE STRATEGY:
-- Workers use get_worker_analyzer() → DuckDB read-only, writes to Redis only
-- Flask uses get_wallet_analyzer()  → DuckDB read-write, writes to both
-- Celery flushes Redis → DuckDB every hour via flush_redis_to_duckdb task
+  1. Redis cache check (100ms) — keyed by token address, 6hr TTL
+     → Skipped if current ATH is >10% higher than the ATH baked into the cached result
+  2. Supabase lookup (200-500ms) — finds previous completed job for same token
+  3. Full pipeline — only runs if both miss
+
+BATCH CACHING:
+  After a batch of N tokens completes, each token gets its own analysis_jobs row
+  in Supabase. Future single-token searches for any of those tokens hit cache
+  immediately without re-running the pipeline.
 
 PHASE SUMMARY:
-- Phase 1: All sources fetch in parallel.
-    Worker 1 (fetch_top_traders):         PnL data, no entry price
-    Worker 2 (fetch_first_buyers):        PnL data + first_buy math (price derivable, no API cost)
-    Worker 3 (fetch_birdeye_trades):      entry_price from from.price, no PnL
-                                          Uses launch-based 5-day window instead of rolling 30 days
-    Worker 4 (coordinate_entry_prices):   Coordinator — spawns N batch workers after Worker 1
-    Workers 4a..4n (fetch_entry_prices_batch): Parallel batches of ~20 wallets each
-    Worker 4-merge (merge_entry_prices):  Merges all batch results, writes enriched top_traders back
-
-- Phase 2: PnL fetching only.
-    Top Traders:  PnL ✅ + entry_price ✅ (Worker 4) → skip API, go straight to qualify
-    First Buyers: PnL ✅ + price derived from first_buy math → skip API, go straight to qualify
-    Birdeye:      entry_price ✅ but PnL ❌ → fetch PnL only
-
-- Phase 3: Score + rank (no runner history here).
-
-- Phase 4: Runner history fetched in parallel workers of 5 wallets each,
-           for top 20 wallets only. Final merge job saves result to Supabase.
+  Phase 1: All sources fetch in parallel (high queue)
+  Phase 2: Entry prices + PnL (batch queue, coordinators on compute)
+  Phase 3: Score + rank (compute queue)
+  Phase 4: Runner history top 20 only (batch queue, merge on compute)
 """
+
 from redis import Redis
 from rq import Queue
 from rq.job import Job, Dependency
@@ -37,22 +60,33 @@ import os
 import time
 
 
+# =============================================================================
+# REDIS + QUEUE SETUP
+# =============================================================================
+
 def _get_redis():
     url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-    return Redis.from_url(url)
+    return Redis.from_url(url, socket_timeout=10, socket_connect_timeout=10)
 
-def _get_queue():
-    return Queue(connection=_get_redis(), default_timeout=1800)  # 30 min global default
+
+def _get_queues():
+    """Return high, batch, compute queues. Always use these — never default queue."""
+    r = _get_redis()
+    return (
+        Queue('high',    connection=r, default_timeout=1800),
+        Queue('batch',   connection=r, default_timeout=1800),
+        Queue('compute', connection=r, default_timeout=1800),
+    )
 
 
 def _save_result(job_id, data):
-    """Save job result to Redis with 1 hour TTL"""
+    """Save job result to Redis with 1 hour TTL."""
     r = _get_redis()
     r.set(f"job_result:{job_id}", json.dumps(data), ex=3600)
 
 
 def _load_result(job_id):
-    """Load job result from Redis"""
+    """Load job result from Redis."""
     r = _get_redis()
     raw = r.get(f"job_result:{job_id}")
     return json.loads(raw) if raw else None
@@ -62,11 +96,11 @@ def _update_job_progress(supabase, job_id, phase, progress):
     from services.supabase_client import SCHEMA_NAME
     try:
         supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
-            'phase': phase,
+            'phase':    phase,
             'progress': progress
         }).eq('job_id', job_id).execute()
     except Exception as e:
-        print(f"[PROGRESS] Failed to update progress: {e}")
+        print(f"[PROGRESS] Failed to update: {e}")
 
 
 def _calculate_grade(score):
@@ -80,14 +114,13 @@ def _calculate_grade(score):
 
 
 # =============================================================================
-# ENTRY POINT - Called by Flask route, returns immediately
+# ENTRY POINT — Supabase + Redis cache check before any pipeline work
 # =============================================================================
 
 def perform_wallet_analysis(data):
     """
-    Entry point. Does NOT run on a worker itself.
-    Just queues the pipeline and returns job IDs immediately.
-    Flask gets instant response, frontend polls for progress.
+    Entry point. Checks Redis → Supabase before queuing any work.
+    Returns immediately in all cases. Frontend polls for progress.
     """
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
@@ -96,41 +129,108 @@ def perform_wallet_analysis(data):
     job_id  = data.get('job_id')
 
     supabase = get_supabase_client()
-    q = _get_queue()
+    r        = _get_redis()
+    q_high, q_batch, q_compute = _get_queues()
 
+    # -------------------------------------------------------------------------
+    # CACHE CHECK: Single token only (batch always runs fresh)
+    # -------------------------------------------------------------------------
+    if len(tokens) == 1:
+        token         = tokens[0]
+        token_address = token['address']
+
+        # 1. Redis cache — fastest path (~100ms)
+        cached = r.get(f"cache:token:{token_address}")
+        if cached:
+            cached_result = json.loads(cached)
+
+            skip_cache = False
+            try:
+                current_ath_raw = r.get(f"token_ath:{token_address}")
+                if current_ath_raw:
+                    current_ath_price = json.loads(current_ath_raw).get('highest_price', 0)
+                    cached_wallets = cached_result.get('wallets', [])
+                    cached_ath = next(
+                        (w.get('ath_price', 0) for w in cached_wallets if w.get('ath_price')),
+                        0
+                    )
+                    if cached_ath > 0 and current_ath_price > cached_ath * 1.10:
+                        print(f"[CACHE INVALIDATED] ATH moved {((current_ath_price/cached_ath)-1)*100:.1f}% "
+                              f"since last analysis for {token.get('ticker')} — running fresh")
+                        skip_cache = True
+                        r.delete(f"cache:token:{token_address}")
+            except Exception as e:
+                print(f"[CACHE] ATH check failed — serving cached result anyway: {e}")
+
+            if not skip_cache:
+                print(f"[CACHE HIT] Redis — instant return for {token.get('ticker')}")
+                try:
+                    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                        'status':   'completed',
+                        'phase':    'done',
+                        'progress': 100,
+                        'results':  cached_result
+                    }).eq('job_id', job_id).execute()
+                except Exception as e:
+                    print(f"[CACHE] Failed to update job with cached result: {e}")
+                return
+
+        # 2. Supabase — find previous completed analysis for this token (~200-500ms)
+        if not (cached and skip_cache):
+            try:
+                existing = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
+                    'results'
+                ).eq('token_address', token_address).eq(
+                    'status', 'completed'
+                ).order('created_at', desc=True).limit(1).execute()
+
+                if existing.data and existing.data[0].get('results'):
+                    result = existing.data[0]['results']
+                    print(f"[CACHE HIT] Supabase — returning saved result for {token.get('ticker')}")
+
+                    r.set(f"cache:token:{token_address}", json.dumps(result), ex=21600)  # 6hrs
+
+                    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                        'status':   'completed',
+                        'phase':    'done',
+                        'progress': 100,
+                        'results':  result
+                    }).eq('job_id', job_id).execute()
+                    return
+
+            except Exception as e:
+                print(f"[CACHE CHECK] Supabase lookup failed — running fresh pipeline: {e}")
+
+    # -------------------------------------------------------------------------
+    # NO CACHE — queue the full pipeline
+    # -------------------------------------------------------------------------
     supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
-        'status': 'processing',
-        'phase': 'queuing',
+        'status':   'processing',
+        'phase':    'queuing',
         'progress': 5
     }).eq('job_id', job_id).execute()
 
     if len(tokens) == 1:
-        _queue_single_token_pipeline(q, tokens[0], user_id, job_id, supabase)
+        _queue_single_token_pipeline(tokens[0], user_id, job_id, supabase)
     else:
-        _queue_batch_pipeline(q, tokens, user_id, job_id, supabase)
+        _queue_batch_pipeline(tokens, user_id, job_id, supabase)
 
 
-def _queue_single_token_pipeline(q, token, user_id, job_id, supabase):
+def _queue_single_token_pipeline(token, user_id, job_id, supabase):
     print(f"\n[PIPELINE] Queuing single token: {token.get('ticker')}")
+    q_high, q_batch, q_compute = _get_queues()
 
-    # Phase 1: Workers 1, 2, 3 start immediately in parallel
-    job1 = q.enqueue('services.worker_tasks.fetch_top_traders',    {'token': token, 'job_id': job_id})
-    job2 = q.enqueue('services.worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': job_id})
-    job3 = q.enqueue('services.worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': job_id})
+    job1 = q_high.enqueue('services.worker_tasks.fetch_top_traders',    {'token': token, 'job_id': job_id})
+    job2 = q_high.enqueue('services.worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': job_id})
+    job3 = q_high.enqueue('services.worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': job_id})
 
-    # Worker 4 coordinator: waits for Worker 1, then spawns N parallel price-fetch batches
-    # coordinate_entry_prices itself queues batch workers + a merge job, then exits.
-    # PnL coordinator depends on the MERGE job (stored in Redis), not just the coordinator.
-    job4_coord = q.enqueue(
+    job4_coord = q_compute.enqueue(
         'services.worker_tasks.coordinate_entry_prices',
         {'token': token, 'job_id': job_id},
         depends_on=Dependency(jobs=[job1])
     )
 
-    print(f"  ✓ Queued Phase 1 jobs: {[j.id[:8] for j in [job1, job2, job3, job4_coord]]}")
-
-    # PnL coordinator waits for Workers 2, 3, and the entry-price coordinator
-    pnl_coordinator = q.enqueue(
+    pnl_coordinator = q_compute.enqueue(
         'services.worker_tasks.coordinate_pnl_phase',
         {
             'token':       token,
@@ -141,34 +241,35 @@ def _queue_single_token_pipeline(q, token, user_id, job_id, supabase):
         depends_on=Dependency(jobs=[job1, job2, job3, job4_coord])
     )
 
-    print(f"  ✓ Queued PnL coordinator: {pnl_coordinator.id[:8]}")
-
     r = _get_redis()
     r.set(f"pipeline:{job_id}:coordinator", pnl_coordinator.id, ex=3600)
-    r.set(f"pipeline:{job_id}:token", json.dumps(token), ex=3600)
+    r.set(f"pipeline:{job_id}:token",       json.dumps(token),  ex=3600)
 
-    print(f"  ✓ Pipeline queued for {token.get('ticker')} - {job_id[:8]}")
+    print(f"  ✓ Pipeline queued — Phase 1: {[j.id[:8] for j in [job1, job2, job3]]}")
+    print(f"  ✓ Entry coord: {job4_coord.id[:8]} | PnL coord: {pnl_coordinator.id[:8]}")
 
 
-def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
+def _queue_batch_pipeline(tokens, user_id, job_id, supabase):
     print(f"\n[PIPELINE] Queuing batch: {len(tokens)} tokens")
+    q_high, q_batch, q_compute = _get_queues()
 
     token_final_jobs = []
+    r = _get_redis()
 
     for token in tokens:
         sub_job_id = f"{job_id}__{token['address'][:8]}"
 
-        job1 = q.enqueue('services.worker_tasks.fetch_top_traders',    {'token': token, 'job_id': sub_job_id})
-        job2 = q.enqueue('services.worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': sub_job_id})
-        job3 = q.enqueue('services.worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': sub_job_id})
+        job1 = q_high.enqueue('services.worker_tasks.fetch_top_traders',    {'token': token, 'job_id': sub_job_id})
+        job2 = q_high.enqueue('services.worker_tasks.fetch_first_buyers',   {'token': token, 'job_id': sub_job_id})
+        job3 = q_high.enqueue('services.worker_tasks.fetch_birdeye_trades', {'token': token, 'job_id': sub_job_id})
 
-        job4_coord = q.enqueue(
+        job4_coord = q_compute.enqueue(
             'services.worker_tasks.coordinate_entry_prices',
             {'token': token, 'job_id': sub_job_id},
             depends_on=Dependency(jobs=[job1])
         )
 
-        pnl_coordinator = q.enqueue(
+        pnl_coordinator = q_compute.enqueue(
             'services.worker_tasks.coordinate_pnl_phase',
             {
                 'token':       token,
@@ -179,7 +280,7 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
             depends_on=Dependency(jobs=[job1, job2, job3, job4_coord])
         )
 
-        final_job = q.enqueue(
+        final_job = q_compute.enqueue(
             'services.worker_tasks.score_and_rank_single',
             {
                 'token':         token,
@@ -191,13 +292,10 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
         )
 
         token_final_jobs.append(final_job)
-
-        r = _get_redis()
         r.set(f"pipeline:{sub_job_id}:token", json.dumps(token), ex=3600)
-
         print(f"  ✓ Queued pipeline for {token.get('ticker')} [{sub_job_id[:8]}]")
 
-    aggregate_job = q.enqueue(
+    aggregate_job = q_compute.enqueue(
         'services.worker_tasks.aggregate_cross_token',
         {
             'tokens':      tokens,
@@ -207,15 +305,15 @@ def _queue_batch_pipeline(q, tokens, user_id, job_id, supabase):
         depends_on=Dependency(jobs=token_final_jobs)
     )
 
-    print(f"  ✓ Queued cross-token aggregator: {aggregate_job.id[:8]} (waits for all {len(tokens)} tokens)")
+    print(f"  ✓ Aggregator: {aggregate_job.id[:8]} (waits for all {len(tokens)} tokens)")
 
 
 # =============================================================================
-# PHASE 1 WORKERS
+# PHASE 1 WORKERS — high queue
 # =============================================================================
 
 def fetch_top_traders(data):
-    """Worker 1: Fetch top 100 traders. PnL included, entry_price=None (Worker 4 fills it)."""
+    """Worker 1 [high]: Fetch top 100 traders. PnL included, entry_price filled by Phase 2."""
     from routes.wallets import get_worker_analyzer
     token  = data['token']
     job_id = data['job_id']
@@ -251,17 +349,13 @@ def fetch_top_traders(data):
 
 
 def fetch_first_buyers(data):
-    """
-    Worker 2: Fetch first 100 buyers.
-    FIX: PnL included, entry_price derived from first_buy math (volume_usd / amount).
-    No API call needed for price.
-    """
+    """Worker 2 [high]: Fetch first 100 buyers. Entry price derived from first_buy math."""
     from routes.wallets import get_worker_analyzer
     token  = data['token']
     job_id = data['job_id']
 
     analyzer = get_worker_analyzer()
-    url = f"{analyzer.st_base_url}/first-buyers/{token['address']}"
+    url      = f"{analyzer.st_base_url}/first-buyers/{token['address']}"
     response = analyzer.fetch_with_retry(
         url, analyzer._get_solanatracker_headers(),
         semaphore=analyzer.solana_tracker_semaphore
@@ -276,17 +370,16 @@ def fetch_first_buyers(data):
             wallet = buyer.get('wallet')
             if wallet:
                 wallets.append(wallet)
-                # FIX: Extract entry_price from first_buy math
-                first_buy  = buyer.get('first_buy', {})
-                amount     = first_buy.get('amount', 0)
-                volume_usd = first_buy.get('volume_usd', 0)
+                first_buy   = buyer.get('first_buy', {})
+                amount      = first_buy.get('amount', 0)
+                volume_usd  = first_buy.get('volume_usd', 0)
                 entry_price = (volume_usd / amount) if amount > 0 else None
 
                 wallet_data[wallet] = {
                     'source':         'first_buyers',
                     'pnl_data':       buyer,
                     'earliest_entry': buyer.get('first_buy_time', 0),
-                    'entry_price':    entry_price,  # FIX: now has value
+                    'entry_price':    entry_price,
                 }
 
     result = {'wallets': wallets, 'wallet_data': wallet_data, 'source': 'first_buyers'}
@@ -297,11 +390,9 @@ def fetch_first_buyers(data):
 
 def fetch_birdeye_trades(data):
     """
-    Worker 3: Fetch early buyers from Birdeye /defi/v3/token/txs.
-    Constraint: time range cannot exceed 30 days and after_time must be within last 30 days.
-    If token launched >30 days ago, the launch window is out of range — skip time filter
-    and just fetch the oldest available trades (default 7-day window from Birdeye).
-    entry_price from from.price field (confirmed in API docs).
+    Worker 3 [high]: Fetch early buyers from Birdeye.
+    Time window anchored to token launch (max 30-day API constraint).
+    entry_price from from.price field.
     """
     from routes.wallets import get_worker_analyzer
     token  = data['token']
@@ -309,48 +400,38 @@ def fetch_birdeye_trades(data):
 
     analyzer = get_worker_analyzer()
 
-    # Step 1: Get token launch time
     launch_time = None
     try:
-        url = f"{analyzer.st_base_url}/tokens/{token['address']}"
+        url        = f"{analyzer.st_base_url}/tokens/{token['address']}"
         token_info = analyzer.fetch_with_retry(
             url, analyzer._get_solanatracker_headers(),
             semaphore=analyzer.solana_tracker_semaphore
         )
         if token_info:
             launch_time = token_info.get('token', {}).get('creation', {}).get('created_time')
-            print(f"[WORKER 3] launch_time={launch_time}")
     except Exception as e:
         print(f"[WORKER 3] Failed to fetch launch time: {e}")
 
-    # Step 2: Build time window — Birdeye constraint: max 30 days, after_time within last 30 days
-    current_time   = int(time.time())
+    current_time    = int(time.time())
     thirty_days_ago = current_time - (30 * 86400)
-    time_params    = {}
+    time_params     = {}
 
     if launch_time and launch_time > 0:
         if launch_time >= thirty_days_ago:
-            # Token launched within last 30 days — anchor to launch, fetch first 5 days
             after_time  = int(launch_time)
             before_time = min(int(launch_time) + (5 * 86400), current_time)
             time_params = {"after_time": after_time, "before_time": before_time}
-            print(f"[WORKER 3] Launch window: {after_time} → {before_time} (first 5 days)")
+            print(f"[WORKER 3] Launch window: {after_time} → {before_time}")
         else:
-            # Token launched >30 days ago — after_time can't go that far back.
-            # Use oldest possible window Birdeye allows (30 days ago → +5 days), sorted asc
-            # to still get the earliest trades within the allowed range.
             after_time  = thirty_days_ago
             before_time = thirty_days_ago + (5 * 86400)
             time_params = {"after_time": after_time, "before_time": before_time}
-            print(f"[WORKER 3] Token launched >30 days ago — using oldest allowed window: {after_time} → {before_time}")
+            print(f"[WORKER 3] Token >30d old — oldest allowed window")
     else:
-        # No launch time — fetch oldest trades in last 30 days
         after_time  = thirty_days_ago
         before_time = thirty_days_ago + (5 * 86400)
         time_params = {"after_time": after_time, "before_time": before_time}
-        print(f"[WORKER 3] No launch time — using oldest 5-day window in allowed range")
 
-    # Step 3: Fetch trades from v3 endpoint
     all_trades = []
     offset     = 0
 
@@ -372,30 +453,21 @@ def fetch_birdeye_trades(data):
             semaphore=analyzer.birdeye_semaphore
         )
 
-        if offset == 0:
-            print(f"[WORKER 3] First response: {list(response.keys()) if response else 'None'}")
-            if response:
-                items_preview = (response.get('data') or {}).get('items', [])
-                print(f"[WORKER 3] success={response.get('success')}, items={len(items_preview)}")
-
         if not response or not response.get('success'):
-            print(f"[WORKER 3] Bad response at offset {offset}: {response}")
+            print(f"[WORKER 3] Bad response at offset {offset}")
             break
 
         trades = response.get('data', {}).get('items', [])
         if not trades:
-            print(f"[WORKER 3] No trades at offset {offset} — done")
             break
 
         all_trades.extend(trades)
-        print(f"[WORKER 3] offset={offset}: +{len(trades)} trades (total={len(all_trades)})")
+        print(f"[WORKER 3] offset={offset}: +{len(trades)} (total={len(all_trades)})")
 
         if len(trades) < 100:
             break
         offset += 100
         time.sleep(0.5)
-
-    print(f"[WORKER 3] Total trades: {len(all_trades)}")
 
     wallets     = []
     wallet_data = {}
@@ -404,7 +476,7 @@ def fetch_birdeye_trades(data):
         if wallet and wallet not in wallet_data:
             wallets.append(wallet)
             from_data    = trade.get('from', {}) or {}
-            actual_price = from_data.get('price')  # confirmed field per API docs
+            actual_price = from_data.get('price')
 
             wallet_data[wallet] = {
                 'source':         'birdeye_trades',
@@ -418,16 +490,15 @@ def fetch_birdeye_trades(data):
     return result
 
 
+# =============================================================================
+# PHASE 1 COORDINATOR + BATCH WORKERS — compute spawns batch
+# =============================================================================
+
 def coordinate_entry_prices(data):
     """
-    Worker 4 coordinator: Reads top traders list from Redis, splits into batches of 20,
-    spawns parallel fetch_entry_prices_batch workers, then queues merge_entry_prices
-    to collect results. Exits immediately after queuing — RQ handles the rest.
-
-    New pipeline for this coordinator:
-        coordinate_entry_prices
-            → fetch_entry_prices_batch (×N, parallel)
-            → merge_entry_prices (waits for all batches, writes enriched top_traders back)
+    [compute queue] Reads top traders from Redis, splits into fixed batches of 10,
+    spawns parallel fetch_entry_prices_batch on batch queue, then queues
+    merge_entry_prices on compute queue. Exits immediately.
     """
     token  = data['token']
     job_id = data['job_id']
@@ -435,21 +506,20 @@ def coordinate_entry_prices(data):
     top_traders_result = _load_result(f"phase1_top_traders:{job_id}")
     if not top_traders_result:
         print(f"[ENTRY COORD] No top traders result — skipping")
-        # Write empty enriched result so coordinator doesn't stall
         _save_result(f"phase1_top_traders:{job_id}", {'wallets': [], 'wallet_data': {}, 'source': 'top_traders'})
         return {'batch_jobs': [], 'merge_job': None}
 
-    wallets     = top_traders_result['wallets']
-    batch_size  = 20
-    q           = _get_queue()
-    batch_jobs  = []
+    wallets    = top_traders_result['wallets']
+    batch_size = 10
+    _, q_batch, q_compute = _get_queues()
+    batch_jobs = []
 
-    print(f"[ENTRY COORD] Splitting {len(wallets)} wallets into batches of {batch_size}...")
+    print(f"[ENTRY COORD] {len(wallets)} wallets → batches of {batch_size}")
 
     for i in range(0, len(wallets), batch_size):
         batch     = wallets[i:i + batch_size]
         batch_idx = i // batch_size
-        bj = q.enqueue(
+        bj = q_batch.enqueue(
             'services.worker_tasks.fetch_entry_prices_batch',
             {
                 'token':     token,
@@ -460,7 +530,7 @@ def coordinate_entry_prices(data):
         )
         batch_jobs.append(bj)
 
-    merge_job = q.enqueue(
+    merge_job = q_compute.enqueue(
         'services.worker_tasks.merge_entry_prices',
         {
             'token':       token,
@@ -471,14 +541,14 @@ def coordinate_entry_prices(data):
         depends_on=Dependency(jobs=batch_jobs)
     )
 
-    print(f"  ✓ Queued {len(batch_jobs)} entry-price batches + merge {merge_job.id[:8]}")
+    print(f"  ✓ {len(batch_jobs)} entry-price batches + merge {merge_job.id[:8]}")
     return {'batch_jobs': [j.id for j in batch_jobs], 'merge_job': merge_job.id}
 
 
 def fetch_entry_prices_batch(data):
     """
-    Fetches first-buy entry prices for a batch of ~20 Top Trader wallets in parallel.
-    Uses asyncio with semaphore=6 per batch.
+    [batch queue] Fetches first-buy entry prices for a batch of ~10 wallets.
+    asyncio with semaphore=6 per batch.
     """
     from routes.wallets import get_worker_analyzer
     import aiohttp
@@ -490,8 +560,7 @@ def fetch_entry_prices_batch(data):
     wallets   = data['wallets']
 
     analyzer = get_worker_analyzer()
-
-    print(f"[ENTRY BATCH {batch_idx}] Fetching prices for {len(wallets)} wallets...")
+    print(f"[ENTRY BATCH {batch_idx}] {len(wallets)} wallets...")
 
     async def _fetch():
         async with aiohttp.ClientSession() as session:
@@ -502,8 +571,7 @@ def fetch_entry_prices_batch(data):
                     async with sem:
                         url  = f"{analyzer.st_base_url}/trades/{token['address']}/by-wallet/{w}"
                         resp = await analyzer.async_fetch_with_retry(
-                            session, url,
-                            analyzer._get_solanatracker_headers()
+                            session, url, analyzer._get_solanatracker_headers()
                         )
                         if resp and resp.get('trades'):
                             buys = [t for t in resp['trades'] if t.get('type') == 'buy']
@@ -524,9 +592,8 @@ def fetch_entry_prices_batch(data):
 
 def merge_entry_prices(data):
     """
-    Collects all entry-price batch results, merges into the top_traders wallet_data,
-    and overwrites phase1_top_traders in Redis with the enriched data.
-    The PnL coordinator reads from phase1_top_traders, so this must complete first.
+    [compute queue] Collects all entry-price batch results, merges into top_traders
+    wallet_data, overwrites phase1_top_traders in Redis with enriched data.
     """
     token       = data['token']
     job_id      = data['job_id']
@@ -552,19 +619,17 @@ def merge_entry_prices(data):
     enriched = {'wallets': all_wallets, 'wallet_data': wallet_data, 'source': 'top_traders'}
     _save_result(f"phase1_top_traders:{job_id}", enriched)
 
-    print(f"[ENTRY MERGE] Resolved {resolved}/{len(all_wallets)} entry prices → wrote enriched top_traders")
+    print(f"[ENTRY MERGE] Resolved {resolved}/{len(all_wallets)} entry prices")
     return enriched
 
 
-
-
 # =============================================================================
-# PHASE 2 COORDINATOR
+# PHASE 2 COORDINATOR — compute queue
 # =============================================================================
 
 def coordinate_pnl_phase(data):
     """
-    Merges Phase 1 results, dispatches parallel PnL batch jobs.
+    [compute queue] Merges Phase 1 results, dispatches parallel PnL batch jobs.
     Top Traders + First Buyers skip PnL fetch (already have it).
     Birdeye wallets fetch PnL only.
     """
@@ -573,7 +638,7 @@ def coordinate_pnl_phase(data):
     user_id     = data.get('user_id', 'default_user')
     phase1_jobs = data['phase1_jobs']
 
-    print(f"\n[COORDINATOR] Phase 1 complete for {token.get('ticker')} - merging wallets...")
+    print(f"\n[PNL COORD] Phase 1 complete for {token.get('ticker')} — merging...")
 
     all_wallets = []
     wallet_data = {}
@@ -600,15 +665,15 @@ def coordinate_pnl_phase(data):
         'wallet_data': wallet_data
     })
 
-    q          = _get_queue()
-    batch_size = max(1, len(all_wallets) // 5)
+    _, q_batch, q_compute = _get_queues()
+    batch_size = 10
     pnl_jobs   = []
 
     for i in range(0, len(all_wallets), batch_size):
         batch         = all_wallets[i:i + batch_size]
         batch_wallets = {w: wallet_data[w] for w in batch}
 
-        pnl_job = q.enqueue(
+        pnl_job = q_batch.enqueue(
             'services.worker_tasks.fetch_pnl_batch',
             {
                 'token':       token,
@@ -620,9 +685,9 @@ def coordinate_pnl_phase(data):
         )
         pnl_jobs.append(pnl_job)
 
-    print(f"  ✓ Queued {len(pnl_jobs)} PnL batch jobs")
+    print(f"  ✓ Queued {len(pnl_jobs)} PnL batch jobs (size={batch_size})")
 
-    scorer_job = q.enqueue(
+    scorer_job = q_compute.enqueue(
         'services.worker_tasks.score_and_rank_single',
         {
             'token':       token,
@@ -634,24 +699,22 @@ def coordinate_pnl_phase(data):
         depends_on=Dependency(jobs=pnl_jobs)
     )
 
-    print(f"  ✓ Queued scorer: {scorer_job.id[:8]} (waits for {len(pnl_jobs)} PnL batches)")
-
     r = _get_redis()
     r.set(f"pipeline:{job_id}:final_job", scorer_job.id, ex=3600)
 
+    print(f"  ✓ Scorer: {scorer_job.id[:8]} (waits for {len(pnl_jobs)} PnL batches)")
     return {'pnl_jobs': [j.id for j in pnl_jobs], 'final_job': scorer_job.id}
 
 
 # =============================================================================
-# PHASE 2 WORKERS - PnL batches run in parallel
+# PHASE 2 WORKERS — batch queue
 # =============================================================================
 
 def fetch_pnl_batch(data):
     """
-    Fetch PnL for a batch of wallets.
-    FIX: Categorize wallets properly:
-      - Top Traders + First Buyers (have pnl_data AND entry_price) → skip API entirely
-      - Birdeye wallets (have entry_price but no pnl_data) → fetch PnL only
+    [batch queue] Fetch PnL for a batch of wallets.
+    Top Traders + First Buyers (have pnl_data + entry_price) → skip API entirely.
+    Birdeye wallets (have entry_price, no pnl_data) → fetch PnL only.
     """
     from routes.wallets import get_worker_analyzer
     import aiohttp
@@ -666,10 +729,9 @@ def fetch_pnl_batch(data):
     analyzer  = get_worker_analyzer()
     qualified = []
 
-    # FIX: Categorize wallets
-    first_buyers_ready      = []  # Have both PnL + price → skip API
-    top_traders_need_price  = []  # Have PnL, need price (shouldn't happen after Worker 4, but safety net)
-    birdeye_need_pnl        = []  # Have price, need PnL
+    first_buyers_ready     = []
+    top_traders_need_price = []
+    birdeye_need_pnl       = []
 
     for wallet in wallets:
         wdata     = wallet_data.get(wallet, {})
@@ -682,24 +744,26 @@ def fetch_pnl_batch(data):
         elif source == 'top_traders' and has_pnl and not has_price:
             top_traders_need_price.append(wallet)
         elif source == 'top_traders' and has_pnl and has_price:
-            first_buyers_ready.append(wallet)  # treat enriched top traders same as ready
+            first_buyers_ready.append(wallet)
         elif source == 'birdeye_trades':
             birdeye_need_pnl.append(wallet)
         else:
-            # Fallback: if has pnl, qualify directly
             if has_pnl:
                 first_buyers_ready.append(wallet)
             else:
                 birdeye_need_pnl.append(wallet)
 
-    print(f"[PNL BATCH {batch_idx}] {len(wallets)} wallets | {len(first_buyers_ready)} skip API | {len(top_traders_need_price)} need price | {len(birdeye_need_pnl)} fetch PnL")
+    print(f"[PNL BATCH {batch_idx}] {len(wallets)} wallets | "
+          f"{len(first_buyers_ready)} skip | "
+          f"{len(top_traders_need_price)} need price | "
+          f"{len(birdeye_need_pnl)} fetch PnL")
 
-    # FIX: First Buyers + enriched Top Traders → qualify immediately, no API
+    # Skip API — qualify immediately
     for wallet in first_buyers_ready:
         pnl = wallet_data[wallet]['pnl_data']
         _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
 
-    # FIX: Top Traders that somehow still need price → fetch with 5 parallel workers
+    # Top traders that still need entry price (safety net)
     if top_traders_need_price:
         async def _fetch_entry_prices():
             async with aiohttp.ClientSession() as session:
@@ -708,10 +772,9 @@ def fetch_pnl_batch(data):
                 for wallet in top_traders_need_price:
                     async def fetch(w=wallet):
                         async with sem:
-                            url = f"{analyzer.st_base_url}/trades/{token['address']}/by-wallet/{w}"
+                            url  = f"{analyzer.st_base_url}/trades/{token['address']}/by-wallet/{w}"
                             resp = await analyzer.async_fetch_with_retry(
-                                session, url,
-                                analyzer._get_solanatracker_headers()
+                                session, url, analyzer._get_solanatracker_headers()
                             )
                             if resp and resp.get('trades'):
                                 buys = [t for t in resp['trades'] if t.get('type') == 'buy']
@@ -729,7 +792,7 @@ def fetch_pnl_batch(data):
             pnl = wallet_data[wallet]['pnl_data']
             _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
 
-    # FIX: Birdeye wallets → fetch PnL only (already have entry_price)
+    # Birdeye — fetch PnL only (already have entry_price)
     async def _fetch_birdeye_pnls():
         async with aiohttp.ClientSession() as session:
             sem   = AsyncSemaphore(2)
@@ -758,10 +821,9 @@ def fetch_pnl_batch(data):
 
 def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_invested=100, min_roi_mult=3.0):
     """
-    Check ROI criteria and add to qualified list.
-    Entry price resolution:
-      1. wallet_data entry_price (Top Traders via Worker 4, Birdeye via from.price)
-      2. Derived from pnl_data first_buy (First Buyers): volume_usd / amount
+    Check qualification criteria and add to qualified list.
+    FIX: Passes if realized OR total multiplier >= threshold.
+    A holder sitting on 3x unrealized is just as valid as someone who sold at 3x.
     """
     realized       = pnl_data.get('realized', 0)
     unrealized     = pnl_data.get('unrealized', 0)
@@ -773,43 +835,41 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_in
     realized_mult = (realized + total_invested) / total_invested
     total_mult    = (realized + unrealized + total_invested) / total_invested
 
-    if realized_mult >= min_roi_mult:
-        wdata       = wallet_data.get(wallet, {})
-        entry_price = wdata.get('entry_price')
+    if realized_mult < min_roi_mult and total_mult < min_roi_mult:
+        return
 
-        # FIX: Fallback — derive entry_price from first_buy math for First Buyers
-        if entry_price is None:
-            first_buy  = pnl_data.get('first_buy', {})
-            amount     = first_buy.get('amount', 0)
-            volume_usd = first_buy.get('volume_usd', 0)
-            if amount > 0:
-                entry_price = volume_usd / amount
+    wdata       = wallet_data.get(wallet, {})
+    entry_price = wdata.get('entry_price')
 
-        qualified_list.append({
-            'wallet':              wallet,
-            'source':              wdata.get('source', 'unknown'),
-            'realized':            realized,
-            'unrealized':          unrealized,
-            'total_invested':      total_invested,
-            'realized_multiplier': realized_mult,
-            'total_multiplier':    total_mult,
-            'earliest_entry':      wdata.get('earliest_entry'),
-            'entry_price':         entry_price,
-        })
+    if entry_price is None:
+        first_buy  = pnl_data.get('first_buy', {})
+        amount     = first_buy.get('amount', 0)
+        volume_usd = first_buy.get('volume_usd', 0)
+        if amount > 0:
+            entry_price = volume_usd / amount
+
+    qualified_list.append({
+        'wallet':              wallet,
+        'source':              wdata.get('source', 'unknown'),
+        'realized':            realized,
+        'unrealized':          unrealized,
+        'total_invested':      total_invested,
+        'realized_multiplier': realized_mult,
+        'total_multiplier':    total_mult,
+        'earliest_entry':      wdata.get('earliest_entry'),
+        'entry_price':         entry_price,
+    })
 
 
 # =============================================================================
-# PHASE 3: SCORE + RANK
-# No runner history here — that is Phase 4.
+# PHASE 3: SCORE + RANK — compute queue
 # =============================================================================
 
 def score_and_rank_single(data):
     """
-    Collect PnL batch results, score and rank all qualified wallets.
-    Saves ranked top 20 to Redis, then queues Phase 4 runner history
-    workers — one worker per 5 wallets — for the top 20 only.
-    A final merge job waits for all runner history workers to complete
-    before saving the enriched result to Supabase.
+    [compute queue] Collect PnL batch results, score and rank all qualified wallets.
+    Saves ranked top 20 to Redis, then queues Phase 4 runner history workers
+    on batch queue. Final merge job on compute queue.
     """
     from routes.wallets import get_worker_analyzer
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -820,7 +880,7 @@ def score_and_rank_single(data):
     batch_count = data['batch_count']
     parent_job  = data.get('parent_job_id')
 
-    print(f"\n[SCORER] Scoring {token.get('ticker')} - collecting {batch_count} PnL batches...")
+    print(f"\n[SCORER] {token.get('ticker')} — collecting {batch_count} PnL batches...")
 
     analyzer = get_worker_analyzer()
     supabase = get_supabase_client()
@@ -867,7 +927,6 @@ def score_and_rank_single(data):
             'first_buy_time':          wallet_info.get('earliest_entry'),
             'entry_price':             wallet_info.get('entry_price'),
             'ath_price':               ath_price,
-            # Runner history — populated by Phase 4 workers
             'runner_hits_30d':         0,
             'runner_success_rate':     0,
             'runner_avg_roi':          0,
@@ -876,17 +935,12 @@ def score_and_rank_single(data):
             'is_fresh':                True,
         })
 
-    # Rank first, then hand off top 20 to Phase 4
     wallet_results.sort(key=lambda x: x['professional_score'], reverse=True)
     top_20 = wallet_results[:20]
 
-    # Save ranked list (without runner history) for Phase 4 merge to enrich
     _save_result(f"ranked_wallets:{job_id}", top_20)
 
-    print(f"  ✓ Ranked {len(wallet_results)} wallets — queuing Phase 4 runner history for top {len(top_20)}...")
-
-    # Phase 4: one worker per 5 wallets → 4 workers for 20 wallets
-    q           = _get_queue()
+    _, q_batch, q_compute = _get_queues()
     runner_jobs = []
     chunk_size  = 5
 
@@ -895,7 +949,7 @@ def score_and_rank_single(data):
         chunk_addrs = [w['wallet'] for w in chunk]
         batch_idx   = i // chunk_size
 
-        rh_job = q.enqueue(
+        rh_job = q_batch.enqueue(
             'services.worker_tasks.fetch_runner_history_batch',
             {
                 'token':     token,
@@ -906,46 +960,42 @@ def score_and_rank_single(data):
         )
         runner_jobs.append(rh_job)
 
-    print(f"  ✓ Queued {len(runner_jobs)} runner history workers ({chunk_size} wallets each)")
+    print(f"  ✓ {len(runner_jobs)} runner history workers (5 wallets each)")
 
-    # Merge job waits for all runner history workers
-    merge_job = q.enqueue(
+    merge_job = q_compute.enqueue(
         'services.worker_tasks.merge_and_save_final',
         {
-            'token':               token,
-            'job_id':              job_id,
-            'user_id':             user_id,
-            'parent_job_id':       parent_job,
-            'runner_batch_count':  len(runner_jobs),
-            'total_qualified':     len(wallet_results),
+            'token':              token,
+            'job_id':             job_id,
+            'user_id':            user_id,
+            'parent_job_id':      parent_job,
+            'runner_batch_count': len(runner_jobs),
+            'total_qualified':    len(wallet_results),
         },
         depends_on=Dependency(jobs=runner_jobs)
     )
 
-    print(f"  ✓ Queued merge+save: {merge_job.id[:8]} (waits for {len(runner_jobs)} runner batches)")
+    print(f"  ✓ Merge+save: {merge_job.id[:8]} (waits for {len(runner_jobs)} runner batches)")
     return {'runner_jobs': [j.id for j in runner_jobs], 'merge_job': merge_job.id}
 
 
 # =============================================================================
-# PHASE 4: RUNNER HISTORY — parallel workers of 5 wallets each
+# PHASE 4: RUNNER HISTORY — batch queue
 # =============================================================================
 
 def fetch_runner_history_batch(data):
-    """
-    Fetch 30-day runner history for a batch of 5 wallets.
-    Saves enriched entries to Redis keyed by batch_idx.
-    """
+    """[batch queue] Fetch 30-day runner history for a batch of 5 wallets."""
     from routes.wallets import get_worker_analyzer
 
     token     = data['token']
     job_id    = data['job_id']
     batch_idx = data['batch_idx']
-    wallets   = data['wallets']   # max 5 addresses
+    wallets   = data['wallets']
 
     analyzer = get_worker_analyzer()
     enriched = []
 
-    print(f"[RUNNER BATCH {batch_idx}] Fetching history for {len(wallets)} wallets...")
+    print(f"[RUNNER BATCH {batch_idx}] {len(wallets)} wallets...")
 
     for wallet_addr in wallets:
         try:
@@ -974,19 +1024,18 @@ def fetch_runner_history_batch(data):
             })
 
     _save_result(f"runner_batch:{job_id}:{batch_idx}", enriched)
-    print(f"[RUNNER BATCH {batch_idx}] Done: {len(enriched)} wallets enriched")
+    print(f"[RUNNER BATCH {batch_idx}] Done: {len(enriched)} enriched")
     return enriched
 
 
 # =============================================================================
-# PHASE 4 MERGE: Combine runner history into ranked list, save to Supabase
+# PHASE 4 MERGE — compute queue
 # =============================================================================
 
 def merge_and_save_final(data):
     """
-    Collect all runner history batches, merge into the ranked wallet list,
-    then save the final enriched result to Supabase.
-    FIX: Added Supabase save for single token mode.
+    [compute queue] Collect runner history, merge into ranked list,
+    save final result to Supabase + warm Redis cache.
     """
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
@@ -998,20 +1047,18 @@ def merge_and_save_final(data):
     total_qualified    = data['total_qualified']
 
     supabase = get_supabase_client()
+    r        = _get_redis()
 
     print(f"\n[MERGE] Collecting {runner_batch_count} runner history batches...")
 
-    # Load ranked list saved by scorer (no runner history yet)
     ranked_wallets = _load_result(f"ranked_wallets:{job_id}") or []
 
-    # Build lookup from all runner history batches
     runner_lookup = {}
     for i in range(runner_batch_count):
         batch = _load_result(f"runner_batch:{job_id}:{i}") or []
         for entry in batch:
             runner_lookup[entry['wallet']] = entry
 
-    # Merge runner history into ranked wallet list
     for wr in ranked_wallets:
         rh = runner_lookup.get(wr['wallet'])
         if rh:
@@ -1020,8 +1067,6 @@ def merge_and_save_final(data):
             wr['runner_avg_roi']      = rh['runner_avg_roi']
             wr['other_runners']       = rh['other_runners']
             wr['other_runners_stats'] = rh['other_runners_stats']
-
-    print(f"  ✓ Merged runner history for {len(runner_lookup)} wallets")
 
     result = {
         'success': True,
@@ -1032,13 +1077,34 @@ def merge_and_save_final(data):
 
     _save_result(f"token_result:{job_id}", result)
 
-    # Increment tokens_completed on parent job (batch mode)
+    token_address    = token.get('address')
+    warm_redis_cache = True
+
+    if token_address:
+        try:
+            current_ath_raw = r.get(f"token_ath:{token_address}")
+            if current_ath_raw:
+                current_ath_price = json.loads(current_ath_raw).get('highest_price', 0)
+                analysis_ath = next(
+                    (w.get('ath_price', 0) for w in ranked_wallets if w.get('ath_price')),
+                    0
+                )
+                if analysis_ath > 0 and current_ath_price > analysis_ath * 1.10:
+                    print(f"  ⚠️ ATH moved {((current_ath_price/analysis_ath)-1)*100:.1f}% during analysis "
+                          f"for {token.get('ticker')} — skipping Redis cache warm (scores are stale)")
+                    warm_redis_cache = False
+        except Exception as e:
+            print(f"[MERGE] ATH check failed — proceeding with cache warm: {e}")
+
+        if warm_redis_cache:
+            r.set(f"cache:token:{token_address}", json.dumps(result), ex=21600)  # 6hr TTL
+            print(f"  ✓ Redis cache warmed for {token.get('ticker')} (6hr TTL)")
+
     try:
         target_job_id = parent_job if parent_job else job_id
         current = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
             'tokens_completed'
         ).eq('job_id', target_job_id).execute()
-
         current_count = current.data[0]['tokens_completed'] if current.data else 0
         supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
             'tokens_completed': current_count + 1
@@ -1046,34 +1112,51 @@ def merge_and_save_final(data):
     except Exception as e:
         print(f"[MERGE] Failed to increment tokens_completed: {e}")
 
-    # FIX: Single token mode — save final result to Supabase
     if not parent_job:
         try:
             supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
-                'status':   'completed',
-                'phase':    'done',
-                'progress': 100,
-                'results':  result
+                'status':        'completed',
+                'phase':         'done',
+                'progress':      100,
+                'results':       result,
+                'token_address': token_address,
             }).eq('job_id', job_id).execute()
             print(f"  ✅ Supabase: saved final result for job {job_id[:8]}")
         except Exception as e:
             print(f"[MERGE] ⚠️ Failed to save final result: {e}")
 
-        print(f"  ✅ Single token complete: {len(ranked_wallets)} wallets returned ({total_qualified} total qualified)")
+        print(f"  ✅ Complete: {len(ranked_wallets)} wallets ({total_qualified} qualified)")
+
+    else:
+        try:
+            import uuid
+            supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
+                'job_id':           str(uuid.uuid4()),
+                'user_id':          user_id,
+                'status':           'completed',
+                'phase':            'done',
+                'progress':         100,
+                'token_address':    token_address,
+                'tokens_total':     1,
+                'tokens_completed': 1,
+                'results':          result,
+            }).execute()
+            print(f"  ✅ Supabase: cached individual token row for {token.get('ticker')}")
+        except Exception as e:
+            print(f"[MERGE] ⚠️ Failed to insert individual token cache row: {e}")
 
     return result
 
 
 # =============================================================================
-# BATCH AGGREGATOR - Cross-token overlap ranking
+# BATCH AGGREGATOR — compute queue
 # =============================================================================
 
 def aggregate_cross_token(data):
     """
-    Collect results from all token pipelines.
+    [compute queue] Collect results from all token pipelines.
     Rank by cross-token appearance first, then aggregate score.
-    Top 20 returned.
-    FIX: Added Supabase save for batch mode.
+    Top 20 returned. Saves to Supabase.
     """
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     from collections import defaultdict
@@ -1179,7 +1262,7 @@ def aggregate_cross_token(data):
     ranked.sort(key=lambda x: (x['runner_count'], x['aggregate_score']), reverse=True)
 
     if not any(r['runner_count'] > 1 for r in ranked):
-        print(f"  ⚠️ No cross-token overlap - ranking by individual score")
+        print(f"  ⚠️ No cross-token overlap — ranking by individual score")
         ranked.sort(key=lambda x: x['aggregate_score'], reverse=True)
         for r in ranked:
             r['no_overlap_fallback'] = True
@@ -1190,7 +1273,6 @@ def aggregate_cross_token(data):
         'total':   len(ranked),
     }
 
-    # FIX: Save batch result to Supabase
     try:
         supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
             'status':   'completed',
@@ -1200,9 +1282,9 @@ def aggregate_cross_token(data):
         }).eq('job_id', job_id).execute()
         print(f"  ✅ Supabase: saved batch result for job {job_id[:8]}")
     except Exception as e:
-        print(f"[AGGREGATOR] ⚠️ Failed to save to Supabase: {e}")
+        print(f"[AGGREGATOR] ⚠️ Failed to save: {e}")
 
-    print(f"  ✅ Batch complete: {len(ranked)} wallets ranked, top 20 returned")
+    print(f"  ✅ Batch complete: {len(ranked)} wallets ranked")
     return final_result
 
 
@@ -1211,27 +1293,24 @@ def aggregate_cross_token(data):
 # =============================================================================
 
 def preload_trending_cache():
-    """Queue cache warmup jobs - runner lists only, no full analysis"""
-    q = _get_queue()
-
-    job7  = q.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 7})
-    job14 = q.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 14})
-
+    """Queue cache warmup jobs."""
+    _, q_batch, _ = _get_queues()
+    job7  = q_batch.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 7})
+    job14 = q_batch.enqueue('services.worker_tasks.warm_cache_runners', {'days_back': 14})
     print(f"[CACHE WARMUP] Queued 7d and 14d runner list warmup")
     return [job7.id, job14.id]
 
 
 def warm_cache_runners(data):
-    """Worker: Cache runner list only - NO full analysis"""
+    """[batch queue] Cache runner list only — no full analysis."""
     from routes.wallets import get_worker_analyzer
     days_back = data['days_back']
     analyzer  = get_worker_analyzer()
-
     print(f"[WARMUP {days_back}D] Finding runners...")
     runners = analyzer.find_trending_runners_enhanced(
         days_back=days_back,
         min_multiplier=5.0,
         min_liquidity=50000
     )
-    print(f"  ✅ Cached {len(runners)} runners for {days_back}d (lists only)")
+    print(f"  ✅ Cached {len(runners)} runners for {days_back}d")
     return len(runners)

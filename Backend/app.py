@@ -157,7 +157,7 @@ def preload_trending_cache():
     """
     try:
         print("[CACHE WARMUP] Queuing runner list warmup (7d + 14d)...")
-        from worker_tasks import preload_trending_cache as _warmup
+        from services.worker_tasks import preload_trending_cache as _warmup
         _warmup()
         print("  ✅ Warmup jobs queued")
     except Exception as e:
