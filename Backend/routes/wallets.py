@@ -81,6 +81,26 @@ wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 
 
 # =============================================================================
+# QUEUE HELPER FUNCTIONS
+# =============================================================================
+
+def get_queues():
+    """Get the three queues: high, batch, compute."""
+    from redis import Redis
+    from rq import Queue
+    import os
+    
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+    redis_conn = Redis.from_url(redis_url)
+    
+    return (
+        Queue('high', connection=redis_conn),
+        Queue('batch', connection=redis_conn),
+        Queue('compute', connection=redis_conn)
+    )
+
+
+# =============================================================================
 # ASYNC JOB QUEUEING WITH PROGRESS TRACKING
 # =============================================================================
 
@@ -98,10 +118,9 @@ def analyze_wallets():
         tokens = data['tokens']
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        from flask import current_app
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
-        q = current_app.config['RQ_QUEUE']
+        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
 
         job_id = str(uuid.uuid4())
@@ -117,12 +136,25 @@ def analyze_wallets():
             'token_address': tokens[0]['address'] if len(tokens) == 1 else None
         }).execute()
 
-        job = q.enqueue('services.worker_tasks.perform_wallet_analysis', {
-            'tokens': tokens,
-            'user_id': user_id,
-            'global_settings': data.get('global_settings', {}),
-            'job_id': job_id
-        })
+        # Queue to appropriate queue based on job type
+        if len(tokens) == 1:
+            # Single token analysis goes to high queue
+            job = q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
+                'tokens': tokens,
+                'user_id': user_id,
+                'global_settings': data.get('global_settings', {}),
+                'job_id': job_id
+            })
+            print(f"[ANALYZE] Queued single token job {job_id[:8]} to HIGH queue")
+        else:
+            # Batch token analysis goes to batch queue
+            job = q_batch.enqueue('services.worker_tasks.perform_wallet_analysis', {
+                'tokens': tokens,
+                'user_id': user_id,
+                'global_settings': data.get('global_settings', {}),
+                'job_id': job_id
+            })
+            print(f"[ANALYZE] Queued batch job {job_id[:8]} ({len(tokens)} tokens) to BATCH queue")
 
         return jsonify({
             'success': True,
@@ -178,6 +210,123 @@ def get_job_progress(job_id):
     })
 
 
+@wallets_bp.route('/jobs/<job_id>/cancel', methods=['POST', 'OPTIONS'])
+@optional_auth
+def cancel_job(job_id):
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        from redis import Redis
+        from rq import Queue
+        import os
+        
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        redis_conn = Redis.from_url(redis_url)
+        
+        # Try to cancel from all queues
+        for queue_name in ['high', 'batch', 'compute']:
+            queue = Queue(queue_name, connection=redis_conn)
+            job = queue.fetch_job(job_id)
+            if job:
+                job.cancel()
+                print(f"[CANCEL] Cancelled job {job_id[:8]} from {queue_name} queue")
+                break
+        
+        # Update Supabase
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+            'status': 'cancelled',
+            'phase': 'cancelled',
+            'progress': 0
+        }).eq('job_id', job_id).execute()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Job cancelled'
+        }), 200
+        
+    except Exception as e:
+        print(f"[CANCEL ERROR] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# ✅ NEW: JOB RECOVERY ENDPOINT
+# Checks Redis for a completed result when Supabase is still stuck in 'processing'.
+# This handles the case where the worker finished but died before the Supabase write,
+# OR where RQ's own heartbeat/bookkeeping timed out after compute completed.
+# =============================================================================
+
+@wallets_bp.route('/jobs/<job_id>/recover', methods=['POST', 'OPTIONS'])
+@optional_auth
+def recover_job(job_id):
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from redis import Redis
+        import os, json
+
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r        = Redis.from_url(redis_url)
+        supabase = get_supabase_client()
+
+        # Fetch current job record
+        job_record = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
+            'status, results'
+        ).eq('job_id', job_id).execute()
+
+        if not job_record.data:
+            return jsonify({'error': 'Job not found'}), 404
+
+        job = job_record.data[0]
+
+        # Already completed — just return the stored result
+        if job['status'] == 'completed' and job.get('results'):
+            return jsonify({
+                'recovered': False,
+                'message': 'Job already completed',
+                'results': job['results']
+            }), 200
+
+        # Look for the result in Redis under the two possible key patterns
+        raw = r.get(f'job_result:{job_id}')
+        if not raw:
+            raw = r.get(f'token_result:{job_id}')
+        if not raw:
+            # Nothing in Redis either — job genuinely incomplete or result is lost
+            return jsonify({
+                'recovered': False,
+                'message': 'No result found in Redis — job genuinely incomplete'
+            }), 404
+
+        result = json.loads(raw)
+
+        # Sync the recovered result back to Supabase so future polls see it
+        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+            'status':   'completed',
+            'phase':    'done',
+            'progress': 100,
+            'results':  result
+        }).eq('job_id', job_id).execute()
+
+        print(f"[RECOVER] ✅ Recovered stuck job {job_id[:8]} from Redis → Supabase synced")
+
+        return jsonify({
+            'recovered': True,
+            'results': result
+        }), 200
+
+    except Exception as e:
+        print(f"[RECOVER ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @wallets_bp.route('/analyze/stream', methods=['POST', 'OPTIONS'])
 @optional_auth
 def analyze_stream():
@@ -225,7 +374,7 @@ def analyze_stream():
 
 
 # =============================================================================
-# SINGLE TOKEN ANALYSIS
+# SINGLE TOKEN ANALYSIS (SYNCHRONOUS - FOR TESTING)
 # =============================================================================
 
 @wallets_bp.route('/analyze/single', methods=['POST', 'OPTIONS'])
@@ -360,10 +509,9 @@ def analyze_trending_runner():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        from flask import current_app
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        q = current_app.config['RQ_QUEUE']
+        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
         
         job_id = str(uuid.uuid4())
@@ -379,8 +527,8 @@ def analyze_trending_runner():
             'token_address': runner['address']
         }).execute()
         
-        # Queue the analysis job
-        q.enqueue('services.worker_tasks.perform_wallet_analysis', {
+        # Single trending analysis goes to high queue
+        job = q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
             'tokens': [{
                 'address': runner['address'],
                 'ticker': runner.get('symbol', 'UNKNOWN'),
@@ -390,6 +538,8 @@ def analyze_trending_runner():
             'global_settings': {'min_roi_multiplier': min_roi_multiplier},
             'job_id': job_id
         })
+        
+        print(f"[TRENDING SINGLE] Queued job {job_id[:8]} for {runner.get('symbol')} to HIGH queue")
         
         return jsonify({
             'success': True,
@@ -420,10 +570,9 @@ def analyze_trending_runners_batch():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
-        from flask import current_app
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        q = current_app.config['RQ_QUEUE']
+        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
         
         job_id = str(uuid.uuid4())
@@ -438,14 +587,16 @@ def analyze_trending_runners_batch():
             'tokens_completed': 0
         }).execute()
         
-        # Queue the batch analysis job
-        q.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
+        # Batch trending analysis goes to batch queue
+        job = q_batch.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
             'runners': runners,
             'user_id': user_id,
             'min_runner_hits': min_runner_hits,
             'min_roi_multiplier': min_roi_multiplier,
             'job_id': job_id
         })
+        
+        print(f"[TRENDING BATCH] Queued job {job_id[:8]} for {len(runners)} runners to BATCH queue")
         
         return jsonify({
             'success': True,
@@ -476,10 +627,9 @@ def auto_discover_wallets():
         min_runner_hits = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
-        from flask import current_app
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         
-        q = current_app.config['RQ_QUEUE']
+        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
         
         job_id = str(uuid.uuid4())
@@ -494,13 +644,15 @@ def auto_discover_wallets():
             'tokens_completed': 0
         }).execute()
         
-        # Queue the auto-discovery job
-        q.enqueue('services.worker_tasks.perform_auto_discovery', {
+        # Auto-discovery goes to compute queue (heaviest job)
+        job = q_compute.enqueue('services.worker_tasks.perform_auto_discovery', {
             'user_id': user_id,
             'min_runner_hits': min_runner_hits,
             'min_roi_multiplier': min_roi_multiplier,
             'job_id': job_id
         })
+        
+        print(f"[AUTO DISCOVERY] Queued job {job_id[:8]} to COMPUTE queue")
         
         return jsonify({
             'success': True,

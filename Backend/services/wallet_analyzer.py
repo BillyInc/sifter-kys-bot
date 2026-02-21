@@ -13,6 +13,7 @@ import aiohttp
 from asyncio import Semaphore as AsyncSemaphore
 import json
 import redis as redis_lib
+import os
 
 # ============================================================
 # CACHE TTL CONSTANTS - Tuned for SolanaTracker free tier
@@ -28,6 +29,7 @@ REDIS_TTL_PNL         = CACHE_TTL_PNL + 3600
 REDIS_TTL_RUNNERS     = CACHE_TTL_RUNNERS + 3600
 REDIS_TTL_TOKEN_INFO  = CACHE_TTL_TOKEN_INFO + 3600
 REDIS_TTL_LAUNCH      = CACHE_TTL_LAUNCH + 3600
+REDIS_TTL_TRENDING    = CACHE_TTL_TRENDING + 300  # 15 min
 
 
 class WalletPumpAnalyzer:
@@ -36,6 +38,11 @@ class WalletPumpAnalyzer:
     Redis = Hot cache (fast reads, all workers write)
     DuckDB = Cold storage (persistent, flushed from Redis every hour via Celery)
     Cache maximized for SolanaTracker free tier (10k credits/month)
+
+    SCORING:
+    Single token:  60% entry timing | 30% total ROI | 10% realized ROI
+    Batch:         60% entry timing | 30% total ROI | 10% entry consistency
+                   (consistency = variance of entry_price/launch_price across tokens)
     """
     def __init__(self, solanatracker_api_key, birdeye_api_key=None, debug_mode=True, read_only=False):
         self.solanatracker_key = solanatracker_api_key.strip()
@@ -46,12 +53,23 @@ class WalletPumpAnalyzer:
         self.read_only = read_only
         self.duckdb_path = 'wallet_analytics.duckdb'
 
-        if read_only:
-            self.con = duckdb.connect(self.duckdb_path, read_only=True)
-            self._log("DuckDB opened in READ-ONLY mode (worker)")
+        # Check if we're in worker mode (should skip DuckDB)
+        self.worker_mode = os.environ.get('WORKER_MODE') == 'true'
+
+        # Initialize DuckDB connection (skip for workers to avoid lock conflicts)
+        self.con = None
+        if not self.worker_mode:
+            try:
+                if read_only:
+                    self.con = duckdb.connect(self.duckdb_path, read_only=True)
+                    self._log("DuckDB opened in READ-ONLY mode")
+                else:
+                    self.con = duckdb.connect(self.duckdb_path)
+                    self._log("DuckDB opened in READ-WRITE mode")
+            except Exception as e:
+                self._log(f"DuckDB connection failed (continuing with Redis only): {e}")
         else:
-            self.con = duckdb.connect(self.duckdb_path)
-            self._log("DuckDB opened in READ-WRITE mode (Flask)")
+            self._log("Worker mode: DuckDB disabled, using Redis only")
 
         self._redis = self._init_redis()
 
@@ -64,12 +82,15 @@ class WalletPumpAnalyzer:
         self.pnl_async_semaphore = AsyncSemaphore(1)
         self.executor = None
 
+        # Keep memory cache as L1 cache, Redis as L2
         self._trending_cache = {}
         self._cache_expiry = {}
 
-        if not read_only:
+        # Only init DB tables if we have a connection and are in read-write mode
+        if self.con and not read_only and not self.worker_mode:
             self._init_db()
-        self._log(f"Initialized (read_only={read_only}) | Redis: {'✅' if self._redis else '❌ fallback to DuckDB'}")
+
+        self._log(f"Initialized (read_only={read_only}, worker_mode={self.worker_mode}) | Redis: {'✅' if self._redis else '❌ fallback to DuckDB'}")
 
     # =========================================================================
     # REDIS INIT + HELPERS
@@ -121,6 +142,11 @@ class WalletPumpAnalyzer:
         data = self._redis_get(redis_key)
         if data is not None:
             return data, 'redis'
+
+        # Skip DuckDB if no connection or in worker mode
+        if not self.con or self.worker_mode:
+            return None, None
+
         try:
             result = self.con.execute(duckdb_query, duckdb_params).fetchone()
             if result:
@@ -131,8 +157,11 @@ class WalletPumpAnalyzer:
 
     def _save_to_cache(self, redis_key, redis_value, redis_ttl,
                        duckdb_query=None, duckdb_params=None):
+        # Always write to Redis
         self._redis_set(redis_key, redis_value, redis_ttl)
-        if not self.read_only and duckdb_query and duckdb_params:
+
+        # Only write to DuckDB if we have a connection and are not in worker mode
+        if self.con and not self.read_only and not self.worker_mode and duckdb_query and duckdb_params:
             try:
                 self.con.execute(duckdb_query, duckdb_params)
             except Exception as e:
@@ -143,6 +172,9 @@ class WalletPumpAnalyzer:
     # =========================================================================
 
     def _init_db(self):
+        if not self.con or self.worker_mode:
+            return
+
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS wallet_token_cache (
                 wallet TEXT,
@@ -204,6 +236,13 @@ class WalletPumpAnalyzer:
             CREATE TABLE IF NOT EXISTS token_security_cache (
                 token TEXT PRIMARY KEY,
                 security_data JSON,
+                last_updated REAL
+            )
+        """)
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS trending_runners_cache (
+                cache_key TEXT PRIMARY KEY,
+                runners JSON,
                 last_updated REAL
             )
         """)
@@ -313,24 +352,26 @@ class WalletPumpAnalyzer:
             self._log(f"Redis hit (PnL) for {wallet[:8]}... / {token[:8]}...")
             return cached
 
-        try:
-            result = self.con.execute("""
-                SELECT realized, unrealized, total_invested, entry_price, first_buy_time
-                FROM wallet_token_cache
-                WHERE wallet = ? AND token = ? AND last_updated > ?
-            """, [wallet, token, now - CACHE_TTL_PNL]).fetchone()
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT realized, unrealized, total_invested, entry_price, first_buy_time
+                    FROM wallet_token_cache
+                    WHERE wallet = ? AND token = ? AND last_updated > ?
+                """, [wallet, token, now - CACHE_TTL_PNL]).fetchone()
 
-            if result:
-                self._log(f"DuckDB hit (PnL) for {wallet[:8]}... / {token[:8]}...")
-                data = {
-                    'realized': result[0], 'unrealized': result[1],
-                    'total_invested': result[2], 'entry_price': result[3],
-                    'first_buy_time': result[4]
-                }
-                self._redis_set(redis_key, data, REDIS_TTL_PNL)
-                return data
-        except Exception as e:
-            self._log(f"DuckDB PnL read error: {e}")
+                if result:
+                    self._log(f"DuckDB hit (PnL) for {wallet[:8]}... / {token[:8]}...")
+                    data = {
+                        'realized': result[0], 'unrealized': result[1],
+                        'total_invested': result[2], 'entry_price': result[3],
+                        'first_buy_time': result[4]
+                    }
+                    self._redis_set(redis_key, data, REDIS_TTL_PNL)
+                    return data
+            except Exception as e:
+                self._log(f"DuckDB PnL read error: {e}")
 
         self._log(f"Cache miss (PnL) for {wallet[:8]}... / {token[:8]}... Fetching...")
         pnl = self.get_wallet_pnl_solanatracker(wallet, token)
@@ -388,23 +429,25 @@ class WalletPumpAnalyzer:
             self._log(f"Redis hit (runners) for {wallet[:8]}...")
             return cached
 
-        try:
-            result = self.con.execute("""
-                SELECT other_runners, stats
-                FROM wallet_runner_cache
-                WHERE wallet = ? AND last_updated > ?
-            """, [wallet, now - CACHE_TTL_RUNNERS]).fetchone()
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT other_runners, stats
+                    FROM wallet_runner_cache
+                    WHERE wallet = ? AND last_updated > ?
+                """, [wallet, now - CACHE_TTL_RUNNERS]).fetchone()
 
-            if result:
-                self._log(f"DuckDB hit (runners) for {wallet[:8]}...")
-                data = {
-                    'other_runners': json.loads(result[0]),
-                    'stats': json.loads(result[1])
-                }
-                self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
-                return data
-        except Exception as e:
-            self._log(f"DuckDB runners read error: {e}")
+                if result:
+                    self._log(f"DuckDB hit (runners) for {wallet[:8]}...")
+                    data = {
+                        'other_runners': json.loads(result[0]),
+                        'stats': json.loads(result[1])
+                    }
+                    self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
+                    return data
+            except Exception as e:
+                self._log(f"DuckDB runners read error: {e}")
 
         runners = self.get_wallet_other_runners(wallet, current_token, min_multiplier)
         if runners:
@@ -429,17 +472,19 @@ class WalletPumpAnalyzer:
         if cached is not None:
             return cached
 
-        try:
-            result = self.con.execute(
-                "SELECT runner_info FROM token_runner_cache WHERE token = ? AND last_updated > ?",
-                [token, now - CACHE_TTL_RUNNERS]
-            ).fetchone()
-            if result:
-                data = json.loads(result[0])
-                self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
-                return data
-        except Exception as e:
-            self._log(f"DuckDB token_runner read error: {e}")
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute(
+                    "SELECT runner_info FROM token_runner_cache WHERE token = ? AND last_updated > ?",
+                    [token, now - CACHE_TTL_RUNNERS]
+                ).fetchone()
+                if result:
+                    data = json.loads(result[0])
+                    self._redis_set(redis_key, data, REDIS_TTL_RUNNERS)
+                    return data
+            except Exception as e:
+                self._log(f"DuckDB token_runner read error: {e}")
 
         runner_info = self._check_if_runner(token, min_multiplier)
         if runner_info:
@@ -459,16 +504,18 @@ class WalletPumpAnalyzer:
         if cached is not None:
             return cached.get('price')
 
-        try:
-            result = self.con.execute("""
-                SELECT launch_price FROM token_launch_cache
-                WHERE token = ? AND last_updated > ?
-            """, [token_address, now - CACHE_TTL_LAUNCH]).fetchone()
-            if result:
-                self._redis_set(redis_key, {'price': result[0]}, REDIS_TTL_LAUNCH)
-                return result[0]
-        except Exception as e:
-            self._log(f"DuckDB launch_price read error: {e}")
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT launch_price FROM token_launch_cache
+                    WHERE token = ? AND last_updated > ?
+                """, [token_address, now - CACHE_TTL_LAUNCH]).fetchone()
+                if result:
+                    self._redis_set(redis_key, {'price': result[0]}, REDIS_TTL_LAUNCH)
+                    return result[0]
+            except Exception as e:
+                self._log(f"DuckDB launch_price read error: {e}")
 
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
@@ -499,17 +546,19 @@ class WalletPumpAnalyzer:
             self._log(f"Redis hit (ATH) for {token_address[:8]}...")
             return cached
 
-        try:
-            result = self.con.execute("""
-                SELECT highest_price, timestamp FROM token_ath_cache
-                WHERE token = ? AND last_updated > ?
-            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
-            if result:
-                data = {'highest_price': result[0], 'timestamp': result[1]}
-                self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
-                return data
-        except Exception as e:
-            self._log(f"DuckDB ATH read error: {e}")
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT highest_price, timestamp FROM token_ath_cache
+                    WHERE token = ? AND last_updated > ?
+                """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+                if result:
+                    data = {'highest_price': result[0], 'timestamp': result[1]}
+                    self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
+                    return data
+            except Exception as e:
+                self._log(f"DuckDB ATH read error: {e}")
 
         try:
             url = f"{self.st_base_url}/tokens/{token_address}/ath"
@@ -535,24 +584,26 @@ class WalletPumpAnalyzer:
             self._log(f"Redis hit (token_info) for {token_address[:8]}...")
             return cached
 
-        try:
-            result = self.con.execute("""
-                SELECT symbol, name, liquidity, volume_24h, price, holders, age_days
-                FROM token_info_cache
-                WHERE token = ? AND last_updated > ?
-            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
-            if result:
-                info = {
-                    'symbol': result[0], 'name': result[1], 'address': token_address,
-                    'liquidity': result[2], 'volume_24h': result[3], 'price': result[4],
-                    'holders': result[5], 'age_days': result[6],
-                    'age': f"{result[6]:.1f}d" if result[6] > 0 else 'N/A',
-                    'creation_time': None   # not stored in DuckDB — will be None on cache hit
-                }
-                self._redis_set(redis_key, info, REDIS_TTL_TOKEN_INFO)
-                return info
-        except Exception as e:
-            self._log(f"DuckDB token_info read error: {e}")
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT symbol, name, liquidity, volume_24h, price, holders, age_days
+                    FROM token_info_cache
+                    WHERE token = ? AND last_updated > ?
+                """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+                if result:
+                    info = {
+                        'symbol': result[0], 'name': result[1], 'address': token_address,
+                        'liquidity': result[2], 'volume_24h': result[3], 'price': result[4],
+                        'holders': result[5], 'age_days': result[6],
+                        'age': f"{result[6]:.1f}d" if result[6] > 0 else 'N/A',
+                        'creation_time': None
+                    }
+                    self._redis_set(redis_key, info, REDIS_TTL_TOKEN_INFO)
+                    return info
+            except Exception as e:
+                self._log(f"DuckDB token_info read error: {e}")
 
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
@@ -580,7 +631,7 @@ class WalletPumpAnalyzer:
                 'holders':       data.get('holders', 0),
                 'age_days':      token_age_days,
                 'age':           f"{token_age_days:.1f}d" if token_age_days > 0 else 'N/A',
-                'creation_time': creation_time,   # raw timestamp — used by Birdeye window
+                'creation_time': creation_time,
             }
 
             self._save_to_cache(
@@ -609,17 +660,19 @@ class WalletPumpAnalyzer:
             self._log(f"Redis hit (security) for {token_address[:8]}...")
             return cached
 
-        try:
-            result = self.con.execute("""
-                SELECT security_data FROM token_security_cache
-                WHERE token = ? AND last_updated > ?
-            """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
-            if result:
-                data = json.loads(result[0])
-                self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
-                return data
-        except Exception as e:
-            self._log(f"DuckDB security read error: {e}")
+        # Skip DuckDB if no connection or in worker mode
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT security_data FROM token_security_cache
+                    WHERE token = ? AND last_updated > ?
+                """, [token_address, now - CACHE_TTL_TOKEN_INFO]).fetchone()
+                if result:
+                    data = json.loads(result[0])
+                    self._redis_set(redis_key, data, REDIS_TTL_TOKEN_INFO)
+                    return data
+            except Exception as e:
+                self._log(f"DuckDB security read error: {e}")
 
         try:
             url = f"{self.st_base_url}/tokens/{token_address}"
@@ -708,7 +761,7 @@ class WalletPumpAnalyzer:
                 data = response.json()
                 trades = data.get('trades', [])
 
-                if trades and not self.read_only:
+                if trades and self.con and not self.read_only and not self.worker_mode:
                     latest_time = max(t.get('time', 0) for t in trades)
                     try:
                         self.con.execute(
@@ -797,6 +850,12 @@ class WalletPumpAnalyzer:
     def find_trending_runners_enhanced(self, days_back=7, min_multiplier=5.0, min_liquidity=50000):
         cache_key = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
         now = datetime.now()
+        redis_key = f"trending:{cache_key}"
+
+        redis_cached = self._redis_get(redis_key)
+        if redis_cached is not None:
+            self._log(f"Redis hit (trending) for {cache_key}")
+            return redis_cached
 
         if days_back == 30:
             self._log(f"⚡ Skipping memory cache for 30d (one-off autodiscovery)")
@@ -804,8 +863,22 @@ class WalletPumpAnalyzer:
             if cache_key in self._trending_cache:
                 cache_age = now - self._cache_expiry[cache_key]
                 if cache_age < timedelta(seconds=CACHE_TTL_TRENDING):
-                    self._log(f"⚡ Cache hit ({cache_key}) - age: {cache_age.seconds}s")
+                    self._log(f"Memory cache hit ({cache_key}) - age: {cache_age.seconds}s")
                     return self._trending_cache[cache_key]
+
+        if self.con and not self.worker_mode:
+            try:
+                result = self.con.execute("""
+                    SELECT runners FROM trending_runners_cache
+                    WHERE cache_key = ? AND last_updated > ?
+                """, [cache_key, time.time() - CACHE_TTL_TRENDING]).fetchone()
+                if result:
+                    runners = json.loads(result[0])
+                    self._log(f"DuckDB hit (trending) for {cache_key}")
+                    self._redis_set(redis_key, runners, REDIS_TTL_TRENDING)
+                    return runners
+            except Exception as e:
+                self._log(f"DuckDB trending read error: {e}")
 
         self._log(f"\n{'='*80}")
         self._log(f"FINDING TRENDING RUNNERS: {days_back} days, {min_multiplier}x+")
@@ -889,6 +962,18 @@ class WalletPumpAnalyzer:
 
             qualified_runners.sort(key=lambda x: x['multiplier'], reverse=True)
 
+            self._redis_set(redis_key, qualified_runners, REDIS_TTL_TRENDING)
+
+            if self.con and not self.worker_mode:
+                try:
+                    self.con.execute("""
+                        INSERT OR REPLACE INTO trending_runners_cache
+                        (cache_key, runners, last_updated)
+                        VALUES (?, ?, ?)
+                    """, [cache_key, json.dumps(qualified_runners), time.time()])
+                except Exception as e:
+                    self._log(f"DuckDB trending write error: {e}")
+
             if days_back != 30:
                 self._trending_cache[cache_key] = qualified_runners
                 self._cache_expiry[cache_key] = now
@@ -909,12 +994,25 @@ class WalletPumpAnalyzer:
 
     # =========================================================================
     # SCORING
-    # FIX: 30% weight now uses total_multiplier (realized + unrealized).
-    #      Holders who bought early and haven't sold are scored fairly.
-    #      10% weight uses realized_multiplier as a secondary signal.
+    #
+    # Single token:  60% entry timing | 30% total ROI | 10% realized ROI
+    # Batch:         60% entry timing | 30% total ROI | 10% entry consistency
+    #
+    # Entry consistency = variance of (entry_price / launch_price) across tokens
+    # Low variance = entered early and consistently = high score
+    # consistency_score param is only passed in batch mode
     # =========================================================================
 
-    def calculate_wallet_relative_score(self, wallet_data):
+    def calculate_wallet_relative_score(self, wallet_data, consistency_score=None):
+        """
+        Score a wallet's performance on a single token.
+
+        Args:
+            wallet_data: dict with entry_price, ath_price, realized/total multipliers
+            consistency_score: if provided (batch mode), replaces realized ROI for 10%.
+                               Computed as variance of entry_price/launch_price across tokens.
+                               None means single-token mode — use realized ROI for 10%.
+        """
         try:
             entry_price         = wallet_data.get('entry_price') or 0
             ath_price           = wallet_data.get('ath_price') or 0
@@ -947,17 +1045,26 @@ class WalletPumpAnalyzer:
             elif total_multiplier >= 3:  total_roi_score = 50
             else:                        total_roi_score = (total_multiplier / 3) * 50
 
-            # 10% — realized ROI. Secondary signal — rewards wallets that locked in profit.
-            if realized_multiplier >= 100:  realized_score = 100
-            elif realized_multiplier >= 50: realized_score = 90
-            elif realized_multiplier >= 25: realized_score = 80
-            elif realized_multiplier >= 10: realized_score = 70
-            elif realized_multiplier >= 5:  realized_score = 60
-            elif realized_multiplier >= 3:  realized_score = 50
-            else:                           realized_score = (realized_multiplier / 3) * 50
+            # 10% — realized ROI (single token) OR entry consistency (batch)
+            # Realized ROI: secondary signal for single token — rewards wallets that locked in profit
+            # Consistency: variance of entry_price/launch_price multiplier across all tokens traded
+            #              low variance = consistently enters early = rewarded
+            if consistency_score is not None:
+                # Batch mode: use pre-computed consistency (0-100 scale)
+                tenth_score = consistency_score
+                score_breakdown_key = 'consistency_score'
+            else:
+                # Single token mode: use realized ROI
+                if realized_multiplier >= 100:  tenth_score = 100
+                elif realized_multiplier >= 50: tenth_score = 90
+                elif realized_multiplier >= 25: tenth_score = 80
+                elif realized_multiplier >= 10: tenth_score = 70
+                elif realized_multiplier >= 5:  tenth_score = 60
+                elif realized_multiplier >= 3:  tenth_score = 50
+                else:                           tenth_score = (realized_multiplier / 3) * 50
+                score_breakdown_key = 'realized_score'
 
-            # FIX: was (0.60 * entry + 0.30 * realized + 0.10 * total)
-            professional_score = (0.60 * entry_score + 0.30 * total_roi_score + 0.10 * realized_score)
+            professional_score = (0.60 * entry_score + 0.30 * total_roi_score + 0.10 * tenth_score)
 
             if professional_score >= 90:   grade = 'A+'
             elif professional_score >= 85: grade = 'A'
@@ -978,9 +1085,9 @@ class WalletPumpAnalyzer:
                 'realized_multiplier':     round(realized_multiplier, 2) if realized_multiplier else None,
                 'total_multiplier':        round(total_multiplier, 2) if total_multiplier else None,
                 'score_breakdown': {
-                    'entry_score':    round(entry_score, 2),
-                    'total_roi_score':  round(total_roi_score, 2),   # renamed for clarity
-                    'realized_score': round(realized_score, 2)
+                    'entry_score':       round(entry_score, 2),
+                    'total_roi_score':   round(total_roi_score, 2),
+                    score_breakdown_key: round(tenth_score, 2),
                 }
             }
         except Exception as e:
@@ -1093,7 +1200,7 @@ class WalletPumpAnalyzer:
             return {'other_runners': [], 'stats': {}}
 
     # =========================================================================
-    # 5-STEP ANALYSIS
+    # 5-STEP ANALYSIS (single token — uses realized ROI for 10%)
     # =========================================================================
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
@@ -1263,7 +1370,7 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 5: PnL fetch + qualify
-            # FIX: qualification now accepts realized OR total >= min_roi_multiplier
+            # Qualification accepts realized OR total >= min_roi_multiplier
             # ------------------------------------------------------------------
             self._log(f"\n[STEP 5] Fetching PnL for {len(all_wallets)} wallets...")
             wallets_with_pnl = []
@@ -1309,7 +1416,7 @@ class WalletPumpAnalyzer:
             self._log(f"✓ Found {len(qualified_wallets)} qualified wallets")
 
             # ------------------------------------------------------------------
-            # Score and rank
+            # Score and rank — single token mode (10% = realized ROI)
             # ------------------------------------------------------------------
             self._log("\n[SCORING] Ranking by professional score...")
             ath_data  = self.get_token_ath(token_address)
@@ -1320,6 +1427,7 @@ class WalletPumpAnalyzer:
                 wallet_address = wallet_info['wallet']
                 runner_history = self._get_cached_other_runners(wallet_address, current_token=token_address, min_multiplier=10.0)
                 wallet_info['ath_price'] = ath_price
+                # Single token: no consistency_score passed → uses realized ROI for 10%
                 scoring_data = self.calculate_wallet_relative_score(wallet_info)
 
                 if scoring_data['professional_score'] >= 90:   tier = 'S'
@@ -1351,6 +1459,7 @@ class WalletPumpAnalyzer:
                     'other_runners_stats':     runner_history['stats'],
                     'first_buy_time':          wallet_info.get('earliest_entry'),
                     'entry_price':             wallet_info.get('entry_price'),
+                    'ath_price':               ath_price,
                     'is_fresh':                True
                 })
 
@@ -1366,9 +1475,9 @@ class WalletPumpAnalyzer:
 
     def _process_wallet_pnl(self, wallet, pnl_data, wallet_data, qualified_wallets, min_roi_multiplier):
         """
-        FIX: Qualification now accepts realized OR total multiplier >= threshold.
-        A holder who bought early and is sitting on 3x unrealized is just as valid
-        as one who realized 3x.
+        Qualification: realized OR total multiplier >= threshold.
+        A holder on 3x unrealized qualifies the same as someone who sold at 3x.
+        Min invested: $100.
         """
         realized       = pnl_data.get('realized', 0)
         unrealized     = pnl_data.get('unrealized', 0)
@@ -1382,7 +1491,6 @@ class WalletPumpAnalyzer:
         realized_multiplier = (realized + total_invested) / total_invested
         total_multiplier    = (realized + unrealized + total_invested) / total_invested
 
-        # FIX: pass if EITHER realized or total hits the threshold
         if realized_multiplier < min_roi_multiplier and total_multiplier < min_roi_multiplier:
             print(f"[QUALIFY] ❌ {wallet[:8]} [{source}] FAIL — realized={realized_multiplier:.2f}x total={total_multiplier:.2f}x (min={min_roi_multiplier:.1f}x) invested=${total_invested:.2f}")
             return False
@@ -1409,6 +1517,8 @@ class WalletPumpAnalyzer:
 
     # =========================================================================
     # BATCH ANALYSIS
+    # Uses entry consistency (10%) instead of realized ROI for the 10% slot
+    # Consistency = variance of entry_price/launch_price multiplier across tokens
     # =========================================================================
 
     def _assign_tier(self, runner_count, aggregate_score, tokens_analyzed):
@@ -1421,9 +1531,29 @@ class WalletPumpAnalyzer:
         else:                                                      return 'C'
 
     def _calculate_consistency(self, wallet_address, tokens_traded_list):
+        """
+        Compute entry consistency score (0-100) from variance of
+        entry_price / launch_price multiplier across all tokens traded.
+
+        Low variance = consistently enters near launch = high score.
+        High variance = inconsistent entry timing = low score.
+
+        Typical ratio values:
+          1.0x = entered exactly at launch price
+          2.0x = entered when price was 2x from launch
+          5.0x = entered when price was 5x from launch
+
+        Variance thresholds (practical calibration):
+          0.0  → 100 (perfect consistency)
+          0.5  → 95
+          1.0  → 90
+          5.0  → 50
+          10.0 → 0
+        """
         if len(tokens_traded_list) < 2:
-            return 50
-        entry_multipliers = []
+            return 50  # neutral — can't compute variance from one token
+
+        entry_ratios = []
         for token_address in tokens_traded_list:
             launch_price = self._get_token_launch_price(token_address)
             if not launch_price or launch_price == 0:
@@ -1434,13 +1564,17 @@ class WalletPumpAnalyzer:
             entry_price = cached_data['entry_price']
             if entry_price == 0:
                 continue
-            entry_multipliers.append(entry_price / launch_price)
-        if len(entry_multipliers) < 2:
-            return 50
+            entry_ratios.append(entry_price / launch_price)
+
+        if len(entry_ratios) < 2:
+            return 50  # not enough data points
+
         try:
-            variance = statistics.variance(entry_multipliers)
-            return round(max(0, 100 - (variance * 2)), 1)
-        except:
+            variance = statistics.variance(entry_ratios)
+            # Scale: variance * 10 → 100 to 0 range
+            # variance of 10 maps to score 0, variance of 0 maps to score 100
+            return round(max(0, 100 - (variance * 10)), 1)
+        except Exception:
             return 50
 
     def batch_analyze_runners_professional(self, runners_list, min_runner_hits=2,
@@ -1450,14 +1584,15 @@ class WalletPumpAnalyzer:
         self._log(f"{'='*80}")
 
         wallet_hits = defaultdict(lambda: {
-            'wallet': None,
-            'runners_hit': [],
+            'wallet':                None,
+            'runners_hit':           [],
             'runners_hit_addresses': set(),
-            'roi_details': [],
-            'professional_scores': [],
-            'entry_to_ath_multipliers': [],
-            'distance_to_ath_values': [],
-            'roi_multipliers': []
+            'roi_details':           [],
+            'professional_scores':   [],
+            'entry_to_ath_vals':     [],
+            'distance_to_ath_vals':  [],
+            'roi_multipliers':       [],       # realized ROI per token (for reference)
+            'total_roi_multipliers': [],       # total ROI (realized + unrealized) — used for 30%
         })
 
         for idx, runner in enumerate(runners_list, 1):
@@ -1487,26 +1622,51 @@ class WalletPumpAnalyzer:
                     'professional_score':      wallet['professional_score'],
                     'professional_grade':      wallet['professional_grade'],
                     'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
-                    'distance_to_ath_pct':     wallet.get('distance_to_ath_pct')
+                    'distance_to_ath_pct':     wallet.get('distance_to_ath_pct'),
+                    'entry_price':             wallet.get('entry_price'),
                 })
 
                 wallet_hits[wallet_addr]['professional_scores'].append(wallet['professional_score'])
                 if wallet.get('entry_to_ath_multiplier'):
-                    wallet_hits[wallet_addr]['entry_to_ath_multipliers'].append(wallet['entry_to_ath_multiplier'])
+                    wallet_hits[wallet_addr]['entry_to_ath_vals'].append(wallet['entry_to_ath_multiplier'])
                 if wallet.get('distance_to_ath_pct'):
-                    wallet_hits[wallet_addr]['distance_to_ath_values'].append(wallet['distance_to_ath_pct'])
+                    wallet_hits[wallet_addr]['distance_to_ath_vals'].append(wallet['distance_to_ath_pct'])
                 wallet_hits[wallet_addr]['roi_multipliers'].append(wallet['roi_multiplier'])
+                # Track total ROI (realized + unrealized) for the 30% scoring component
+                wallet_hits[wallet_addr]['total_roi_multipliers'].append(
+                    wallet.get('total_multiplier') or wallet['roi_multiplier']
+                )
 
         smart_money = []
         no_overlap_fallback = False
 
         def _build_entry(wallet_addr, data, tokens_analyzed):
-            avg_distance_to_ath = sum(data['distance_to_ath_values']) / len(data['distance_to_ath_values']) if data['distance_to_ath_values'] else 0
-            avg_roi = sum(data['roi_multipliers']) / len(data['roi_multipliers']) if data['roi_multipliers'] else 0
-            consistency_score = self._calculate_consistency(wallet_addr, list(data['runners_hit_addresses']))
-            aggregate_score = 0.60 * avg_distance_to_ath + 0.30 * (avg_roi / 10) + 0.10 * consistency_score
+            avg_distance_to_ath = (
+                sum(data['distance_to_ath_vals']) / len(data['distance_to_ath_vals'])
+                if data['distance_to_ath_vals'] else 0
+            )
+            # 30% — total ROI (realized + unrealized), not just realized
+            avg_total_roi = (
+                sum(data['total_roi_multipliers']) / len(data['total_roi_multipliers'])
+                if data['total_roi_multipliers'] else 0
+            )
+            # 10% — entry consistency (variance of entry_price/launch_price across tokens)
+            consistency_score = self._calculate_consistency(
+                wallet_addr, list(data['runners_hit_addresses'])
+            )
+
+            # Aggregate score: 60/30/10 with total ROI and consistency
+            aggregate_score = (
+                0.60 * avg_distance_to_ath +
+                0.30 * (avg_total_roi / 10 * 100) +
+                0.10 * consistency_score
+            )
+
             tier = self._assign_tier(len(data['runners_hit']), aggregate_score, tokens_analyzed)
-            variance = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
+            variance = (
+                statistics.variance(data['professional_scores'])
+                if len(data['professional_scores']) > 1 else 0
+            )
 
             if variance < 10:   consistency_grade = 'A+'
             elif variance < 20: consistency_grade = 'A'
@@ -1517,32 +1677,49 @@ class WalletPumpAnalyzer:
             full_history  = self._get_cached_other_runners(wallet_addr)
             outside_batch = [r for r in full_history['other_runners'] if r['address'] not in data['runners_hit_addresses']]
 
+            avg_score = sum(data['professional_scores']) / len(data['professional_scores'])
+            avg_realized_roi = (
+                sum(data['roi_multipliers']) / len(data['roi_multipliers'])
+                if data['roi_multipliers'] else 0
+            )
+            avg_entry_to_ath = (
+                round(sum(data['entry_to_ath_vals']) / len(data['entry_to_ath_vals']), 2)
+                if data['entry_to_ath_vals'] else None
+            )
+
             return {
                 'wallet':                      wallet_addr,
                 'runner_count':                len(data['runners_hit']),
                 'runners_hit':                 data['runners_hit'],
                 'avg_distance_to_ath_pct':     round(avg_distance_to_ath, 2),
-                'avg_roi':                     round(avg_roi, 2),
+                'avg_total_roi':               round(avg_total_roi, 2),
+                'avg_roi':                     round(avg_realized_roi, 2),  # kept for compat
                 'consistency_score':           consistency_score,
                 'aggregate_score':             round(aggregate_score, 2),
                 'tier':                        tier,
-                'avg_professional_score':      round(sum(data['professional_scores']) / len(data['professional_scores']), 2),
-                'avg_entry_to_ath_multiplier': round(sum(data['entry_to_ath_multipliers']) / len(data['entry_to_ath_multipliers']), 2) if data['entry_to_ath_multipliers'] else None,
+                'avg_professional_score':      round(avg_score, 2),
+                'avg_entry_to_ath_multiplier': avg_entry_to_ath,
                 'variance':                    round(variance, 2),
                 'consistency_grade':           consistency_grade,
                 'roi_details':                 data['roi_details'][:5],
                 'total_runners_30d':           len(data['runners_hit']) + len(outside_batch),
                 'outside_batch_runners':       outside_batch[:5],
                 'full_30d_stats':              full_history['stats'],
-                'is_fresh':                    True
+                'is_fresh':                    True,
+                'score_breakdown': {
+                    'entry_score':       round(0.60 * avg_distance_to_ath, 2),
+                    'total_roi_score':   round(0.30 * (avg_total_roi / 10 * 100), 2),
+                    'consistency_score': round(0.10 * consistency_score, 2),
+                }
             }
 
+        # Apply min_runner_hits filter — wallets that don't appear across enough tokens excluded
         for wallet_addr, data in wallet_hits.items():
             if len(data['runners_hit']) >= min_runner_hits:
                 smart_money.append(_build_entry(wallet_addr, data, len(runners_list)))
 
         if not smart_money:
-            self._log(f"\n⚠️ No cross-token overlap - showing all wallets ranked individually")
+            self._log(f"\n⚠️ No cross-token overlap — showing all wallets ranked individually")
             no_overlap_fallback = True
             for wallet_addr, data in wallet_hits.items():
                 entry = _build_entry(wallet_addr, data, len(runners_list))
@@ -1550,6 +1727,7 @@ class WalletPumpAnalyzer:
                 smart_money.append(entry)
             smart_money.sort(key=lambda x: x['aggregate_score'], reverse=True)
         else:
+            # Primary: most tokens participated → Secondary: aggregate score
             smart_money.sort(key=lambda x: (x['runner_count'], x['aggregate_score']), reverse=True)
 
         self._log(f"\n✅ Found {len(smart_money)} {'individual' if no_overlap_fallback else 'cross-token'} wallets")
@@ -1559,7 +1737,7 @@ class WalletPumpAnalyzer:
         wallet_hits = defaultdict(lambda: {
             'wallet': None, 'tokens_hit': [], 'token_addresses': set(),
             'performances': [], 'entry_to_ath_values': [],
-            'realized_roi_values': [], 'professional_scores': []
+            'realized_roi_values': [], 'total_roi_values': [], 'professional_scores': []
         })
 
         for idx, token in enumerate(tokens, 1):
@@ -1586,18 +1764,23 @@ class WalletPumpAnalyzer:
                     'realized_roi':            wallet['roi_multiplier'],
                     'total_roi':               wallet.get('total_multiplier'),
                     'invested':                wallet.get('total_invested', 0),
-                    'realized':                wallet.get('realized_profit', 0)
+                    'realized':                wallet.get('realized_profit', 0),
+                    'entry_price':             wallet.get('entry_price'),
                 })
                 wallet_hits[addr]['professional_scores'].append(wallet['professional_score'])
                 if wallet.get('entry_to_ath_multiplier'):
                     wallet_hits[addr]['entry_to_ath_values'].append(wallet['entry_to_ath_multiplier'])
                 wallet_hits[addr]['realized_roi_values'].append(wallet['roi_multiplier'])
+                wallet_hits[addr]['total_roi_values'].append(
+                    wallet.get('total_multiplier') or wallet['roi_multiplier']
+                )
 
         def _build_ranked(addr, data):
             avg_score        = sum(data['professional_scores']) / len(data['professional_scores']) if data['professional_scores'] else 0
             avg_entry_to_ath = sum(data['entry_to_ath_values']) / len(data['entry_to_ath_values']) if data['entry_to_ath_values'] else None
-            avg_realized_roi = sum(data['realized_roi_values']) / len(data['realized_roi_values']) if data['realized_roi_values'] else 0
-            variance         = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
+            avg_total_roi    = sum(data['total_roi_values']) / len(data['total_roi_values']) if data['total_roi_values'] else 0
+            consistency_score = self._calculate_consistency(addr, list(data['token_addresses']))
+            variance          = statistics.variance(data['professional_scores']) if len(data['professional_scores']) > 1 else 0
             if variance < 10:   cg = 'A+'
             elif variance < 20: cg = 'A'
             elif variance < 30: cg = 'B'
@@ -1609,7 +1792,8 @@ class WalletPumpAnalyzer:
                 'tokens_hit':                  data['tokens_hit'],
                 'avg_professional_score':      round(avg_score, 2),
                 'avg_entry_to_ath_multiplier': round(avg_entry_to_ath, 2) if avg_entry_to_ath else None,
-                'avg_realized_roi':            round(avg_realized_roi, 2),
+                'avg_total_roi':               round(avg_total_roi, 2),
+                'consistency_score':           consistency_score,
                 'consistency_grade':           cg,
                 'variance':                    round(variance, 2),
                 'performances':                data['performances'][:5],
@@ -1669,9 +1853,9 @@ class WalletPumpAnalyzer:
             if similarity['total_score'] > 0.3:
                 scored_candidates.append({
                     **candidate,
-                    'similarity_score':    similarity['total_score'],
+                    'similarity_score':     similarity['total_score'],
                     'similarity_breakdown': similarity['breakdown'],
-                    'why_better':          self._explain_why_better(declining_profile, candidate)
+                    'why_better':           self._explain_why_better(declining_profile, candidate)
                 })
 
         scored_candidates.sort(
@@ -1692,13 +1876,13 @@ class WalletPumpAnalyzer:
             if not isinstance(tokens_traded, list):
                 tokens_traded = [t.strip() for t in str(tokens_traded).split(',')]
             return {
-                'wallet_address':    wallet_address,
-                'tier':              wallet_data.get('tier', 'C'),
+                'wallet_address':     wallet_address,
+                'tier':               wallet_data.get('tier', 'C'),
                 'professional_score': wallet_data.get('avg_professional_score', 0),
-                'tokens_traded':     tokens_traded,
-                'avg_roi':           wallet_data.get('avg_roi_to_peak', 0),
-                'pump_count':        wallet_data.get('pump_count', 0),
-                'consistency_score': wallet_data.get('consistency_score', 0)
+                'tokens_traded':      tokens_traded,
+                'avg_roi':            wallet_data.get('avg_roi_to_peak', 0),
+                'pump_count':         wallet_data.get('pump_count', 0),
+                'consistency_score':  wallet_data.get('consistency_score', 0)
             }
         except Exception as e:
             print(f"⚠️ Error loading wallet profile: {e}")

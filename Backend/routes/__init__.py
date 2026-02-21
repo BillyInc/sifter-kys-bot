@@ -10,6 +10,7 @@ from .whop_webhook import whop_bp
 from .referral_points_routes import referral_points_bp
 from .auth import auth_bp
 from .token_routes import tokens_bp
+from .recents import recents_bp
 
 __all__ = [
     'analyze_bp',
@@ -23,4 +24,5 @@ __all__ = [
     'referral_points_bp',
     'auth_bp',
     'tokens_bp',
+    'recents_bp',
 ]

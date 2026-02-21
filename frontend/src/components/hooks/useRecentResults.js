@@ -1,62 +1,125 @@
-// hooks/useRecentResults.js
+// hooks/useRecents.js
+// Manages recent analysis results via Redis-backed API (6hr TTL, cross-device).
+// Scoped by panelKey ('analyze' | 'trending' | 'discovery') so each panel
+// maintains its own recent list independently.
+
 import { useState, useEffect, useCallback } from 'react';
 
-const MAX_RECENT = 10;
+const MAX_RECENTS = 10;
 
-/**
- * Persists recent analysis results per panel type using window.storage.
- * panelKey: 'analyze' | 'trending' | 'discovery'
- */
-export function useRecentResults(panelKey) {
-  const storageKey = `recent_results:${panelKey}`;
+export function buildRecentEntry({ label, sublabel, data, resultType }) {
+  return {
+    id:         `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    resultType,
+    label,
+    sublabel,
+    timestamp:  Date.now(),
+    data,
+  };
+}
+
+export function useRecents({ apiUrl, userId, getAccessToken, panelKey }) {
   const [recents, setRecents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
 
-  // Load on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const result = await window.storage.get(storageKey);
-        if (result?.value) {
-          setRecents(JSON.parse(result.value));
-        }
-      } catch {
-        // key doesn't exist yet — fine
-      } finally {
-        setLoading(false);
+  // ── Auth headers ────────────────────────────────────────────────────────────
+  const authHeaders = useCallback(() => {
+    const token = getAccessToken?.();
+    return token
+      ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      : { 'Content-Type': 'application/json' };
+  }, [getAccessToken]);
+
+  // ── Panel-scoped user id ────────────────────────────────────────────────────
+  // Appending panelKey to userId scopes recents per panel on the backend
+  const scopedUserId = panelKey ? `${userId}:${panelKey}` : userId;
+
+  // ── Load from API ───────────────────────────────────────────────────────────
+  const loadRecents = useCallback(async () => {
+    if (!userId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res  = await fetch(`${apiUrl}/api/user/recents?user_id=${scopedUserId}`, {
+        headers: authHeaders(),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRecents(data.recents || []);
+      } else {
+        setError(data.error || 'Failed to load recents');
       }
-    })();
-  }, [storageKey]);
+    } catch (e) {
+      console.error('[RECENTS] Load error:', e);
+      setError('Could not reach server');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiUrl, scopedUserId, authHeaders, userId]);
 
+  useEffect(() => {
+    loadRecents();
+  }, [loadRecents]);
+
+  // ── Add entry ───────────────────────────────────────────────────────────────
   const saveResult = useCallback(async ({ label, sublabel, data, resultType }) => {
-    const entry = {
-      id:         Date.now(),
-      label,       // e.g. "PEPE • 11 wallets"
-      sublabel,    // e.g. "General Analysis"
-      resultType,
-      data,
-      timestamp:  Date.now(),
-    };
+    const entry = buildRecentEntry({ label, sublabel, data, resultType });
 
-    setRecents(prev => {
-      const updated = [entry, ...prev.filter(r => r.id !== entry.id)].slice(0, MAX_RECENT);
-      window.storage.set(storageKey, JSON.stringify(updated)).catch(() => {});
-      return updated;
-    });
-  }, [storageKey]);
+    // Optimistic update — feels instant
+    setRecents(prev => [entry, ...prev].slice(0, MAX_RECENTS));
 
+    try {
+      await fetch(`${apiUrl}/api/user/recents`, {
+        method:  'POST',
+        headers: authHeaders(),
+        body:    JSON.stringify({ user_id: scopedUserId, entry }),
+      });
+    } catch (e) {
+      console.error('[RECENTS] Add error:', e);
+      // Optimistic update stays — user sees result either way
+    }
+  }, [apiUrl, scopedUserId, authHeaders]);
+
+  // ── Remove single entry ─────────────────────────────────────────────────────
   const removeResult = useCallback(async (id) => {
-    setRecents(prev => {
-      const updated = prev.filter(r => r.id !== id);
-      window.storage.set(storageKey, JSON.stringify(updated)).catch(() => {});
-      return updated;
-    });
-  }, [storageKey]);
+    setRecents(prev => prev.filter(r => r.id !== id)); // optimistic
 
+    try {
+      await fetch(`${apiUrl}/api/user/recents/${id}`, {
+        method:  'DELETE',
+        headers: authHeaders(),
+        body:    JSON.stringify({ user_id: scopedUserId }),
+      });
+    } catch (e) {
+      console.error('[RECENTS] Remove error:', e);
+      loadRecents(); // revert on failure
+    }
+  }, [apiUrl, scopedUserId, authHeaders, loadRecents]);
+
+  // ── Clear all ───────────────────────────────────────────────────────────────
   const clearAll = useCallback(async () => {
-    setRecents([]);
-    window.storage.delete(storageKey).catch(() => {});
-  }, [storageKey]);
+    setRecents([]); // optimistic
 
-  return { recents, loading, saveResult, removeResult, clearAll };
+    try {
+      await fetch(`${apiUrl}/api/user/recents`, {
+        method:  'DELETE',
+        headers: authHeaders(),
+        body:    JSON.stringify({ user_id: scopedUserId }),
+      });
+    } catch (e) {
+      console.error('[RECENTS] Clear error:', e);
+      loadRecents(); // revert on failure
+    }
+  }, [apiUrl, scopedUserId, authHeaders, loadRecents]);
+
+  return {
+    recents,
+    loading,
+    error,
+    saveResult,
+    removeResult,
+    clearAll,
+    refreshRecents: loadRecents,
+  };
 }

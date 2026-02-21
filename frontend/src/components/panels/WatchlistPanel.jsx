@@ -139,7 +139,7 @@ export default function WatchlistPanel({ userId, apiUrl, onConfigure }) {
           <div style={{ padding: '48px 24px', textAlign: 'center' }}>
             <TrendingUp size={36} style={{ color: '#1a2640', margin: '0 auto 12px', display: 'block' }} />
             <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#334155' }}>No wallets in watchlist</div>
-            <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#1e293b', marginTop: 4 }}>Use Auto Discovery to find smart money wallets</div>
+            <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#1e293b', marginTop: 4 }}>Analyze to find smart money wallets</div>
           </div>
         ) : wallets.map((wallet, idx) => (
           <WatchlistExpandedCard
