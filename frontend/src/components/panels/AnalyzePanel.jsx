@@ -88,16 +88,16 @@ export default function AnalyzePanel({
           </div>
 
           {/* ✅ NEW: Search-again button — visible when there is a query */}
-          {searchQuery.length >= 2 && (
+          
             <button
               onClick={() => onRefreshSearch && onRefreshSearch()}
               disabled={isSearching}
-              title="Search again"
+              title="Search"
               className="flex-shrink-0 p-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 rounded-lg transition"
             >
               <RefreshCw size={16} className={isSearching ? 'animate-spin' : ''} />
             </button>
-          )}
+          
 
           {/* Search Dropdown */}
           {showDropdown && searchResults.length > 0 && (

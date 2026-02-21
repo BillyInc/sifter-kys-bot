@@ -14,8 +14,8 @@ import QuickAddWalletPanel   from './components/panels/QuickAddWalletPanel';
 import ProfilePanel       from './components/panels/ProfilePanel';
 import HelpSupportPanel   from './components/panels/HelpSupportPanel';
 import ResultsPanel       from './components/panels/ResultsPanel';
-import RecentResultsList  from './components/panels/RecentResultsList';
-import { useRecents }     from './hooks/useRecents';
+import RecentResultsList  from './components/RecentResultsList';
+import { useRecents }     from './hooks/useRecentResults';
 
 import WalletActivityMonitor  from './WalletActivityMonitor';
 import WalletAlertSettings    from './WalletAlertSettings';
