@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
-import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, Award, Clock } from 'lucide-react';
+import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, Award, Clock, Activity } from 'lucide-react';
 
 import DashboardHome      from './components/dashboard/DashboardHome';
 import SlideOutPanel      from './components/panels/SlideOutPanel';
@@ -77,8 +77,13 @@ export default function SifterKYS() {
   const [userPoints, setUserPoints]             = useState(0);
 
   // ── Panel helpers ───────────────────────────────────────────────────────────
-  const handleOpenPanel  = (panelId) => { setOpenPanel(panelId); setShowProfileDropdown(false); };
-  const handleClosePanel = ()        => setOpenPanel(null);
+  const handleOpenPanel = (panelId) => {
+    setOpenPanel(panelId);
+    setShowProfileDropdown(false);
+    setShowActiveAnalyses(false);
+  };
+
+  const handleClosePanel = () => setOpenPanel(null);
 
   /** Central handler — opens ResultsPanel AND saves to recents. */
   const handleResultsReady = useCallback((data, type) => {
@@ -109,6 +114,231 @@ export default function SifterKYS() {
     help:       { direction: 'right', width: 'w-96',             title: '❓ Help & Support'     },
     recents:    { direction: 'right', width: 'w-[480px]',        title: '🕐 Recent Analyses'    },
   }[panelId] || { direction: 'left', width: 'w-96', title: '' });
+
+  // ── Active analysis tracking ─────────────────────────────────────────────
+  const [activeAnalyses, setActiveAnalyses] = useState({
+    trending: null,    // { jobId, type, token, progress, startTime }
+    discovery: null,   // { jobId, type, runners, progress, startTime }
+    analyze: null      // { jobId, type, tokens, progress, startTime }
+  });
+
+  const [showActiveAnalyses, setShowActiveAnalyses] = useState(false);
+  const activeIntervalRef = useRef(null);
+
+  // ── Save to Redis ───────────────────────────────────────────────────────
+  const saveActiveAnalysisToRedis = useCallback(async (type, analysis) => {
+    if (!userId || !isAuthenticated) return;
+    
+    try {
+      const authToken = getAccessToken();
+      await fetch(`${API_URL}/api/user/active-analysis`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          type: type,
+          analysis: { ...analysis, timestamp: Date.now() }
+        })
+      });
+    } catch (e) {
+      console.error('Failed to save active analysis to Redis:', e);
+    }
+  }, [userId, isAuthenticated, getAccessToken, API_URL]);
+
+  // ── Delete from Redis ───────────────────────────────────────────────────
+  const deleteActiveAnalysisFromRedis = useCallback(async (type) => {
+    if (!userId || !isAuthenticated) return;
+    
+    try {
+      const authToken = getAccessToken();
+      await fetch(`${API_URL}/api/user/active-analysis/${type}?user_id=${userId}`, {
+        method: 'DELETE',
+        headers: { 
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+    } catch (e) {
+      console.error('Failed to delete active analysis from Redis:', e);
+    }
+  }, [userId, isAuthenticated, getAccessToken, API_URL]);
+
+  // ── Load from Redis on mount ────────────────────────────────────────────
+  const loadActiveAnalysesFromRedis = useCallback(async () => {
+    if (!userId || !isAuthenticated) return;
+    
+    try {
+      const authToken = getAccessToken();
+      const res = await fetch(`${API_URL}/api/user/active-analyses?user_id=${userId}`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      
+      if (data.success && data.analyses) {
+        setActiveAnalyses(prev => ({
+          ...prev,
+          ...data.analyses
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to load active analyses from Redis:', e);
+    }
+  }, [userId, isAuthenticated, getAccessToken, API_URL]);
+
+  // ── Start analysis (called from each panel) ─────────────────────────────
+  const startAnalysis = useCallback(async (type, data) => {
+    const newAnalysis = {
+      jobId: data.jobId,
+      type: data.analysisType || type,
+      startTime: Date.now(),
+      progress: { current: 0, total: data.total || 1, phase: 'Starting...' },
+      ...data
+    };
+
+    setActiveAnalyses(prev => {
+      const updated = {
+        ...prev,
+        [type]: newAnalysis
+      };
+      
+      // Save to Redis
+      saveActiveAnalysisToRedis(type, newAnalysis);
+      
+      return updated;
+    });
+  }, [saveActiveAnalysisToRedis]);
+
+  // ── Update analysis progress ────────────────────────────────────────────
+  const updateAnalysisProgress = useCallback((type, progress) => {
+    setActiveAnalyses(prev => {
+      const updated = {
+        ...prev,
+        [type]: prev[type] ? { ...prev[type], progress } : null
+      };
+      
+      // Update Redis if analysis exists
+      if (updated[type]) {
+        saveActiveAnalysisToRedis(type, updated[type]);
+      } else {
+        deleteActiveAnalysisFromRedis(type);
+      }
+      
+      return updated;
+    });
+  }, [saveActiveAnalysisToRedis, deleteActiveAnalysisFromRedis]);
+
+  // ── Complete analysis ───────────────────────────────────────────────────
+  const completeAnalysis = useCallback(async (type, results) => {
+    setActiveAnalyses(prev => {
+      const updated = { ...prev, [type]: null };
+      
+      // Delete from Redis
+      deleteActiveAnalysisFromRedis(type);
+      
+      return updated;
+    });
+
+    // Save to recents and show results
+    handleResultsReady(results, type);
+  }, [handleResultsReady, deleteActiveAnalysisFromRedis]);
+
+  // ── Cancel analysis ─────────────────────────────────────────────────────
+  const cancelAnalysis = useCallback(async (type) => {
+    const analysis = activeAnalyses[type];
+    if (!analysis?.jobId) return;
+
+    try {
+      const authToken = getAccessToken();
+      await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+    } catch (e) {
+      console.error('Cancel error:', e);
+    }
+
+    setActiveAnalyses(prev => {
+      const updated = { ...prev, [type]: null };
+      
+      // Delete from Redis
+      deleteActiveAnalysisFromRedis(type);
+      
+      return updated;
+    });
+  }, [activeAnalyses, getAccessToken, API_URL, deleteActiveAnalysisFromRedis]);
+
+  // ── Load active analyses on mount ───────────────────────────────────────
+  useEffect(() => {
+    if (isAuthenticated && userId) {
+      loadActiveAnalysesFromRedis();
+    }
+  }, [isAuthenticated, userId, loadActiveAnalysesFromRedis]);
+
+  // ── Poll for progress updates ──────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const pollActiveAnalyses = async () => {
+      const authToken = getAccessToken();
+      if (!authToken) return;
+
+      const updated = { ...activeAnalyses };
+      let hasChanges = false;
+
+      for (const [type, analysis] of Object.entries(activeAnalyses)) {
+        if (!analysis?.jobId) continue;
+
+        try {
+          const res = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/progress`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          const data = await res.json();
+
+          if (data.success) {
+            if (data.status === 'completed') {
+              // Fetch results and complete
+              const resultRes = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
+                headers: { Authorization: `Bearer ${authToken}` }
+              });
+              const resultData = await resultRes.json();
+              await completeAnalysis(type, resultData);
+              hasChanges = true;
+            } else if (data.status === 'failed') {
+              updated[type] = null;
+              await deleteActiveAnalysisFromRedis(type);
+              hasChanges = true;
+            } else {
+              // Update progress
+              updated[type] = {
+                ...analysis,
+                progress: {
+                  current: data.tokens_completed || 0,
+                  total: data.tokens_total || 1,
+                  phase: data.phase || ''
+                }
+              };
+              await saveActiveAnalysisToRedis(type, updated[type]);
+              hasChanges = true;
+            }
+          }
+        } catch (e) {
+          console.error(`Poll error for ${type}:`, e);
+        }
+      }
+
+      if (hasChanges) {
+        setActiveAnalyses(updated);
+      }
+    };
+
+    activeIntervalRef.current = setInterval(pollActiveAnalyses, 3000);
+    return () => clearInterval(activeIntervalRef.current);
+  }, [activeAnalyses, isAuthenticated, getAccessToken, API_URL, completeAnalysis, saveActiveAnalysisToRedis, deleteActiveAnalysisFromRedis]);
+
+  // ── Count active analyses ──────────────────────────────────────────────
+  const activeCount = Object.values(activeAnalyses).filter(Boolean).length;
 
   // ── Formatters ──────────────────────────────────────────────────────────────
   const formatNumber = (num) => {
@@ -396,6 +626,18 @@ export default function SifterKYS() {
             <div className="flex gap-3 items-center">
               <WalletActivityMonitor />
 
+              {/* Active Analyses button */}
+              {activeCount > 0 && (
+                <button
+                  onClick={() => setShowActiveAnalyses(!showActiveAnalyses)}
+                  className="relative flex items-center gap-2 px-3 py-2 bg-green-500/20 hover:bg-green-500/30 rounded-lg transition"
+                  title={`${activeCount} active analysis${activeCount > 1 ? 's' : ''}`}
+                >
+                  <Activity size={15} className="text-green-400 animate-pulse" />
+                  <span className="text-xs font-bold text-green-400">{activeCount}</span>
+                </button>
+              )}
+
               {/* Recent analyses button */}
               <button
                 onClick={() => handleOpenPanel('recents')}
@@ -407,6 +649,71 @@ export default function SifterKYS() {
                   <span className="text-xs font-bold text-gray-300">{recentResults.length}</span>
                 )}
               </button>
+
+              {/* Active Analyses Dropdown */}
+              {showActiveAnalyses && activeCount > 0 && (
+                <div className="absolute right-44 top-12 w-80 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
+                  <div className="p-3 border-b border-white/10">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <Activity size={14} className="text-green-400" />
+                      Active Analyses ({activeCount})
+                    </h3>
+                  </div>
+                  <div className="p-2 max-h-96 overflow-y-auto">
+                    {Object.entries(activeAnalyses).map(([type, analysis]) => {
+                      if (!analysis) return null;
+                      
+                      return (
+                        <div key={type} className="p-3 hover:bg-white/5 rounded-lg mb-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-semibold capitalize">
+                              {type === 'analyze' ? '🔍 Token Analysis' : 
+                               type === 'trending' ? '🔥 Trending Batch' : 
+                               type === 'discovery' ? '⚡ Auto Discovery' : type}
+                            </span>
+                            <button
+                              onClick={() => cancelAnalysis(type)}
+                              className="text-xs text-red-400 hover:text-red-300"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          
+                          <div className="text-xs text-gray-400 mb-2">
+                            {analysis.progress?.phase || 'Processing...'}
+                          </div>
+                          
+                          <div className="bg-white/10 rounded-full h-1.5 mb-2">
+                            <div 
+                              className="bg-green-500 h-1.5 rounded-full transition-all"
+                              style={{ 
+                                width: `${(analysis.progress?.current / analysis.progress?.total) * 100}%` 
+                              }}
+                            />
+                          </div>
+                          
+                          <div className="flex justify-between text-xs text-gray-500">
+                            <span>{analysis.progress?.current}/{analysis.progress?.total}</span>
+                            <span>
+                              {Math.round((Date.now() - analysis.startTime) / 1000 / 60)}m elapsed
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              setOpenPanel(type);
+                              setShowActiveAnalyses(false);
+                            }}
+                            className="w-full mt-2 text-xs text-purple-400 hover:text-purple-300 text-center"
+                          >
+                            Open Panel
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Points badge */}
               <div
@@ -515,6 +822,10 @@ export default function SifterKYS() {
             formatPrice={formatPrice}
             onResultsReady={handleResultsReady}
             onRefreshSearch={fireSearch}
+            onAnalysisStart={(data) => startAnalysis('analyze', data)}
+            onAnalysisProgress={(progress) => updateAnalysisProgress('analyze', progress)}
+            onAnalysisComplete={(results) => completeAnalysis('analyze', results)}
+            activeAnalysis={activeAnalyses.analyze}
           />
         )}
 
@@ -524,6 +835,10 @@ export default function SifterKYS() {
             onClose={handleClosePanel}
             formatNumber={formatNumber} formatPrice={formatPrice}
             onResultsReady={handleResultsReady}
+            onAnalysisStart={(data) => startAnalysis('trending', data)}
+            onAnalysisProgress={(progress) => updateAnalysisProgress('trending', progress)}
+            onAnalysisComplete={(results) => completeAnalysis('trending', results)}
+            activeAnalysis={activeAnalyses.trending}
           />
         )}
 
@@ -534,6 +849,10 @@ export default function SifterKYS() {
             onAddToWatchlist={addToWalletWatchlist}
             formatNumber={formatNumber}
             onResultsReady={handleResultsReady}
+            onAnalysisStart={(data) => startAnalysis('discovery', data)}
+            onAnalysisProgress={(progress) => updateAnalysisProgress('discovery', progress)}
+            onAnalysisComplete={(results) => completeAnalysis('discovery', results)}
+            activeAnalysis={activeAnalyses.discovery}
           />
         )}
 
@@ -557,7 +876,6 @@ export default function SifterKYS() {
           />
         )}
 
-        {/* ✅ getAccessToken now passed so auth header is sent — no more "user_id required" */}
         {openPanel === 'quickadd' && (
           <QuickAddWalletPanel
             userId={userId}

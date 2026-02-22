@@ -10,7 +10,11 @@ export default function DiscoveryPanel({
   onClose,
   onAddToWatchlist,
   formatNumber,
-  onResultsReady
+  onResultsReady,
+  onAnalysisStart,
+  onAnalysisProgress,
+  onAnalysisComplete,
+  activeAnalysis
 }) {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
@@ -63,6 +67,7 @@ export default function DiscoveryPanel({
           [];
 
         setDiscoveryResults(wallets);
+        onAnalysisComplete(data.results);
         if (onResultsReady) onResultsReady(data.results, 'discovery');
         setIsDiscovering(false);
         setCurrentJobId(null);
@@ -100,11 +105,13 @@ export default function DiscoveryPanel({
         const data = await response.json();
 
         if (data.success) {
-          setAnalysisProgress({
+          const progress = {
             current: data.tokens_completed || 0,
             total:   data.tokens_total || 10,
             phase:   data.phase || ''
-          });
+          };
+          setAnalysisProgress(progress);
+          onAnalysisProgress(progress);
 
           if (data.status === 'completed') {
             clearInterval(pollIntervalRef.current);
@@ -122,6 +129,7 @@ export default function DiscoveryPanel({
               [];
 
             setDiscoveryResults(wallets);
+            onAnalysisComplete(resultData);
             if (onResultsReady) onResultsReady(resultData, 'discovery');
             setIsDiscovering(false);
             setCurrentJobId(null);
@@ -159,6 +167,11 @@ export default function DiscoveryPanel({
 
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
+        onAnalysisStart({
+          jobId: data.job_id,
+          total: 10,
+          analysisType: 'discovery'
+        });
         pollJobProgress(data.job_id);
       } else {
         alert(`Discovery failed: ${data.error || 'Unknown error'}`);
@@ -272,6 +285,27 @@ export default function DiscoveryPanel({
           </div>
         )}
       </div>
+
+      {/* Show active analysis from parent if any */}
+      {activeAnalysis && !isDiscovering && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+          <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <Zap className="text-green-400" size={16} />
+            Analysis in Progress
+          </h3>
+          <div className="space-y-2">
+            <div className="bg-white/10 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-green-500 h-2 transition-all duration-500"
+                style={{ width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ✅ NEW: Timeout / recovery banner */}
       {timedOut && (

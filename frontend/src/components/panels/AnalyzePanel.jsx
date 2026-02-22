@@ -9,6 +9,10 @@ import AnalysisSettings from '../../Analysis_Setting';
  *  onRefreshSearch  — () => void  — triggers a fresh search with the current query
  *  streamingMessage — string      — forwarded from SifterKYS so AnalyzePanel can show
  *                                   progress inline (optional; parent also shows a full overlay)
+ *  onAnalysisStart  — (data) => void — called when analysis starts with jobId and total
+ *  onAnalysisProgress — (progress) => void — called on progress updates
+ *  onAnalysisComplete — (results) => void — called when analysis completes
+ *  activeAnalysis   — object      — current active analysis data
  */
 export default function AnalyzePanel({
   searchQuery,
@@ -41,9 +45,30 @@ export default function AnalyzePanel({
   setSelectedTokens,
   formatPrice,
   onResultsReady,
-  onRefreshSearch,    // ✅ NEW — manual search re-trigger
-  streamingMessage,   // ✅ NEW — shows inline progress from parent polling
+  onRefreshSearch,
+  streamingMessage,
+  onAnalysisStart,
+  onAnalysisProgress,
+  onAnalysisComplete,
+  activeAnalysis,
 }) {
+  // Wrap the original handleAnalysisStreaming to inject tracking
+  const handleAnalysisWithTracking = async () => {
+    // Call the original function which should return job data
+    const result = await handleAnalysisStreaming();
+    
+    // The actual tracking happens in the parent's polling,
+    // but we need to ensure onAnalysisStart is called with jobId
+    // This assumes handleAnalysisStreaming returns job data
+    if (result?.jobId) {
+      onAnalysisStart({
+        jobId: result.jobId,
+        total: selectedTokens.length,
+        analysisType: analysisType
+      });
+    }
+  };
+
   return (
     <div className="space-y-4">
 
@@ -212,7 +237,10 @@ export default function AnalyzePanel({
 
           {/* ── Run Analysis button ── */}
           <button
-            onClick={() => { handleAnalysisStreaming(); onClose(); }}
+            onClick={() => { 
+              handleAnalysisWithTracking(); 
+              onClose(); 
+            }}
             disabled={isAnalyzing}
             className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30"
           >
@@ -228,6 +256,23 @@ export default function AnalyzePanel({
               </>
             )}
           </button>
+
+          {/* Show active analysis progress if any */}
+          {activeAnalysis && (
+            <div className="mt-3 space-y-2">
+              <div className="bg-white/10 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-green-500 h-1.5 rounded-full transition-all"
+                  style={{ 
+                    width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` 
+                  }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 text-center">
+                {activeAnalysis.progress?.phase || 'Processing...'} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
+              </p>
+            </div>
+          )}
 
           {/* ✅ NEW: Inline progress forwarded from SifterKYS polling */}
           {isAnalyzing && streamingMessage && (

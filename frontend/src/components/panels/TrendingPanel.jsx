@@ -9,7 +9,8 @@ const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 400;      // 400 × 3s = 20 min
 
 export default function TrendingPanel({
-  userId, apiUrl, onClose, formatNumber, formatPrice, onResultsReady
+  userId, apiUrl, onClose, formatNumber, formatPrice, onResultsReady,
+  onAnalysisStart, onAnalysisProgress, onAnalysisComplete, activeAnalysis
 }) {
   // Leaderboard returned by the backend. Order = rank. Re-ranked on every Live refresh.
   const [runners, setRunners]         = useState([]);
@@ -169,6 +170,7 @@ export default function TrendingPanel({
       const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/recover`, { method: 'POST' });
       const data = await res.json();
       if (data.results) {
+        onAnalysisComplete(data.results);
         if (onResultsReady) onResultsReady(data.results, 'trending-batch');
         cancelAnalysis();
         onClose();
@@ -179,7 +181,7 @@ export default function TrendingPanel({
     return false;
   };
 
-  const startPolling = (jobId, resultType) => {
+  const startPolling = (jobId, resultType, total) => {
     pollCountRef.current = 0;
     pollIntervalRef.current = setInterval(async () => {
       if (++pollCountRef.current > MAX_POLL_ATTEMPTS) {
@@ -193,15 +195,19 @@ export default function TrendingPanel({
         const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/progress`);
         const data = await res.json();
         if (data.success) {
-          setAnalysisProgress({
+          const progress = {
             current: data.tokens_completed || 0,
-            total:   data.tokens_total || 1,
+            total:   data.tokens_total || total,
             phase:   data.phase || '',
-          });
+          };
+          setAnalysisProgress(progress);
+          onAnalysisProgress(progress);
+
           if (data.status === 'completed') {
             clearInterval(pollIntervalRef.current);
             const rRes  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}`);
             const rData = await rRes.json();
+            onAnalysisComplete(rData);
             if (onResultsReady) onResultsReady(rData, resultType);
             cancelAnalysis();
             onClose();
@@ -233,7 +239,13 @@ export default function TrendingPanel({
       const data = await res.json();
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
-        startPolling(data.job_id, 'trending-single');
+        onAnalysisStart({
+          jobId: data.job_id,
+          total: 1,
+          analysisType: 'trending-single',
+          token: token.symbol
+        });
+        startPolling(data.job_id, 'trending-single', 1);
       } else {
         alert('Failed to start analysis');
         cancelAnalysis();
@@ -266,7 +278,13 @@ export default function TrendingPanel({
       const data = await res.json();
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
-        startPolling(data.job_id, 'trending-batch');
+        onAnalysisStart({
+          jobId: data.job_id,
+          total: selectedRunners.length,
+          analysisType: 'trending-batch',
+          runners: selectedRunners.map(r => r.symbol)
+        });
+        startPolling(data.job_id, 'trending-batch', selectedRunners.length);
       } else {
         alert('Failed to start batch analysis');
         cancelAnalysis();
@@ -342,6 +360,27 @@ export default function TrendingPanel({
           </button>
         </div>
       </div>
+
+      {/* Show active analysis from parent if any */}
+      {activeAnalysis && !isAnalysisRunning && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+          <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <BarChart3 className="text-green-400" size={16} />
+            Analysis in Progress
+          </h3>
+          <div className="space-y-2">
+            <div className="bg-white/10 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-green-500 h-2 transition-all duration-500"
+                style={{ width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Live explanation pill — updated text */}
       {liveUpdate && (
@@ -606,7 +645,7 @@ export default function TrendingPanel({
                     {token.holders && (
                       <div className="text-xs mt-1">
                         <span className="text-gray-500">Holders </span>
-                        <span className="text-white font-semibold">{formatNumber(token.holders)}</span>
+                         <span className="text-white font-semibold">{token.holders.toLocaleString()}</span>
                       </div>
                     )}
                     {token.momentum_score && (

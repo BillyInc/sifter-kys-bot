@@ -1,5 +1,5 @@
 """
-RQ Worker Tasks - Production Ready
+RQ Worker Tasks - Production Ready with Debug Logging
 Fixes applied:
   1. Supabase cache check before queuing any pipeline (instant results for repeat searches)
   2. Queue separation: high / batch / compute (no deadlocks, priority guaranteed)
@@ -16,28 +16,17 @@ Fixes applied:
   13. aggregate_cross_token triggered by counter in merge_and_save_final (fixes race condition)
   14. min_runner_hits filter applied in aggregate_cross_token (mirrors wallet_analyzer.py)
   15. Batch aggregate scoring: 60% entry timing | 30% total ROI | 10% entry consistency
-      Entry consistency = variance of entry_price/launch_price across tokens (lower = better)
-  16. Ranking: cross-token wallets first (by token count then aggregate score),
-      then single-token wallets fill remaining slots to 20 (ranked by individual professional_score).
-      All wallets tagged with is_cross_token for frontend badge display.
+  16. Ranking: cross-token wallets first, single-token wallets fill remaining slots to 20
   17. perform_trending_batch_analysis now uses _queue_batch_pipeline (parallel distributed)
-      run_trending_batch_analysis (synchronous single-worker) removed
   18. perform_auto_discovery now fetches runners then uses _queue_batch_pipeline (parallel)
-      run_auto_discovery (synchronous single-worker) removed
-  19. score_and_rank_single in batch mode: saves ALL qualified wallets to Supabase,
-      does NOT score or rank — leaves all scoring to aggregate_cross_token
+  19. score_and_rank_single in batch mode: saves ALL qualified wallets to Supabase
   20. Sample size preserved: no per-token top-20 cut in batch mode
-  21. Runner history fetched AFTER cross-token correlation (aggregate_cross_token),
-      only for the final top 20 wallets — not for every qualified wallet per token.
-  22. RACE CONDITION FIX: score_and_rank_single now queued INSIDE coordinate_pnl_phase
-      with depends_on=pnl_jobs (the actual batch workers), not pnl_coordinator.
-      parent_job_id threaded through coordinate_pnl_phase so batch mode works correctly.
-  23. Birdeye removed — Worker 3 replaced with fetch_top_holders (paginated holders endpoint).
-      Top holders catches conviction holders (partial sellers, non-sellers) who are invisible
-      to top_traders (realized PnL) but qualify via total multiplier (realized + unrealized).
-  24. aggregate_cross_token: cross-token wallets ranked first, single-token wallets fill
-      remaining slots to 20 ranked by individual professional_score (not aggregate score).
-      Single-token wallets scored individually AFTER correlation — sample not influenced by scoring.
+  21. Runner history fetched AFTER cross-token correlation for final top 20 wallets
+  22. RACE CONDITION FIX: score_and_rank_single queued INSIDE coordinate_pnl_phase
+  23. Birdeye removed — Worker 3 replaced with fetch_top_holders
+  24. aggregate_cross_token: cross-token wallets ranked first, single-token fill to 20
+  25. CACHE VALIDATION: Empty/invalid cached results detected and deleted
+  26. DEBUG LOGGING: Entry price failures, qualification failures, and failed wallets logged
 
 SUPABASE TABLE REQUIRED:
   CREATE TABLE token_qualified_wallets (
@@ -57,6 +46,7 @@ import os
 import time
 import uuid
 import statistics
+from collections import defaultdict
 
 
 # =============================================================================
@@ -144,8 +134,16 @@ def _get_qualified_wallets_cache(token_address):
         ).eq('token_address', token_address).execute()
         if result.data and result.data[0].get('qualified_wallets'):
             wallets = result.data[0]['qualified_wallets']
-            print(f"[CACHE HIT] {len(wallets)} qualified wallets for {token_address[:8]}")
-            return wallets
+            # Validate that cached wallets have data
+            if wallets and len(wallets) > 0:
+                print(f"[CACHE HIT] {len(wallets)} qualified wallets for {token_address[:8]}")
+                return wallets
+            else:
+                print(f"[CACHE INVALID] Empty wallets for {token_address[:8]} — deleting")
+                supabase.schema(SCHEMA_NAME).table('token_qualified_wallets').delete().eq(
+                    'token_address', token_address
+                ).execute()
+                return None
     except Exception as e:
         print(f"[CACHE] Failed to read qualified wallets for {token_address[:8]}: {e}")
     return None
@@ -184,20 +182,27 @@ def perform_wallet_analysis(data):
         if cached:
             cached_result = json.loads(cached)
             skip_cache = False
-            try:
-                current_ath_raw = r.get(f"token_ath:{token_address}")
-                if current_ath_raw:
-                    current_ath_price = json.loads(current_ath_raw).get('highest_price', 0)
-                    cached_wallets = cached_result.get('wallets', [])
-                    cached_ath = next(
-                        (w.get('ath_price', 0) for w in cached_wallets if w.get('ath_price')), 0
-                    )
-                    if cached_ath > 0 and current_ath_price > cached_ath * 1.10:
-                        print(f"[CACHE INVALIDATED] ATH moved for {token.get('ticker')} — running fresh")
-                        skip_cache = True
-                        r.delete(f"cache:token:{token_address}")
-            except Exception as e:
-                print(f"[CACHE] ATH check failed — serving cached result: {e}")
+            
+            # Validate cached result has actual wallet data
+            if not cached_result.get('wallets') or len(cached_result.get('wallets', [])) == 0:
+                print(f"[CACHE INVALID] Redis cache empty for {token.get('ticker')} — deleting")
+                r.delete(f"cache:token:{token_address}")
+                skip_cache = True
+            else:
+                try:
+                    current_ath_raw = r.get(f"token_ath:{token_address}")
+                    if current_ath_raw:
+                        current_ath_price = json.loads(current_ath_raw).get('highest_price', 0)
+                        cached_wallets = cached_result.get('wallets', [])
+                        cached_ath = next(
+                            (w.get('ath_price', 0) for w in cached_wallets if w.get('ath_price')), 0
+                        )
+                        if cached_ath > 0 and current_ath_price > cached_ath * 1.10:
+                            print(f"[CACHE INVALIDATED] ATH moved for {token.get('ticker')} — running fresh")
+                            skip_cache = True
+                            r.delete(f"cache:token:{token_address}")
+                except Exception as e:
+                    print(f"[CACHE] ATH check failed — serving cached result: {e}")
 
             if not skip_cache:
                 print(f"[CACHE HIT] Redis — instant return for {token.get('ticker')}")
@@ -220,13 +225,21 @@ def perform_wallet_analysis(data):
 
                 if existing.data and existing.data[0].get('results'):
                     result = existing.data[0]['results']
-                    print(f"[CACHE HIT] Supabase — returning saved result for {token.get('ticker')}")
-                    r.set(f"cache:token:{token_address}", json.dumps(result), ex=21600)
-                    supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
-                        'status': 'completed', 'phase': 'done', 'progress': 100,
-                        'results': result
-                    }).eq('job_id', job_id).execute()
-                    return
+                    
+                    # Validate Supabase result has actual wallet data
+                    if result.get('wallets') and len(result.get('wallets', [])) > 0:
+                        print(f"[CACHE HIT] Supabase — returning saved result for {token.get('ticker')}")
+                        r.set(f"cache:token:{token_address}", json.dumps(result), ex=21600)
+                        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                            'status': 'completed', 'phase': 'done', 'progress': 100,
+                            'results': result
+                        }).eq('job_id', job_id).execute()
+                        return
+                    else:
+                        print(f"[CACHE INVALID] Supabase result empty for {token.get('ticker')} — deleting")
+                        supabase.schema(SCHEMA_NAME).table('token_qualified_wallets').delete().eq(
+                            'token_address', token_address
+                        ).execute()
             except Exception as e:
                 print(f"[CACHE CHECK] Supabase lookup failed — running fresh: {e}")
 
@@ -640,7 +653,7 @@ def coordinate_entry_prices(data):
 
 
 def fetch_entry_prices_batch(data):
-    """[batch queue] Fetch first-buy entry prices for a batch of ~10 wallets."""
+    """[batch queue] Fetch first-buy entry prices for a batch of ~10 wallets with debug logging."""
     analyzer  = get_worker_analyzer()
     import aiohttp
     from asyncio import Semaphore as AsyncSemaphore
@@ -652,6 +665,9 @@ def fetch_entry_prices_batch(data):
 
     print(f"[ENTRY BATCH {batch_idx}] {len(wallets)} wallets...")
 
+    failure_reasons = defaultdict(int)
+    detailed_results = []
+
     async def _fetch():
         async with aiohttp.ClientSession() as session:
             sem   = AsyncSemaphore(6)
@@ -659,24 +675,65 @@ def fetch_entry_prices_batch(data):
             for wallet in wallets:
                 async def fetch(w=wallet):
                     async with sem:
-                        url  = f"{analyzer.st_base_url}/trades/{token['address']}/by-wallet/{w}"
-                        resp = await analyzer.async_fetch_with_retry(
-                            session, url, analyzer._get_solanatracker_headers()
-                        )
-                        if resp and resp.get('trades'):
+                        try:
+                            url  = f"{analyzer.st_base_url}/trades/{token['address']}/by-wallet/{w}"
+                            resp = await analyzer.async_fetch_with_retry(
+                                session, url, analyzer._get_solanatracker_headers()
+                            )
+                            
+                            if not resp:
+                                failure_reasons['no_response'] += 1
+                                return {'wallet': w, 'price': None, 'time': None, 'reason': 'no_response'}
+                                
+                            if not resp.get('trades'):
+                                failure_reasons['no_trades'] += 1
+                                return {'wallet': w, 'price': None, 'time': None, 'reason': 'no_trades'}
+                                
                             buys = [t for t in resp['trades'] if t.get('type') == 'buy']
-                            if buys:
-                                first_buy = min(buys, key=lambda x: x.get('time', float('inf')))
-                                return {'wallet': w, 'price': first_buy.get('priceUsd'), 'time': first_buy.get('time')}
-                        return {'wallet': w, 'price': None, 'time': None}
+                            if not buys:
+                                failure_reasons['no_buys'] += 1
+                                return {'wallet': w, 'price': None, 'time': None, 'reason': 'no_buys'}
+                                
+                            first_buy = min(buys, key=lambda x: x.get('time', float('inf')))
+                            return {
+                                'wallet': w, 
+                                'price': first_buy.get('priceUsd'), 
+                                'time': first_buy.get('time'),
+                                'reason': 'success'
+                            }
+                        except Exception as e:
+                            failure_reasons['error'] += 1
+                            return {'wallet': w, 'price': None, 'time': None, 'reason': f'error: {str(e)}'}
                 tasks.append(fetch())
             return await asyncio.gather(*tasks)
 
     results = asyncio.run(_fetch())
-    found   = sum(1 for r in results if r and r.get('price') is not None)
-    print(f"[ENTRY BATCH {batch_idx}] Done: {found}/{len(wallets)} prices found")
+    found = 0
+    
+    for r in results:
+        detailed_results.append(r)
+        if r and r.get('price') is not None:
+            found += 1
 
+    print(f"[ENTRY BATCH {batch_idx}] Done: {found}/{len(wallets)} prices found")
+    print(f"[ENTRY BATCH {batch_idx}] Failure breakdown: {dict(failure_reasons)}")
+
+    # Save detailed debug log
+    debug_log = {
+        'batch_idx': batch_idx,
+        'timestamp': time.time(),
+        'token': token['address'],
+        'results': detailed_results,
+        'summary': {
+            'total': len(wallets),
+            'found': found,
+            'failed': len(wallets) - found,
+            'failure_reasons': dict(failure_reasons)
+        }
+    }
+    _save_result(f"debug_entry_prices:{job_id}:{batch_idx}", debug_log)
     _save_result(f"entry_prices_batch:{job_id}:{batch_idx}", results)
+    
     return results
 
 
@@ -824,7 +881,7 @@ def coordinate_pnl_phase(data):
 
 def fetch_pnl_batch(data):
     """
-    [batch queue] Fetch PnL for a batch of wallets.
+    [batch queue] Fetch PnL for a batch of wallets with debug logging.
 
     Sources:
       first_buyers / top_traders with pnl_data + entry_price → skip API, qualify directly
@@ -842,6 +899,8 @@ def fetch_pnl_batch(data):
     wallet_data = data['wallet_data']
 
     qualified = []
+    failed_wallets = []
+    qualification_failures = defaultdict(int)
 
     ready_to_qualify       = []
     top_traders_need_price = []
@@ -868,10 +927,32 @@ def fetch_pnl_batch(data):
           f"{len(top_traders_need_price)} need price | "
           f"{len(need_pnl_fetch)} fetch PnL")
 
+    # Process ready_to_qualify wallets
     for wallet in ready_to_qualify:
         pnl = wallet_data[wallet]['pnl_data']
-        _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
+        if not _qualify_wallet(wallet, pnl, wallet_data, token, qualified, debug=True):
+            wdata = wallet_data.get(wallet, {})
+            pnl_data = wdata.get('pnl_data', {})
+            invested = pnl_data.get('total_invested', 0)
+            realized_mult = (pnl_data.get('realized', 0) + invested) / invested if invested > 0 else 0
+            total_mult = (pnl_data.get('realized', 0) + pnl_data.get('unrealized', 0) + invested) / invested if invested > 0 else 0
+            
+            failure_reason = 'missing_entry_price' if not wdata.get('entry_price') else 'low_multiplier'
+            qualification_failures[failure_reason] += 1
+            
+            failed_wallets.append({
+                'wallet': wallet,
+                'failure_reason': failure_reason,
+                'source': wdata.get('source'),
+                'has_pnl': True,
+                'has_entry_price': bool(wdata.get('entry_price')),
+                'invested': invested,
+                'realized_multiplier': round(realized_mult, 2),
+                'total_multiplier': round(total_mult, 2),
+                'batch_idx': batch_idx
+            })
 
+    # Fetch entry prices for top_traders that need them
     if top_traders_need_price:
         async def _fetch_entry_prices():
             async with aiohttp.ClientSession() as session:
@@ -898,8 +979,29 @@ def fetch_pnl_batch(data):
             if price_data:
                 wallet_data[wallet]['entry_price'] = price_data.get('price')
             pnl = wallet_data[wallet]['pnl_data']
-            _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
+            if not _qualify_wallet(wallet, pnl, wallet_data, token, qualified, debug=True):
+                wdata = wallet_data.get(wallet, {})
+                pnl_data = wdata.get('pnl_data', {})
+                invested = pnl_data.get('total_invested', 0)
+                realized_mult = (pnl_data.get('realized', 0) + invested) / invested if invested > 0 else 0
+                total_mult = (pnl_data.get('realized', 0) + pnl_data.get('unrealized', 0) + invested) / invested if invested > 0 else 0
+                
+                failure_reason = 'missing_entry_price' if not price_data else 'low_multiplier'
+                qualification_failures[failure_reason] += 1
+                
+                failed_wallets.append({
+                    'wallet': wallet,
+                    'failure_reason': failure_reason,
+                    'source': wdata.get('source'),
+                    'has_pnl': True,
+                    'has_entry_price': bool(price_data),
+                    'invested': invested,
+                    'realized_multiplier': round(realized_mult, 2),
+                    'total_multiplier': round(total_mult, 2),
+                    'batch_idx': batch_idx
+                })
 
+    # Fetch full PnL for wallets without it
     async def _fetch_pnls():
         async with aiohttp.ClientSession() as session:
             sem   = AsyncSemaphore(2)
@@ -919,14 +1021,69 @@ def fetch_pnl_batch(data):
         results = asyncio.run(_fetch_pnls())
         for wallet, pnl in zip(need_pnl_fetch, results):
             if pnl:
-                _qualify_wallet(wallet, pnl, wallet_data, token, qualified)
+                if _qualify_wallet(wallet, pnl, wallet_data, token, qualified, debug=True):
+                    continue
+                else:
+                    wdata = wallet_data.get(wallet, {})
+                    invested = pnl.get('total_invested', 0)
+                    realized_mult = (pnl.get('realized', 0) + invested) / invested if invested > 0 else 0
+                    total_mult = (pnl.get('realized', 0) + pnl.get('unrealized', 0) + invested) / invested if invested > 0 else 0
+                    
+                    failure_reason = 'low_invested' if invested < 100 else 'low_multiplier'
+                    qualification_failures[failure_reason] += 1
+                    
+                    failed_wallets.append({
+                        'wallet': wallet,
+                        'failure_reason': failure_reason,
+                        'source': wdata.get('source', 'unknown'),
+                        'has_pnl': True,
+                        'has_entry_price': bool(wdata.get('entry_price')),
+                        'invested': invested,
+                        'realized_multiplier': round(realized_mult, 2),
+                        'total_multiplier': round(total_mult, 2),
+                        'batch_idx': batch_idx
+                    })
+            else:
+                qualification_failures['no_pnl_data'] += 1
+                failed_wallets.append({
+                    'wallet': wallet,
+                    'failure_reason': 'no_pnl_data',
+                    'source': wallet_data.get(wallet, {}).get('source', 'unknown'),
+                    'has_pnl': False,
+                    'has_entry_price': False,
+                    'invested': 0,
+                    'realized_multiplier': 0,
+                    'total_multiplier': 0,
+                    'batch_idx': batch_idx
+                })
 
+    print(f"[PNL BATCH {batch_idx}] Done: {len(qualified)} qualified, {len(failed_wallets)} failed")
+    print(f"[PNL BATCH {batch_idx}] Failure breakdown: {dict(qualification_failures)}")
+
+    # Save debug logs
+    if failed_wallets:
+        _save_result(f"debug_failed_wallets:{job_id}:{batch_idx}", failed_wallets)
+    
+    debug_summary = {
+        'batch_idx': batch_idx,
+        'timestamp': time.time(),
+        'total_wallets': len(wallets),
+        'qualified': len(qualified),
+        'failed': len(failed_wallets),
+        'failure_breakdown': dict(qualification_failures),
+        'categories': {
+            'ready': len(ready_to_qualify),
+            'need_price': len(top_traders_need_price),
+            'fetch_pnl': len(need_pnl_fetch)
+        }
+    }
+    _save_result(f"debug_pnl_summary:{job_id}:{batch_idx}", debug_summary)
     _save_result(f"pnl_batch:{job_id}:{batch_idx}", qualified)
-    print(f"[PNL BATCH {batch_idx}] Done: {len(qualified)} qualified")
+    
     return qualified
 
 
-def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_invested=100, min_roi_mult=3.0):
+def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_invested=100, min_roi_mult=3.0, debug=False):
     """
     Qualification: realized OR total multiplier >= threshold.
     Holders sitting on unrealized gains qualify the same as sellers.
@@ -938,13 +1095,17 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_in
     total_invested = pnl_data.get('total_invested') or pnl_data.get('totalInvested', 0)
 
     if total_invested < min_invested:
-        return
+        if debug:
+            print(f"[QUALIFY DEBUG] {wallet[:8]} FAIL: invested=${total_invested:.2f} < ${min_invested}")
+        return False
 
     realized_mult = (realized + total_invested) / total_invested
     total_mult    = (realized + unrealized + total_invested) / total_invested
 
     if realized_mult < min_roi_mult and total_mult < min_roi_mult:
-        return
+        if debug:
+            print(f"[QUALIFY DEBUG] {wallet[:8]} FAIL: realized={realized_mult:.2f}x total={total_mult:.2f}x < {min_roi_mult}x")
+        return False
 
     wdata       = wallet_data.get(wallet, {})
     entry_price = wdata.get('entry_price')
@@ -955,6 +1116,9 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_in
         volume_usd = first_buy.get('volume_usd', 0)
         if amount > 0:
             entry_price = volume_usd / amount
+    
+    if entry_price is None and debug:
+        print(f"[QUALIFY DEBUG] {wallet[:8]} WARNING: No entry price, but qualifies on multiplier")
 
     wallet_entry = {
         'wallet':              wallet,
@@ -974,6 +1138,9 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list, min_in
             wallet_entry[holder_field] = wdata[holder_field]
 
     qualified_list.append(wallet_entry)
+    if debug:
+        print(f"[QUALIFY DEBUG] {wallet[:8]} PASS: invested=${total_invested:.2f}, mult={max(realized_mult, total_mult):.2f}x")
+    return True
 
 
 # =============================================================================
@@ -1002,12 +1169,28 @@ def score_and_rank_single(data):
           f"(mode={'batch' if is_batch else 'single'})")
 
     qualified_wallets = []
+    total_failed = 0
+    failure_summary = defaultdict(int)
+
     for i in range(batch_count):
         batch_result = _load_result(f"pnl_batch:{job_id}:{i}")
         if batch_result:
             qualified_wallets.extend(batch_result)
+        
+        # Load debug info if available
+        failed = _load_result(f"debug_failed_wallets:{job_id}:{i}")
+        if failed:
+            total_failed += len(failed)
+            for f in failed:
+                failure_summary[f.get('failure_reason', 'unknown')] += 1
 
-    print(f"  ✓ {len(qualified_wallets)} qualified wallets")
+        summary = _load_result(f"debug_pnl_summary:{job_id}:{i}")
+        if summary:
+            print(f"  Batch {i}: {summary.get('qualified', 0)} qualified, {summary.get('failed', 0)} failed")
+
+    print(f"  ✓ {len(qualified_wallets)} qualified wallets, {total_failed} failed wallets")
+    if failure_summary:
+        print(f"  Failure summary: {dict(failure_summary)}")
 
     token_address = token.get('address')
     if token_address and qualified_wallets:

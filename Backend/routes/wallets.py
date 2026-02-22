@@ -1525,3 +1525,144 @@ def get_top_100_community():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+    
+    # =============================================================================
+# ACTIVE ANALYSIS PERSISTENCE (Redis, 6 hour TTL)
+# =============================================================================
+
+@wallets_bp.route('/user/active-analysis', methods=['POST', 'OPTIONS'])
+@optional_auth
+def save_active_analysis():
+    """Save active analysis to Redis with 6 hour TTL"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        analysis_type = data.get('type')
+        analysis_data = data.get('analysis')
+        
+        if not user_id or not analysis_type or not analysis_data:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        from redis import Redis
+        import os
+        
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r = Redis.from_url(redis_url)
+        
+        # Store with 6 hour TTL (21600 seconds)
+        redis_key = f"active_analysis:{user_id}:{analysis_type}"
+        r.setex(redis_key, 21600, json.dumps(analysis_data))
+        
+        print(f"[ACTIVE ANALYSIS] Saved {analysis_type} for user {user_id[:8]}")
+        
+        return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        print(f"[ACTIVE ANALYSIS ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/user/active-analysis/<analysis_type>', methods=['DELETE', 'OPTIONS'])
+@optional_auth
+def delete_active_analysis(analysis_type):
+    """Delete active analysis from Redis"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+        
+        from redis import Redis
+        import os
+        
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r = Redis.from_url(redis_url)
+        
+        redis_key = f"active_analysis:{user_id}:{analysis_type}"
+        r.delete(redis_key)
+        
+        print(f"[ACTIVE ANALYSIS] Deleted {analysis_type} for user {user_id[:8]}")
+        
+        return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        print(f"[ACTIVE ANALYSIS DELETE ERROR] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/user/active-analyses', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_active_analyses():
+    """Get all active analyses for a user from Redis"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+        
+        from redis import Redis
+        import os
+        
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r = Redis.from_url(redis_url)
+        
+        pattern = f"active_analysis:{user_id}:*"
+        keys = r.keys(pattern)
+        
+        analyses = {}
+        for key in keys:
+            # Extract analysis type from key (format: active_analysis:user_id:type)
+            analysis_type = key.decode().split(':')[-1] if isinstance(key, bytes) else key.split(':')[-1]
+            data = r.get(key)
+            if data:
+                analyses[analysis_type] = json.loads(data)
+        
+        print(f"[ACTIVE ANALYSIS] Loaded {len(analyses)} analyses for user {user_id[:8]}")
+        
+        return jsonify({
+            'success': True,
+            'analyses': analyses
+        }), 200
+        
+    except Exception as e:
+        print(f"[ACTIVE ANALYSIS GET ERROR] {e}")
+        return jsonify({'error': str(e)}), 500
+    @wallets_bp.route('/user/active-analysis', methods=['POST'])
+@optional_auth
+def save_active_analysis():
+    data = request.json
+    user_id = data.get('user_id')
+    analysis_type = data.get('type')
+    analysis_data = data.get('analysis')
+    
+    redis_key = f"active_analysis:{user_id}:{analysis_type}"
+    redis.setex(redis_key, 21600, json.dumps(analysis_data))  # 6 hours
+    
+    return jsonify({'success': True})
+
+@wallets_bp.route('/user/active-analyses', methods=['GET'])
+@optional_auth
+def get_active_analyses():
+    user_id = request.args.get('user_id')
+    pattern = f"active_analysis:{user_id}:*"
+    keys = redis.keys(pattern)
+    
+    analyses = {}
+    for key in keys:
+        analysis_type = key.split(':')[-1]
+        data = redis.get(key)
+        if data:
+            analyses[analysis_type] = json.loads(data)
+    
+    return jsonify({'success': True, 'analyses': analyses})
