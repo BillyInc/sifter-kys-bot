@@ -1,456 +1,1057 @@
-// components/panels/ResultsPanel.jsx
-import React, { useState } from 'react';
-import {
-  X, BookmarkPlus, TrendingUp, Zap, Search,
-  BarChart3, ChevronDown, ChevronUp, Target,
-  DollarSign, Activity, Trophy, Clock, Layers
-} from 'lucide-react';
+// ResultsPanel.jsx — CENTERED MODAL VERSION with SELECTION
+// - Added checkbox selection for wallets
+// - Dynamic "Add Selected" button that updates with count
+// - Compact footer with proper spacing
+// - Full wallet addresses in collapsed view
+// - Full token address in header with copy button
+// - Enhanced "Other Runners" section with full token details:
+//   * Ticker + contract address (with copy)
+//   * Entry Market Cap
+//   * Entry→ATH multiplier
+//   * Total Profit multiplier
+//   * Invested + Return in USD and %
+// - Increased panel height to 98vh
 
+import React, { useState } from 'react';
+import { BookmarkPlus, BarChart3, ChevronDown, ChevronUp, Copy, CheckSquare, Square, TrendingUp, Award, ExternalLink } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+// ── Formatters ────────────────────────────────────────────────────────────────
+const fmtMcap = (v) => {
+  if (v == null || v === 0) return '—';
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+  return `$${Number(v).toFixed(0)}`;
+};
+
+const fmtUsd = (v) => {
+  if (v == null || v === 0) return '$0.00';
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(2)}K`;
+  return `$${Number(v).toFixed(2)}`;
+};
+
+const fmtX = (v) => v != null && !isNaN(v) ? `${Number(v).toFixed(2)}x` : '—';
+const fmtPct = (v) => v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '—';
+
+// ── StatBar ───────────────────────────────────────────────────────────────────
+const StatBar = ({ label, val, pct, color = '#3b82f6' }) => (
+  <div style={{ marginBottom: 10 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+      <span style={{
+        fontSize: 10, color: '#9aa4b8', fontFamily: 'monospace',
+        textTransform: 'uppercase', letterSpacing: '0.08em',
+      }}>
+        {label}
+      </span>
+      <span style={{ fontSize: 11, color, fontFamily: 'monospace', fontWeight: 700 }}>
+        {val}
+      </span>
+    </div>
+    <div style={{ height: 2, background: '#28303f', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{
+        height: '100%',
+        width: `${Math.max(0, Math.min(100, pct || 0))}%`,
+        background: `linear-gradient(90deg, ${color}88, ${color})`,
+        borderRadius: 2,
+        transition: 'width 0.5s ease',
+      }} />
+    </div>
+  </div>
+);
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const gradeColor = (grade) => {
+  if (!grade) return '#7c879c';
+  if (grade.startsWith('A')) return '#22c55e';
+  if (grade.startsWith('B')) return '#3b82f6';
+  if (grade.startsWith('C')) return '#eab308';
+  return '#ef4444';
+};
+
+const TIER_COLORS = {
+  S: { text: '#eab308', bg: 'rgba(234,179,8,0.15)', border: 'rgba(234,179,8,0.3)' },
+  A: { text: '#22c55e', bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.3)' },
+  B: { text: '#3b82f6', bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.3)' },
+  C: { text: '#7c879c', bg: 'rgba(124,135,156,0.12)', border: 'rgba(124,135,156,0.2)' },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 export default function ResultsPanel({
   data,
   onClose,
   onAddToWatchlist,
   resultType,
   formatNumber,
-  formatPrice
+  formatPrice,
 }) {
   const [expandedWallets, setExpandedWallets] = useState({});
+  const [selectedWallets, setSelectedWallets] = useState(new Set());
+  const [copiedAddress, setCopiedAddress] = useState(null);
+  const [copiedTokenAddress, setCopiedTokenAddress] = useState(null);
+  const [copiedRunnerAddress, setCopiedRunnerAddress] = useState(null);
 
-  const isBatch     = resultType?.includes('batch') || resultType === 'discovery';
-  const isTrending  = resultType?.includes('trending');
+  const isBatch = resultType?.includes('batch') || resultType === 'discovery';
+  const isTrending = resultType?.includes('trending');
   const isDiscovery = resultType === 'discovery';
 
+  const copyToClipboard = (addr, type = 'wallet') => {
+    navigator.clipboard?.writeText(addr);
+    if (type === 'wallet') {
+      setCopiedAddress(addr);
+      setTimeout(() => setCopiedAddress(null), 2000);
+    } else if (type === 'token') {
+      setCopiedTokenAddress(addr);
+      setTimeout(() => setCopiedTokenAddress(null), 2000);
+    } else {
+      setCopiedRunnerAddress(addr);
+      setTimeout(() => setCopiedRunnerAddress(null), 2000);
+    }
+  };
+
+  // ── Wallet extraction ───────────────────────────────────────────────────────
   const getWallets = () => {
     if (!data) return [];
-    if (data.wallets)             return data.wallets;
-    if (data.smart_money_wallets) return data.smart_money_wallets;
-    if (data.top_wallets)         return data.top_wallets;
-    return Array.isArray(data) ? data : [];
+    const found = data.wallets ?? data.smart_money_wallets ?? data.top_wallets;
+    if (Array.isArray(found)) return found;
+    if (Array.isArray(data)) return data;
+    return [];
   };
 
   const wallets = getWallets();
 
-  const getSummary = () => {
-    const sTier   = wallets.filter(w => w.tier === 'S').length;
-    const aTier   = wallets.filter(w => w.tier === 'A').length;
-    const avgScore = wallets.length
-      ? Math.round(wallets.reduce((a, w) => a + (w.professional_score || w.avg_professional_score || 0), 0) / wallets.length)
-      : 0;
-    const avgDistATH = wallets.filter(w => w.distance_to_ath_pct).length
-      ? (wallets.reduce((a, w) => a + (w.distance_to_ath_pct || 0), 0) / wallets.filter(w => w.distance_to_ath_pct).length).toFixed(1)
-      : null;
-    const token = data?.token;
-    return { total: wallets.length, sTier, aTier, avgScore, avgDistATH, token };
+  // Selection handlers
+  const toggleSelectWallet = (addr, e) => {
+    e.stopPropagation();
+    setSelectedWallets(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(addr)) {
+        newSet.delete(addr);
+      } else {
+        newSet.add(addr);
+      }
+      return newSet;
+    });
   };
 
-  const summary = getSummary();
+  const toggleSelectAll = () => {
+    if (selectedWallets.size === wallets.length) {
+      setSelectedWallets(new Set());
+    } else {
+      setSelectedWallets(new Set(wallets.map(w => w.wallet || w.wallet_address)));
+    }
+  };
+
+  const addSelectedToWatchlist = () => {
+    const selected = wallets.filter(w =>
+      selectedWallets.has(w.wallet || w.wallet_address)
+    );
+
+    if (selected.length === 0) return;
+
+    if (selected.length === 1 || window.confirm(`Add ${selected.length} selected wallets to your watchlist?`)) {
+      selected.forEach(w => onAddToWatchlist({
+        wallet_address: w.wallet || w.wallet_address,
+        professional_score: w.professional_score ?? w.avg_professional_score,
+        tier: w.tier,
+        roi_percent: w.roi_percent ?? w.avg_roi,
+        runner_hits_30d: w.runner_hits_30d ?? w.runner_count,
+        runner_success_rate: w.runner_success_rate,
+        total_invested: w.total_invested_sum ?? w.total_invested,
+        runners_hit: w.runners_hit ?? w.analyzed_tokens ?? [],
+        other_runners: w.other_runners || [],
+      }));
+    }
+  };
+
+  const summary = {
+    total: wallets.length,
+    sTier: wallets.filter(w => w.tier === 'S').length,
+    aTier: wallets.filter(w => w.tier === 'A').length,
+    token: data?.token,
+    tokensAnalyzed: data?.tokens_analyzed || data?.tokens_analyzed_list?.length || null,
+  };
 
   const toggleExpand = (idx) =>
     setExpandedWallets(prev => ({ ...prev, [idx]: !prev[idx] }));
 
-  const getTierColors = (tier) => ({
-    S: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
-    A: 'bg-green-500/20 text-green-300 border-green-500/40',
-    B: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
-    C: 'bg-gray-500/20 text-gray-300 border-gray-500/40',
-  }[tier] || 'bg-gray-500/20 text-gray-300 border-gray-500/40');
+  const titleText =
+    isDiscovery ? '⚡ Auto Discovery' :
+      isBatch ? '📊 Batch Analysis' :
+        '📊 Token Analysis';
 
-  const getGradeColor = (grade) => {
-    if (!grade) return 'text-gray-400';
-    if (grade.startsWith('A')) return 'text-green-400';
-    if (grade.startsWith('B')) return 'text-blue-400';
-    if (grade.startsWith('C')) return 'text-yellow-400';
-    return 'text-red-400';
-  };
+  // ── Column templates ─────────────────────────────────────────────────────
+  const colTemplate = isBatch
+    ? '30px 40px minmax(280px, 2.5fr) 50px 60px 110px 110px 95px 70px 80px 70px'
+    : '30px 40px minmax(280px, 3fr) 50px 60px 110px 110px 95px 70px';
 
-  const fmt = (v, suffix = '') => v != null ? `${Number(v).toFixed(1)}${suffix}` : '—';
-  const fmtX = (v) => v != null ? `${Number(v).toFixed(1)}x` : '—';
-  const fmtPct = (v) => v != null ? `${Number(v).toFixed(1)}%` : '—';
-  const fmtUsd = (v) => v != null ? formatNumber(v) : '—';
-
+  // ── Per-wallet card ─────────────────────────────────────────────────────────
   const renderWalletCard = (wallet, idx) => {
-    const addr         = wallet.wallet || wallet.wallet_address || '';
-    const score        = wallet.professional_score ?? wallet.avg_professional_score;
-    const grade        = wallet.professional_grade;
-    const tier         = wallet.tier;
-    const roiPct       = wallet.roi_percent;
-    const roiMult      = wallet.roi_multiplier;
-    const totalMult    = wallet.total_multiplier;
-    const distATH      = wallet.distance_to_ath_pct;
-    const entryATHMult = wallet.entry_to_ath_multiplier;
-    const entryPrice   = wallet.entry_price;
-    const athPrice     = wallet.ath_price;
-    const invested     = wallet.total_invested;
-    const realized     = wallet.realized_profit;
-    const unrealized   = wallet.unrealized_profit;
-    const source       = wallet.source;
-    const runners      = wallet.runner_hits_30d || 0;
-    const winRate      = wallet.runner_success_rate;
-    const runnerROI    = wallet.runner_avg_roi;
+    const addr = wallet.wallet || wallet.wallet_address || '';
+    const score = wallet.professional_score ?? wallet.avg_professional_score ?? 0;
+    const grade = wallet.professional_grade;
+    const tier = wallet.tier;
+    const tc = TIER_COLORS[tier] || TIER_COLORS.C;
+
+    const entryATHMult = isBatch
+      ? (wallet.avg_entry_to_ath_multiplier ?? wallet.entry_to_ath_multiplier)
+      : wallet.entry_to_ath_multiplier;
+
+    const distATH = isBatch
+      ? (wallet.avg_distance_to_ath_pct ?? wallet.distance_to_ath_pct)
+      : wallet.distance_to_ath_pct;
+
+    const totalMult = isBatch
+      ? (wallet.avg_total_roi ?? wallet.total_multiplier)
+      : wallet.total_multiplier;
+
+    const roiPct = isBatch
+      ? (totalMult != null ? ((totalMult - 1) * 100) : null)
+      : wallet.roi_percent;
+
+    const totalInvested = isBatch
+      ? (wallet.total_invested_sum ?? wallet.total_invested)
+      : wallet.total_invested;
+
+    const totalRealized = isBatch
+      ? (wallet.total_realized_sum ?? wallet.realized_profit)
+      : wallet.realized_profit;
+
+    const avgInvested = isBatch
+      ? (wallet.avg_invested ?? (
+        wallet.total_invested_sum && wallet.runner_count
+          ? wallet.total_invested_sum / wallet.runner_count
+          : wallet.total_invested
+      ))
+      : null;
+
+    const avgRealized = isBatch
+      ? (wallet.avg_realized ?? (
+        wallet.total_realized_sum && wallet.runner_count
+          ? wallet.total_realized_sum / wallet.runner_count
+          : null
+      ))
+      : null;
+
+    const unrealized = wallet.unrealized_profit;
+    const consistency = wallet.consistency_score;
+    const runnerCount = wallet.runner_count || (wallet.runners_hit?.length) || 0;
+    const runnersHit = wallet.runners_hit || wallet.analyzed_tokens || [];
+    const runners30d = wallet.runner_hits_30d || 0;
+    const winRate = wallet.runner_success_rate;
+    const runnerROI = wallet.runner_avg_roi;
     const otherRunners = wallet.other_runners || [];
-    const firstBuy     = wallet.first_buy_time;
-    const runnersHit   = wallet.runners_hit || wallet.analyzed_tokens || [];
-    const breakdown    = wallet.score_breakdown || {};
-    const isExpanded   = expandedWallets[idx];
+    const firstBuy = wallet.first_buy_time;
+    const breakdown = wallet.score_breakdown || {};
+
+    const entryMcap = wallet.entry_market_cap;
+    const athMcap = wallet.ath_market_cap;
+    const entryPrice = wallet.entry_price;
+    const athPrice = wallet.ath_price;
+
+    const isExpanded = expandedWallets[idx];
+    const rankDisplay = idx < 3 ? ['🥇', '🥈', '🥉'][idx] : `#${idx + 1}`;
+    const fmtUsd = (v) => (v != null ? formatNumber(v) : '—');
+    const isSelected = selectedWallets.has(addr);
 
     return (
       <div
         key={addr + idx}
-        className={`border rounded-xl transition-all duration-200 overflow-hidden ${
-          tier === 'S' ? 'border-yellow-500/30 bg-yellow-500/5' :
-          tier === 'A' ? 'border-green-500/20 bg-green-500/5' :
-          'border-white/10 bg-white/3'
-        }`}
+        style={{
+          borderBottom: '1px solid #242b3a',
+          borderLeft: tier === 'S'
+            ? '2px solid rgba(234,179,8,0.5)'
+            : tier === 'A'
+              ? '2px solid rgba(34,197,94,0.4)'
+              : '2px solid transparent',
+          background: isSelected ? 'rgba(124,58,237,0.05)' : 'transparent',
+        }}
       >
-        {/* Card Header — always visible */}
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            {/* Rank + address + badges */}
-            <div className="flex items-center gap-3 flex-wrap flex-1 min-w-0">
-              <span className={`text-lg font-black shrink-0 ${idx < 3 ? 'text-yellow-400' : 'text-gray-500'}`}>
-                #{idx + 1}
-              </span>
-              <code className="text-sm font-mono bg-black/40 px-2 py-1 rounded text-gray-200 shrink-0">
-                {addr.slice(0, 8)}…{addr.slice(-6)}
-              </code>
-              {tier && (
-                <span className={`px-2 py-0.5 rounded border text-xs font-bold shrink-0 ${getTierColors(tier)}`}>
-                  {tier}-Tier
-                </span>
-              )}
-              {grade && (
-                <span className={`text-sm font-bold shrink-0 ${getGradeColor(grade)}`}>{grade}</span>
-              )}
-              {source && (
-                <span className="text-xs text-gray-500 bg-white/5 px-2 py-0.5 rounded shrink-0">{source}</span>
-              )}
-            </div>
+        {/* ── COLLAPSED ROW ─────────────────────────────────────────────── */}
+        <div
+          onClick={() => toggleExpand(idx)}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: colTemplate,
+            gap: 8,
+            alignItems: 'center',
+            padding: '12px 20px',
+            cursor: 'pointer',
+            background: isExpanded ? 'rgba(124,58,237,0.08)' : 'transparent',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = 'rgba(124,58,237,0.03)'; }}
+          onMouseLeave={e => { if (!isExpanded && !isSelected) e.currentTarget.style.background = 'transparent'; }}
+        >
+          {/* Checkbox */}
+          <div style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <button
+              onClick={(e) => toggleSelectWallet(addr, e)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 4,
+                color: isSelected ? '#a855f7' : '#5d6a81',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+            </button>
+          </div>
 
-            {/* Score + buttons */}
-            <div className="flex items-center gap-2 shrink-0">
-              {score != null && (
-                <div className="text-right">
-                  <div className={`text-xl font-black ${getGradeColor(grade)}`}>{Math.round(score)}</div>
-                  <div className="text-[10px] text-gray-500 uppercase">Score</div>
-                </div>
-              )}
-              <button
-                onClick={() => onAddToWatchlist({
+          {/* Rank */}
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: idx < 3 ? 15 : 12,
+            color: '#7c879c',
+            textAlign: 'center',
+          }}>
+            {rankDisplay}
+          </div>
+
+          {/* Address - FULL ADDRESS */}
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: 12,
+            color: '#e2e8f0',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            overflow: 'hidden',
+          }}>
+            <span style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {addr}
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                copyToClipboard(addr, 'wallet');
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 2,
+                color: copiedAddress === addr ? '#22c55e' : '#7c879c',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+              title="Copy address"
+            >
+              <Copy size={12} />
+            </button>
+          </div>
+
+          {/* Tier badge */}
+          <div style={{ textAlign: 'center' }}>
+            <span style={{
+              display: 'inline-block', padding: '2px 8px', borderRadius: 3,
+              fontSize: 11, fontWeight: 700, fontFamily: 'monospace',
+              color: tc.text, background: tc.bg, border: `1px solid ${tc.border}`,
+            }}>
+              {tier || 'C'}
+            </span>
+          </div>
+
+          {/* Score */}
+          <div style={{
+            fontFamily: 'monospace', fontSize: 14, fontWeight: 700,
+            color: gradeColor(grade), textAlign: 'right',
+          }}>
+            {Math.round(score)}
+          </div>
+
+          {/* Entry → ATH */}
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>
+              {fmtX(entryATHMult)}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+              {isBatch ? 'avg ' : ''}{fmtPct(distATH)} from ATH
+            </div>
+          </div>
+
+          {/* Total ROI */}
+          <div style={{ textAlign: 'right' }}>
+            <div style={{
+              fontFamily: 'monospace', fontSize: 13, fontWeight: 700,
+              color: (totalMult || 0) >= 1 ? '#22c55e' : '#ef4444',
+            }}>
+              {fmtX(totalMult)}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+              {roiPct != null
+                ? `${roiPct > 0 ? '+' : ''}${Number(roiPct).toFixed(1)}%`
+                : '—'}
+            </div>
+          </div>
+
+          {/* Total Invested */}
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>
+              {fmtUsd(totalInvested)}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+              {isBatch ? 'total' : 'invested'}
+            </div>
+          </div>
+
+          {/* Tokens — batch only */}
+          {isBatch && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+                {runnerCount}
+                <span style={{ fontSize: 9, color: '#7c879c' }}>/{summary.tokensAnalyzed || '?'}</span>
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>tokens</div>
+            </div>
+          )}
+
+          {/* Avg Consistency — batch only */}
+          {isBatch && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>
+                {consistency != null ? Number(consistency).toFixed(0) : '—'}
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>consist.</div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddToWatchlist({
                   wallet_address: addr,
                   professional_score: score,
                   tier,
                   roi_percent: roiPct,
-                  runner_hits_30d: runners,
+                  runner_hits_30d: runners30d,
                   runner_success_rate: winRate,
-                  total_invested: invested,
-                  runners_hit: runnersHit
-                })}
-                className="p-2 bg-purple-600 hover:bg-purple-500 rounded-lg transition"
-                title="Add to watchlist"
-              >
-                <BookmarkPlus size={16} />
-              </button>
-              <button
-                onClick={() => toggleExpand(idx)}
-                className="p-2 bg-white/5 hover:bg-white/10 rounded-lg transition"
-              >
-                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Primary metrics row — always visible */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-            <div className="bg-black/30 rounded-lg p-2.5">
-              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase mb-1">
-                <DollarSign size={10} /> ROI
-              </div>
-              <div className={`text-base font-bold ${(roiPct || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {roiPct != null ? `${roiPct > 0 ? '+' : ''}${Number(roiPct).toFixed(1)}%` : '—'}
-              </div>
-              {roiMult != null && (
-                <div className="text-xs text-gray-400">{fmtX(roiMult)} realized</div>
-              )}
-            </div>
-
-            <div className="bg-black/30 rounded-lg p-2.5">
-              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase mb-1">
-                <Target size={10} /> Dist to ATH
-              </div>
-              <div className="text-base font-bold text-purple-300">
-                {distATH != null ? `${Number(distATH).toFixed(1)}%` : '—'}
-              </div>
-              {entryATHMult != null && (
-                <div className="text-xs text-gray-400">{fmtX(entryATHMult)} entry→ATH</div>
-              )}
-            </div>
-
-            <div className="bg-black/30 rounded-lg p-2.5">
-              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase mb-1">
-                <TrendingUp size={10} /> Total Mult
-              </div>
-              <div className="text-base font-bold text-blue-300">
-                {fmtX(totalMult)}
-              </div>
-              <div className="text-xs text-gray-400">incl. unrealized</div>
-            </div>
-
-            <div className="bg-black/30 rounded-lg p-2.5">
-              <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase mb-1">
-                <DollarSign size={10} /> Invested
-              </div>
-              <div className="text-base font-bold text-white">
-                {fmtUsd(invested)}
-              </div>
-              {realized != null && (
-                <div className="text-xs text-green-400">+{fmtUsd(realized)} realized</div>
-              )}
+                  total_invested: totalInvested,
+                  runners_hit: runnersHit,
+                  other_runners: otherRunners,
+                });
+              }}
+              style={{
+                padding: '4px 10px', borderRadius: 4, border: 'none',
+                background: 'rgba(168,85,247,0.15)', color: '#a855f7',
+                fontSize: 11, fontFamily: 'monospace', fontWeight: 700,
+                cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(168,85,247,0.25)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(168,85,247,0.15)'}
+              title="Add to watchlist"
+            >
+              +WL
+            </button>
+            <div style={{ color: '#7c879c', lineHeight: 1, flexShrink: 0 }}>
+              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </div>
           </div>
         </div>
 
-        {/* Expanded section */}
-        {isExpanded && (
-          <div className="border-t border-white/10 p-4 space-y-4 bg-black/20">
+        {/* ── EXPANDED PANEL ─────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              style={{ overflow: 'hidden' }}
+            >
+              <div style={{
+                background: '#141b29',
+                borderTop: '1px solid #2a3344',
+                borderBottom: '1px solid #1f2838',
+                padding: '20px 24px',
+                display: 'grid',
+                gridTemplateColumns: '1.1fr 1.2fr 0.9fr',
+                gap: 24,
+              }}>
+                {/* Col 1: Score breakdown + Price/MCap */}
+                <div>
+                  <div style={{
+                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14,
+                    fontWeight: 500,
+                  }}>
+                    ● Score Breakdown
+                  </div>
 
-            {/* Score breakdown */}
-            {(breakdown.entry_score != null || breakdown.realized_score != null) && (
-              <div>
-                <div className="text-xs text-gray-500 uppercase mb-2 font-semibold">Score Breakdown</div>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { label: 'Entry (60%)', val: breakdown.entry_score, color: 'purple' },
-                    { label: 'Realized (30%)', val: breakdown.realized_score, color: 'green' },
-                    { label: 'Total (10%)', val: breakdown.total_score, color: 'blue' },
-                  ].map(({ label, val, color }) => (
-                    <div key={label} className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[10px] text-gray-500 mb-1">{label}</div>
-                      <div className={`text-lg font-bold text-${color}-400`}>
-                        {val != null ? Number(val).toFixed(0) : '—'}
-                      </div>
-                      <div className="mt-1 h-1 rounded bg-white/10">
-                        <div
-                          className={`h-1 rounded bg-${color}-500`}
-                          style={{ width: `${Math.min(100, val || 0)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Price details */}
-            {(entryPrice || athPrice) && (
-              <div>
-                <div className="text-xs text-gray-500 uppercase mb-2 font-semibold">Price Details</div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  {entryPrice != null && (
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-gray-500 mb-0.5">Entry Price</div>
-                      <div className="font-mono text-white">{formatPrice(entryPrice)}</div>
-                    </div>
+                  <StatBar
+                    label="Entry Timing (60%)"
+                    val={breakdown.entry_score != null ? Number(breakdown.entry_score).toFixed(0) : '—'}
+                    pct={breakdown.entry_score}
+                    color="#a855f7"
+                  />
+                  <StatBar
+                    label="Total ROI (30%)"
+                    val={breakdown.total_roi_score != null ? Number(breakdown.total_roi_score).toFixed(0) : '—'}
+                    pct={breakdown.total_roi_score}
+                    color="#22c55e"
+                  />
+                  {isBatch ? (
+                    <StatBar
+                      label="Avg Consistency (10%)"
+                      val={breakdown.consistency_score != null ? Number(breakdown.consistency_score).toFixed(0) : '—'}
+                      pct={breakdown.consistency_score}
+                      color="#3b82f6"
+                    />
+                  ) : (
+                    <StatBar
+                      label="Realized ROI (10%)"
+                      val={breakdown.realized_score != null ? Number(breakdown.realized_score).toFixed(0) : '—'}
+                      pct={breakdown.realized_score}
+                      color="#3b82f6"
+                    />
                   )}
-                  {athPrice != null && athPrice > 0 && (
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-gray-500 mb-0.5">Token ATH</div>
-                      <div className="font-mono text-yellow-300">{formatPrice(athPrice)}</div>
-                    </div>
-                  )}
-                  {unrealized != null && (
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-gray-500 mb-0.5">Unrealized</div>
-                      <div className={`font-mono ${unrealized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {fmtUsd(unrealized)}
-                      </div>
-                    </div>
-                  )}
-                  {firstBuy && (
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-gray-500 mb-0.5">First Buy</div>
-                      <div className="font-mono text-gray-300 text-[10px]">
-                        {new Date(firstBuy * 1000).toLocaleDateString()}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
-            {/* 30d Runner History */}
-            <div>
-              <div className="text-xs text-gray-500 uppercase mb-2 font-semibold flex items-center gap-2">
-                <Activity size={11} /> 30-Day Runner History
-              </div>
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                <div className="bg-black/30 rounded-lg p-2 text-center">
-                  <div className="text-lg font-bold text-yellow-400">{runners}</div>
-                  <div className="text-[10px] text-gray-500">Runners Hit</div>
-                </div>
-                <div className="bg-black/30 rounded-lg p-2 text-center">
-                  <div className="text-lg font-bold text-green-400">{winRate != null ? `${winRate}%` : '—'}</div>
-                  <div className="text-[10px] text-gray-500">Win Rate</div>
-                </div>
-                <div className="bg-black/30 rounded-lg p-2 text-center">
-                  <div className="text-lg font-bold text-blue-400">{runnerROI != null ? `${runnerROI}x` : '—'}</div>
-                  <div className="text-[10px] text-gray-500">Avg ROI</div>
-                </div>
-              </div>
+                  <div style={{
+                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8',
+                    marginTop: 20, marginBottom: 12, fontWeight: 500,
+                  }}>
+                    ● Market Cap at Entry / ATH
+                  </div>
 
-              {otherRunners.length > 0 && (
-                <div className="space-y-1.5">
-                  {otherRunners.map((r, ridx) => (
-                    <div key={ridx} className="flex items-center justify-between bg-black/20 rounded-lg px-3 py-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white">{r.symbol || r.address?.slice(0, 8)}</span>
-                        <span className="text-gray-500">{fmtX(r.multiplier)} runner</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {r.entry_to_ath_multiplier && (
-                          <span className="text-purple-300">{fmtX(r.entry_to_ath_multiplier)} entry→ATH</span>
-                        )}
-                        {r.roi_multiplier && (
-                          <span className="text-green-400">{fmtX(r.roi_multiplier)} ROI</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Tokens / runners hit (batch mode) */}
-            {runnersHit.length > 0 && (
-              <div>
-                <div className="text-xs text-gray-500 uppercase mb-2 font-semibold">
-                  {isBatch ? 'Runners Hit' : 'Tokens Analyzed'}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {runnersHit.map((t, ti) => (
-                    <span key={ti} className="text-xs px-2 py-1 bg-purple-500/15 text-purple-300 border border-purple-500/20 rounded-full">
-                      {t}
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    padding: '8px 12px', marginBottom: 8, borderRadius: 4,
+                    background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.2)',
+                  }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
+                      Entry MCap
                     </span>
-                  ))}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>
+                        {fmtMcap(entryMcap)}
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8' }}>
+                        {entryPrice ? formatPrice(entryPrice) : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    padding: '8px 12px', borderRadius: 4,
+                    background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)',
+                  }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
+                      ATH MCap
+                    </span>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+                        {fmtMcap(athMcap)}
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8' }}>
+                        {athPrice ? formatPrice(athPrice) : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {firstBuy && (
+                    <div style={{ marginTop: 10, fontFamily: 'monospace', fontSize: 10, color: '#5d6a81' }}>
+                      First buy: {new Date(firstBuy * 1000).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+
+                {/* Col 2: PnL breakdown + 30d runner stats summary */}
+                <div>
+                  <div style={{
+                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14, fontWeight: 500,
+                  }}>
+                    ● PnL Breakdown
+                  </div>
+
+                  {isBatch ? (
+                    <>
+                      <StatBar label="Total Realized (all tokens)" val={fmtUsd(totalRealized)}
+                        pct={totalRealized && totalInvested ? Math.min((totalRealized / totalInvested) * 20, 100) : 0} color="#22c55e" />
+                      <StatBar label="Total Invested (all tokens)" val={fmtUsd(totalInvested)} pct={50} color="#7c879c" />
+                      {avgInvested != null && (
+                        <StatBar label="Avg Invested / Token" val={fmtUsd(avgInvested)} pct={35} color="#5d6a81" />
+                      )}
+                      {avgRealized != null && (
+                        <StatBar label="Avg Realized / Token" val={fmtUsd(avgRealized)}
+                          pct={avgRealized && avgInvested ? Math.min((avgRealized / avgInvested) * 20, 100) : 0} color="#16a34a" />
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <StatBar label="Realized" val={fmtUsd(totalRealized)}
+                        pct={totalRealized && totalInvested ? Math.min((totalRealized / totalInvested) * 20, 100) : 0} color="#22c55e" />
+                      <StatBar label="Unrealized" val={fmtUsd(unrealized)}
+                        pct={unrealized && totalInvested ? Math.min(Math.abs(unrealized / totalInvested) * 20, 100) : 0}
+                        color={unrealized >= 0 ? '#3b82f6' : '#ef4444'} />
+                      <StatBar label="Invested" val={fmtUsd(totalInvested)} pct={50} color="#7c879c" />
+                    </>
+                  )}
+
+                  <div style={{
+                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginTop: 20, marginBottom: 12, fontWeight: 500,
+                  }}>
+                    ● 30-Day Runner Summary
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                    {[
+                      { label: 'Runners Hit', val: runners30d, color: '#eab308' },
+                      { label: 'Win Rate (5x+)', val: winRate != null ? `${winRate}%` : '—', color: winRate >= 50 ? '#22c55e' : '#ef4444' },
+                      { label: 'Avg ROI', val: runnerROI != null ? `${runnerROI}x` : '—', color: '#3b82f6' },
+                      { label: 'Grade', val: grade || '—', color: gradeColor(grade) },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} style={{
+                        padding: '6px 10px', borderRadius: 4,
+                        background: '#1a2232', border: '1px solid #28303f',
+                      }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8', textTransform: 'uppercase', marginBottom: 3 }}>
+                          {label}
+                        </div>
+                        <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color }}>
+                          {val}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Col 3: Detailed Other Runners (30-Day Runner Stats) */}
+                <div>
+                  <div style={{
+                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14, fontWeight: 500,
+                    display: 'flex', alignItems: 'center', gap: 6
+                  }}>
+                    <TrendingUp size={14} color="#eab308" />
+                    ● Other Runners (Last 30 Days)
+                    <span style={{ color: '#eab308', marginLeft: 'auto', fontSize: 11 }}>
+                      {otherRunners.length} tokens
+                    </span>
+                  </div>
+
+                  {otherRunners.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+                      {otherRunners.map((r, ridx) => {
+                        const entryToAth = r.entry_to_ath_multiplier || r.multiplier || 0;
+                        const totalProfit = r.total_multiplier || r.profit_multiplier || 0;
+                        const invested = r.invested_amount || 0;
+                        const returned = r.returned_amount || (invested * totalProfit);
+                        const profitPct = invested > 0 ? ((returned - invested) / invested) * 100 : 0;
+                        const isWin = totalProfit >= 5; // 5x = win
+
+                        return (
+                          <div key={ridx} style={{
+                            padding: '10px 12px',
+                            borderRadius: 6,
+                            background: isWin ? 'rgba(34,197,94,0.06)' : '#1a2232',
+                            border: `1px solid ${isWin ? 'rgba(34,197,94,0.2)' : '#28303f'}`,
+                          }}>
+                            {/* Token header with ticker and address */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+                                  ${r.symbol || r.ticker || '???'}
+                                </span>
+                                <span style={{
+                                  fontSize: 9, padding: '2px 4px', borderRadius: 2,
+                                  background: isWin ? 'rgba(34,197,94,0.15)' : 'rgba(124,135,156,0.15)',
+                                  color: isWin ? '#22c55e' : '#9aa4b8',
+                                  fontWeight: 600
+                                }}>
+                                  {isWin ? 'WINNER' : 'miss'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#5d6a81' }}>
+                                  {r.address?.slice(0, 6)}...{r.address?.slice(-4)}
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(r.address, 'runner');
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: 2,
+                                    color: copiedRunnerAddress === r.address ? '#22c55e' : '#7c879c',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <Copy size={10} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Stats grid */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              {/* Entry MCap */}
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                  Entry MCap
+                                </div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#f1f5f9' }}>
+                                  {fmtMcap(r.entry_market_cap)}
+                                </div>
+                              </div>
+
+                              {/* Entry→ATH Mult */}
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                  Entry→ATH
+                                </div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#a855f7' }}>
+                                  {fmtX(entryToAth)}
+                                </div>
+                              </div>
+
+                              {/* Total Profit Mult */}
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                  Total Profit
+                                </div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: totalProfit >= 5 ? '#22c55e' : '#ef4444' }}>
+                                  {fmtX(totalProfit)}
+                                </div>
+                              </div>
+
+                              {/* Invested / Return */}
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                  Invested / Return
+                                </div>
+                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#f1f5f9' }}>
+                                  {fmtUsd(invested)} → {fmtUsd(returned)}
+                                </div>
+                              </div>
+
+                              {/* ROI % */}
+                              <div style={{ gridColumn: 'span 2' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                  ROI %
+                                </div>
+                                <div style={{
+                                  fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+                                  color: profitPct > 0 ? '#22c55e' : '#ef4444'
+                                }}>
+                                  {fmtPct(profitPct)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: '24px 16px',
+                      background: '#1a2232',
+                      borderRadius: 6,
+                      border: '1px dashed #28303f',
+                      textAlign: 'center'
+                    }}>
+                      <TrendingUp size={24} style={{ color: '#3f4a5c', marginBottom: 8 }} />
+                      <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#7c879c' }}>
+                        No other runners in last 30 days
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   };
 
-  const headerColor =
-    isDiscovery ? 'from-yellow-900/30 to-yellow-800/10 border-yellow-500/20' :
-    isTrending  ? 'from-orange-900/30 to-orange-800/10 border-orange-500/20' :
-                  'from-purple-900/30 to-purple-800/10 border-purple-500/20';
-
-  const accentColor =
-    isDiscovery ? 'text-yellow-400' :
-    isTrending  ? 'text-orange-400' :
-                  'text-purple-400';
-
-  const titleIcon =
-    isDiscovery ? <Zap className="text-yellow-400" size={22} /> :
-    isTrending  ? <TrendingUp className="text-orange-400" size={22} /> :
-                  <Search className="text-purple-400" size={22} />;
-
-  const title =
-    isDiscovery ? '⚡ Auto Discovery' :
-    isBatch     ? '📊 Batch Analysis' :
-                  '📊 Token Analysis';
+  // ── MAIN RENDER ─────────────────────────────────────────────────────────────
+  const selectedCount = selectedWallets.size;
 
   return (
-    /* Full-screen overlay — sits above everything */
-    <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-sm flex flex-col">
-
-      {/* ── Header ── */}
-      <div className={`flex items-center justify-between px-6 py-4 bg-gradient-to-r ${headerColor} border-b border-white/10 shrink-0`}>
-        <div className="flex items-center gap-3">
-          {titleIcon}
-          <div>
-            <h2 className="text-xl font-bold">{title} Results</h2>
-            {summary.token && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                {summary.token.ticker || summary.token.symbol} — {summary.token.address?.slice(0, 12)}…
-              </p>
-            )}
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 200,
+        background: 'rgba(0, 0, 0, 0.75)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px 16px', // Reduced padding to maximize height
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        width: '100%',
+        maxWidth: 1200, // Slightly wider to accommodate detailed runner cards
+        height: '98vh', // Increased from 92vh to 98vh
+        background: '#0b0f17',
+        borderRadius: 12,
+        border: '1px solid #242b3a',
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.8), 0 0 0 1px rgba(124,58,237,0.15)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        {/* Header with FULL TOKEN ADDRESS */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 24px', // Slightly reduced padding
+          background: '#1e1b2e',
+          borderBottom: '1px solid #2d2642',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div>
+              <div style={{ fontFamily: 'monospace', fontSize: 18, fontWeight: 700, color: '#ffffff', letterSpacing: '0.02em' }}>
+                {titleText} Results
+              </div>
+              {summary.token && (
+                <div style={{
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: '#9aa4b8',
+                  marginTop: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}>
+                  {summary.token.ticker || summary.token.symbol}{' — '}
+                  <span style={{ color: '#a78bfa' }} title={summary.token.address}>
+                    {summary.token.address}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard?.writeText(summary.token.address);
+                      setCopiedTokenAddress(summary.token.address);
+                      setTimeout(() => setCopiedTokenAddress(null), 2000);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 2,
+                      color: copiedTokenAddress === summary.token.address ? '#22c55e' : '#7c879c',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                    title="Copy token address"
+                  >
+                    <Copy size={11} />
+                  </button>
+                </div>
+              )}
+              {isBatch && summary.tokensAnalyzed && (
+                <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#9aa4b8', marginTop: 2 }}>
+                  {summary.tokensAnalyzed} tokens analyzed
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition">
-          <X size={22} />
-        </button>
-      </div>
-
-      {/* ── Summary Stats ── */}
-      <div className={`grid grid-cols-2 sm:grid-cols-5 gap-3 px-6 py-4 bg-gradient-to-r ${headerColor} border-b border-white/10 shrink-0`}>
-        <div className="text-center">
-          <div className={`text-2xl font-black ${accentColor}`}>{summary.total}</div>
-          <div className="text-[11px] text-gray-400">Qualified</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-black text-yellow-400">{summary.sTier}</div>
-          <div className="text-[11px] text-gray-400">S-Tier</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-black text-green-400">{summary.aTier}</div>
-          <div className="text-[11px] text-gray-400">A-Tier</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-black text-blue-400">{summary.avgScore}</div>
-          <div className="text-[11px] text-gray-400">Avg Score</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-black text-purple-400">
-            {summary.avgDistATH != null ? `${summary.avgDistATH}%` : '—'}
-          </div>
-          <div className="text-[11px] text-gray-400">Avg Dist ATH</div>
-        </div>
-      </div>
-
-      {/* ── Expand hint ── */}
-      <div className="px-6 py-2 text-xs text-gray-600 shrink-0">
-        Click <ChevronDown size={11} className="inline" /> on any wallet to see score breakdown, price details, and 30-day runner history.
-      </div>
-
-      {/* ── Wallet List ── */}
-      <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-3">
-        {wallets.length === 0 ? (
-          <div className="text-center py-20 text-gray-500">
-            <BarChart3 size={56} className="mx-auto mb-4 opacity-20" />
-            <p className="text-sm">No qualifying wallets found</p>
-            <p className="text-xs mt-1 text-gray-600">Try lowering your ROI threshold</p>
-          </div>
-        ) : (
-          wallets.map((wallet, idx) => renderWalletCard(wallet, idx))
-        )}
-      </div>
-
-      {/* ── Batch Add Footer ── */}
-      {wallets.length > 1 && (
-        <div className="px-6 py-4 border-t border-white/10 bg-black/60 shrink-0">
           <button
-            onClick={() => {
-              if (window.confirm(`Add all ${wallets.length} wallets to your watchlist?`)) {
-                wallets.forEach(w => onAddToWatchlist({
-                  wallet_address: w.wallet || w.wallet_address,
-                  professional_score: w.professional_score || w.avg_professional_score,
-                  tier: w.tier,
-                  roi_percent: w.roi_percent || w.avg_roi,
-                  runner_hits_30d: w.runner_hits_30d || w.runner_count,
-                  runner_success_rate: w.runner_success_rate,
-                  total_invested: w.total_invested,
-                  runners_hit: w.runners_hit || w.analyzed_tokens
-                }));
-              }
+            onClick={onClose}
+            style={{
+              width: 36, height: 36, borderRadius: 6,
+              border: '1px solid #3d2d3a',
+              background: 'rgba(239,68,68,0.15)', color: '#f87171',
+              fontSize: 16, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'background 0.15s',
             }}
-            className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 rounded-xl font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20"
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.25)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'}
           >
-            <BookmarkPlus size={18} />
-            Add All {wallets.length} Wallets to Watchlist
+            ✕
           </button>
         </div>
-      )}
+
+        {/* Summary stats */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 1, background: '#3a2d22',
+          borderBottom: '1px solid #3a2d22',
+          flexShrink: 0,
+        }}>
+          {[
+            { label: 'Qualified', val: summary.total, color: '#f97316' },
+            { label: 'S-Tier', val: summary.sTier, color: '#eab308' },
+            { label: 'A-Tier', val: summary.aTier, color: '#22c55e' },
+          ].map(({ label, val, color }, i) => (
+            <div key={label} style={{
+              padding: '16px 24px', background: '#281f16',
+              textAlign: 'center',
+              borderRight: i < 2 ? '1px solid #3a2d22' : 'none',
+            }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 900, color }}>
+                {val}
+              </div>
+              <div style={{
+                fontFamily: 'monospace', fontSize: 11, color: '#b3967a',
+                textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4,
+              }}>
+                {label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Column headers with select all */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: colTemplate,
+          gap: 8,
+          padding: '10px 20px',
+          background: '#1a2232',
+          borderBottom: '1px solid #28303f',
+          fontFamily: 'monospace', fontSize: 10,
+          textTransform: 'uppercase', letterSpacing: '0.08em',
+          color: '#9aa4b8',
+          flexShrink: 0,
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <button
+              onClick={toggleSelectAll}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 4,
+                color: selectedCount === wallets.length ? '#a855f7' : '#5d6a81',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title={selectedCount === wallets.length ? 'Deselect all' : 'Select all'}
+            >
+              {selectedCount === wallets.length ? <CheckSquare size={14} /> : <Square size={14} />}
+            </button>
+          </div>
+          <div style={{ textAlign: 'center' }}>#</div>
+          <div>Address</div>
+          <div style={{ textAlign: 'center' }}>Tier</div>
+          <div style={{ textAlign: 'right' }}>Score</div>
+          <div style={{ textAlign: 'right' }}>{isBatch ? 'Avg Entry→ATH' : 'Entry→ATH'}</div>
+          <div style={{ textAlign: 'right' }}>{isBatch ? 'Avg ROI' : 'Total ROI'}</div>
+          <div style={{ textAlign: 'right' }}>{isBatch ? 'Total Invested' : 'Invested'}</div>
+          {isBatch && <div style={{ textAlign: 'right' }}>Tokens</div>}
+          {isBatch && <div style={{ textAlign: 'right' }}>Consist.</div>}
+          <div style={{ textAlign: 'right' }}>Actions</div>
+        </div>
+
+        {/* Wallet rows */}
+        <div style={{ flex: 1, overflowY: 'auto', background: '#0b0f17' }}>
+          {wallets.length === 0 ? (
+            <div style={{ padding: '64px 24px', textAlign: 'center' }}>
+              <BarChart3 size={42} style={{ color: '#3f4a5c', margin: '0 auto 16px', display: 'block' }} />
+              <div style={{ fontFamily: 'monospace', fontSize: 14, color: '#7c879c' }}>
+                No qualifying wallets found
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#5d6a81', marginTop: 6 }}>
+                Try lowering your ROI threshold
+              </div>
+            </div>
+          ) : (
+            wallets.map((wallet, idx) => renderWalletCard(wallet, idx))
+          )}
+        </div>
+
+        {/* Compact footer with selection controls */}
+        {wallets.length > 0 && (
+          <div style={{
+            padding: '10px 20px',
+            background: '#1a2232',
+            borderTop: '1px solid #28303f',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <button
+                onClick={toggleSelectAll}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '6px 10px',
+                  borderRadius: 4,
+                  color: '#9aa4b8',
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  backgroundColor: '#1f2937',
+                }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#2d3748'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = '#1f2937'}
+              >
+                {selectedCount === wallets.length ? (
+                  <>
+                    <CheckSquare size={14} color="#a855f7" />
+                    Deselect All
+                  </>
+                ) : (
+                  <>
+                    <Square size={14} />
+                    Select All
+                  </>
+                )}
+              </button>
+
+              {selectedCount > 0 && (
+                <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#9aa4b8' }}>
+                  {selectedCount} wallet{selectedCount !== 1 ? 's' : ''} selected
+                </span>
+              )}
+            </div>
+
+            <button
+              onClick={addSelectedToWatchlist}
+              disabled={selectedCount === 0}
+              style={{
+                padding: '8px 16px', borderRadius: 6,
+                border: 'none',
+                background: selectedCount > 0
+                  ? 'linear-gradient(90deg, #7c3aed, #9333ea)'
+                  : '#374151',
+                color: selectedCount > 0 ? '#ffffff' : '#6b7280',
+                fontSize: 13,
+                fontFamily: 'monospace', fontWeight: 600,
+                cursor: selectedCount > 0 ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'opacity 0.15s',
+                opacity: selectedCount > 0 ? 1 : 0.5,
+              }}
+              onMouseEnter={e => { if (selectedCount > 0) e.currentTarget.style.opacity = '0.9'; }}
+              onMouseLeave={e => { if (selectedCount > 0) e.currentTarget.style.opacity = '1'; }}
+            >
+              <BookmarkPlus size={16} />
+              Add {selectedCount > 0 ? `Selected (${selectedCount})` : 'Wallets'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
