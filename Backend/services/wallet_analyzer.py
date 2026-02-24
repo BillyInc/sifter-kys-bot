@@ -1192,18 +1192,27 @@ class WalletPumpAnalyzer:
             }
 
     # =========================================================================
-    # 30-DAY RUNNER HISTORY
+    # 30-DAY RUNNER HISTORY - FIXED WITH DEBUG LOGGING
     # =========================================================================
 
     def _check_if_runner(self, token_address, min_multiplier=10.0):
         try:
+            self._log(f"[RUNNER CHECK] Checking token {token_address[:8]}...")
             price_range = self._get_price_range_in_period(token_address, 30)
-            if not price_range or price_range['multiplier'] < min_multiplier:
+            if not price_range:
+                self._log(f"[RUNNER CHECK] ❌ No price range found for {token_address[:8]}")
                 return None
+            if price_range['multiplier'] < min_multiplier:
+                self._log(f"[RUNNER CHECK] ❌ Multiplier {price_range['multiplier']:.2f}x < {min_multiplier}x")
+                return None
+            
             token_info = self._get_token_detailed_info(token_address)
             if not token_info:
+                self._log(f"[RUNNER CHECK] ❌ No token info for {token_address[:8]}")
                 return None
+                
             ath_data = self.get_token_ath(token_address)
+            self._log(f"[RUNNER CHECK] ✅ Token {token_address[:8]} is a runner with {price_range['multiplier']:.2f}x")
             return {
                 'address':       token_address,
                 'symbol':        token_info['symbol'],
@@ -1213,37 +1222,72 @@ class WalletPumpAnalyzer:
                 'ath_price':     ath_data.get('highest_price', 0) if ath_data else 0,
                 'liquidity':     token_info['liquidity']
             }
-        except Exception:
+        except Exception as e:
+            self._log(f"[RUNNER CHECK] ❌ Exception: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def get_wallet_other_runners(self, wallet_address, current_token_address=None, min_multiplier=10.0):
         try:
+            self._log(f"\n[RUNNER HISTORY] {'='*50}")
+            self._log(f"[RUNNER HISTORY] Fetching for wallet {wallet_address[:8]}...")
+            
             trades = self.get_wallet_trades_30days(wallet_address)
             if not trades:
+                self._log(f"[RUNNER HISTORY] ❌ No trades found for {wallet_address[:8]}")
                 return {'other_runners': [], 'stats': {}}
 
+            self._log(f"[RUNNER HISTORY] ✅ Found {len(trades)} trades for wallet {wallet_address[:8]}")
+
             token_addresses = set()
-            for trade in trades:
+            trade_details = []
+            for trade in trades[:20]:  # Log first 20 trades for debugging
                 token_addr = trade.get('token_address')
+                if token_addr:
+                    trade_details.append({
+                        'token': token_addr[:8],
+                        'type': trade.get('type'),
+                        'time': trade.get('time'),
+                        'amount': trade.get('amount')
+                    })
                 if token_addr and token_addr != current_token_address:
                     token_addresses.add(token_addr)
 
+            self._log(f"[RUNNER HISTORY] Trade samples: {json.dumps(trade_details[:5])}")
+            self._log(f"[RUNNER HISTORY] Found {len(token_addresses)} unique tokens traded")
+
             other_runners = []
-            for token_addr in list(token_addresses)[:10]:
+            for idx, token_addr in enumerate(list(token_addresses)[:10]):
+                self._log(f"\n[RUNNER HISTORY] [{idx+1}/10] Checking token {token_addr[:8]}...")
+                
                 runner_info = self._get_cached_check_if_runner(token_addr, min_multiplier)
                 if not runner_info:
+                    self._log(f"[RUNNER HISTORY] ❌ Token {token_addr[:8]} is not a runner (failed multiplier check)")
                     continue
+                
+                self._log(f"[RUNNER HISTORY] ✅ Token {token_addr[:8]} is a runner with mult {runner_info.get('multiplier')}x")
+                
                 cached = self._get_cached_pnl_and_entry(wallet_address, token_addr)
                 if not cached:
+                    self._log(f"[RUNNER HISTORY] ❌ No PnL data for {wallet_address[:8]} on {token_addr[:8]}")
                     continue
+                
+                self._log(f"[RUNNER HISTORY] ✅ PnL data found for {token_addr[:8]}")
+                
                 realized = cached['realized']
                 invested = cached['total_invested']
                 if invested <= 0:
+                    self._log(f"[RUNNER HISTORY] ❌ Invested amount ${invested} <= 0")
                     continue
-                roi_mult              = (realized + invested) / invested
+                
+                roi_mult = (realized + invested) / invested
+                self._log(f"[RUNNER HISTORY] ✅ ROI: {roi_mult:.2f}x (invested=${invested:.2f}, realized=${realized:.2f})")
+                
                 runner_info['roi_multiplier'] = round(roi_mult, 2)
                 runner_info['invested']       = round(invested, 2)
                 runner_info['realized']       = round(realized, 2)
+                
                 if cached['entry_price']:
                     entry_price = cached['entry_price']
                     ath_price   = runner_info.get('ath_price', 0)
@@ -1253,37 +1297,54 @@ class WalletPumpAnalyzer:
                         runner_info['distance_to_ath_pct']     = round(
                             ((ath_price - entry_price) / ath_price) * 100, 2
                         )
+                        self._log(f"[RUNNER HISTORY] ✅ Entry→ATH: {runner_info['entry_to_ath_multiplier']}x")
                     else:
                         runner_info['entry_to_ath_multiplier'] = None
                         runner_info['distance_to_ath_pct']     = None
+                        self._log(f"[RUNNER HISTORY] ⚠️ Entry price ({entry_price}) or ATH ({ath_price}) invalid")
                 else:
                     runner_info['entry_price']             = None
                     runner_info['entry_to_ath_multiplier'] = None
                     runner_info['distance_to_ath_pct']     = None
+                    self._log(f"[RUNNER HISTORY] ⚠️ No entry price cached")
+                
                 other_runners.append(runner_info)
                 time.sleep(0.2)
 
             stats = {}
             if other_runners:
+                self._log(f"\n[RUNNER HISTORY] Calculating stats for {len(other_runners)} runners...")
+                
                 successful = sum(1 for r in other_runners if r.get('roi_multiplier', 0) > 1)
                 stats['success_rate'] = round(successful / len(other_runners) * 100, 1)
+                
                 roi_values = [r.get('roi_multiplier', 0) for r in other_runners if r.get('roi_multiplier')]
                 if roi_values:
                     stats['avg_roi'] = round(sum(roi_values) / len(roi_values), 2)
+                    
                 entry_to_ath_values = [r.get('entry_to_ath_multiplier', 0) for r in other_runners if r.get('entry_to_ath_multiplier')]
                 if entry_to_ath_values:
                     stats['avg_entry_to_ath'] = round(sum(entry_to_ath_values) / len(entry_to_ath_values), 2)
+                    
                 distance_values = [r.get('distance_to_ath_pct', 0) for r in other_runners if r.get('distance_to_ath_pct')]
                 if distance_values:
                     stats['avg_distance_to_ath_pct'] = round(sum(distance_values) / len(distance_values), 2)
+                    
                 stats['total_invested']      = round(sum(r.get('invested', 0) for r in other_runners), 2)
                 stats['total_realized']      = round(sum(r.get('realized', 0) for r in other_runners), 2)
                 stats['total_other_runners'] = len(other_runners)
+                
+                self._log(f"[RUNNER HISTORY] Stats: {json.dumps(stats)}")
+            else:
+                self._log(f"[RUNNER HISTORY] ❌ No runners found for wallet {wallet_address[:8]}")
 
+            self._log(f"[RUNNER HISTORY] {'='*50}\n")
             return {'other_runners': other_runners, 'stats': stats}
 
         except Exception as e:
             self._log(f"⚠️ Error getting 30-day runners: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {'other_runners': [], 'stats': {}}
 
     # =========================================================================

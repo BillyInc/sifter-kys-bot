@@ -76,9 +76,7 @@ export default function SifterKYS() {
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const [userPoints, setUserPoints]             = useState(0);
 
-  // ── FIX 1: Refs for dedup and polling control ─────────────────────────────
-  // Prevents completeAnalysis from being called twice for the same job,
-  // and prevents handleResultsReady from saving duplicates to recents.
+  // ── Refs for dedup and polling control ─────────────────────────────────────
   const completedJobsRef  = useRef(new Set());   // tracks jobs already completed
   const savedResultIdsRef = useRef(new Set());   // tracks results already saved to recents
   const pollIntervalsRef  = useRef({});          // { type: intervalId } for targeted cancel
@@ -93,9 +91,7 @@ export default function SifterKYS() {
 
   const handleClosePanel = () => setOpenPanel(null);
 
-  // ── FIX 5: Dedup guard on handleResultsReady ─────────────────────────────
-  // Without this, the polling loop could call completeAnalysis multiple times
-  // before state clears, causing the same result to be saved to recents 10x.
+  // ── Dedup guard on handleResultsReady ─────────────────────────────────────
   const handleResultsReady = useCallback((data, type) => {
     const resultId = data?.job_id || data?.id || JSON.stringify(data).slice(0, 60);
 
@@ -145,7 +141,6 @@ export default function SifterKYS() {
   const [showActiveAnalyses, setShowActiveAnalyses] = useState(false);
 
   // Keep ref in sync with state so intervals can read current value
-  // without being in the dependency array (which causes infinite re-renders)
   useEffect(() => {
     activeAnalysesRef.current = activeAnalyses;
   }, [activeAnalyses]);
@@ -229,40 +224,73 @@ export default function SifterKYS() {
     });
   }, [saveActiveAnalysisToRedis, deleteActiveAnalysisFromRedis]);
 
-  // ── FIX 4: completeAnalysis auto-closes popup ─────────────────────────
+  // ── Complete analysis ───────────────────────────────────────────────────
   const completeAnalysis = useCallback(async (type, results) => {
-    setShowActiveAnalyses(false);                    // FIX 4 — auto-close popup
-    clearInterval(pollIntervalsRef.current[type]);   // clear the specific interval
-    delete pollIntervalsRef.current[type];
+    setShowActiveAnalyses(false);
+    
+    // Clear the specific interval
+    if (pollIntervalsRef.current[type]) {
+      clearInterval(pollIntervalsRef.current[type]);
+      delete pollIntervalsRef.current[type];
+    }
 
     setActiveAnalyses(prev => ({ ...prev, [type]: null }));
     deleteActiveAnalysisFromRedis(type);
     handleResultsReady(results, type);
   }, [handleResultsReady, deleteActiveAnalysisFromRedis]);
 
-  // ── FIX 3: cancelAnalysis closes popup immediately + clears interval ───
+  // ── Cancel analysis with improved cleanup ───────────────────────────────
   const cancelAnalysis = useCallback(async (type) => {
     const analysis = activeAnalysesRef.current[type];
     if (!analysis?.jobId) return;
 
-    // Clear the interval immediately so it stops overwriting cancelled state
-    clearInterval(pollIntervalsRef.current[type]);
-    delete pollIntervalsRef.current[type];
+    // Clear interval immediately
+    if (pollIntervalsRef.current[type]) {
+      clearInterval(pollIntervalsRef.current[type]);
+      delete pollIntervalsRef.current[type];
+    }
 
-    setShowActiveAnalyses(false);   // close popup immediately
+    // Close popup immediately
+    setShowActiveAnalyses(false);
 
     try {
       const authToken = getAccessToken();
-      await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/cancel`, {
+      // Use AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/cancel`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn('Cancel API returned non-200, but proceeding with local cleanup');
+      }
     } catch (e) {
-      console.error('Cancel error:', e);
+      console.error('Cancel error (continuing with local cleanup):', e);
     }
 
-    setActiveAnalyses(prev => ({ ...prev, [type]: null }));
+    // Force remove from state and Redis
+    setActiveAnalyses(prev => {
+      const updated = { ...prev };
+      delete updated[type];
+      return updated;
+    });
+    
+    // Delete from Redis
     deleteActiveAnalysisFromRedis(type);
+    
+    // Clear from ref
+    delete activeAnalysesRef.current[type];
+    
+    // Clear from completed jobs set if present
+    if (analysis.jobId) {
+      completedJobsRef.current.delete(analysis.jobId);
+    }
   }, [getAccessToken, API_URL, deleteActiveAnalysisFromRedis]);
 
   // ── Load active analyses on mount ───────────────────────────────────────
@@ -272,13 +300,7 @@ export default function SifterKYS() {
     }
   }, [isAuthenticated, userId, loadActiveAnalysesFromRedis]);
 
-  // ── FIX 1+2: Polling — reads from ref, not state dep, uses completedJobsRef ─
-  // Key changes vs original:
-  //   - activeAnalyses NOT in dependency array (prevents infinite re-render loop)
-  //   - reads activeAnalysesRef.current inside interval (always current value)
-  //   - completedJobsRef prevents double-processing a completed job
-  //   - resultType derived from analysis.type not hardcoded 'single-token'
-  //   - pollIntervalsRef stores interval ID for targeted cancel
+  // ── Enhanced polling with queue status ──────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -293,33 +315,43 @@ export default function SifterKYS() {
       for (const [type, analysis] of Object.entries(currentAnalyses)) {
         if (!analysis?.jobId) continue;
 
-        // Skip jobs already completed this session
         if (completedJobsRef.current.has(analysis.jobId)) continue;
 
         try {
-          const res  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/progress`, {
+          const res = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/progress`, {
             headers: { Authorization: `Bearer ${authToken}` }
           });
           const data = await res.json();
           if (!data.success) continue;
 
+          // Check for queue information
+          if (data.queue_position) {
+            setActiveAnalyses(prev => ({
+              ...prev,
+              [type]: {
+                ...prev[type],
+                in_queue: true,
+                queue_position: data.queue_position,
+                estimated_wait: data.estimated_wait
+              }
+            }));
+          }
+
           if (data.status === 'completed') {
             // Mark completed before async fetch to prevent double-processing
             completedJobsRef.current.add(analysis.jobId);
 
-            const resultRes  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
+            const resultRes = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
               headers: { Authorization: `Bearer ${authToken}` }
             });
             const resultData = await resultRes.json();
 
-            // FIX 2: Derive resultType from what was submitted, not hardcoded
-            // analysis.type is set in startAnalysis from data.analysisType || type
             const resultType =
               type === 'analyze'
                 ? (selectedTokens.length > 1 ? 'batch-token' : 'single-token')
                 : type === 'trending'
                 ? 'trending-batch'
-                : type;   // 'discovery' passes through as-is
+                : type;
 
             await completeAnalysis(type, { ...resultData, result_type: resultType });
             setDashboardRefreshKey(k => k + 1);
@@ -329,7 +361,7 @@ export default function SifterKYS() {
             deleteActiveAnalysisFromRedis(type);
 
           } else {
-            // Update progress — use functional update to avoid stale closure
+            // Update progress
             setActiveAnalyses(prev => {
               if (!prev[type]) return prev;
               return {
@@ -338,9 +370,12 @@ export default function SifterKYS() {
                   ...prev[type],
                   progress: {
                     current: data.tokens_completed || 0,
-                    total:   data.tokens_total || 1,
-                    phase:   data.phase || ''
-                  }
+                    total: data.tokens_total || 1,
+                    phase: data.phase || ''
+                  },
+                  in_queue: data.queue_position ? true : false,
+                  queue_position: data.queue_position,
+                  estimated_wait: data.estimated_wait
                 }
               };
             });
@@ -356,7 +391,7 @@ export default function SifterKYS() {
 
     return () => clearInterval(intervalId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);   // ← intentionally minimal deps — reads activeAnalyses via ref
+  }, [isAuthenticated, API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis, selectedTokens.length]);
 
   // ── Count active analyses ──────────────────────────────────────────────
   const activeCount = Object.values(activeAnalyses).filter(Boolean).length;
@@ -523,7 +558,6 @@ export default function SifterKYS() {
       const jobId   = submitData.job_id;
       let pollCount = 0;
 
-      // FIX 2: Derive correct resultType from selectedTokens length
       const resultType = selectedTokens.length > 1 ? 'batch-token' : 'single-token';
 
       const pollInterval = setInterval(async () => {
@@ -564,7 +598,7 @@ export default function SifterKYS() {
               headers: { Authorization: `Bearer ${authToken}` },
             });
             const resultData = await resultRes.json();
-            handleResultsReady(resultData, resultType);   // FIX 2: correct type
+            handleResultsReady(resultData, resultType);
             setDashboardRefreshKey(k => k + 1);
             setStreamingMessage('Analysis complete!');
             setIsAnalyzing(false);
@@ -591,22 +625,18 @@ export default function SifterKYS() {
     }
   };
 
-  // ── FIX 7: computeConsistency — derive from 30d runner history ────────────
-  // Used when saving to watchlist so consistency starts populated, not zero.
-  // Low variance across entry_to_ath_multiplier values = high consistency.
+  // ── Compute consistency from 30d runner history ────────────────────────────
   const computeConsistency = (otherRunners = []) => {
     const vals = otherRunners
       .map(r => r.entry_to_ath_multiplier)
       .filter(v => v != null && v > 0);
-    if (vals.length < 2) return 50;   // not enough data — neutral default
+    if (vals.length < 2) return 50;
     const mean     = vals.reduce((a, b) => a + b, 0) / vals.length;
     const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length;
     return Math.max(0, Math.round(100 - (variance * 2)));
   };
 
-  // ── FIX 6: Watchlist — pass analysis-time stats on insert ─────────────────
-  // Previously all stats were 0 on insert, only updated on /refresh.
-  // Now we pass the analysis data directly so watchlist is populated from day one.
+  // ── Add to watchlist with analysis-time stats ─────────────────────────────
   const addToWalletWatchlist = async (walletData) => {
     try {
       const authToken = getAccessToken();
@@ -619,17 +649,14 @@ export default function SifterKYS() {
             wallet:               walletData.wallet_address,
             professional_score:   walletData.professional_score,
             tier:                 walletData.tier,
-            // Analysis-time stats — passed through instead of defaulting to 0
             roi_percent:          walletData.roi_percent,
             runner_hits_30d:      walletData.runner_hits_30d,
             runner_success_rate:  walletData.runner_success_rate,
             total_invested:       walletData.total_invested,
             tokens_hit:           walletData.runners_hit || [],
-            // FIX 6: additional stats that were previously missing
             roi_30d:              walletData.roi_percent,
             runners_30d:          walletData.runner_hits_30d,
             win_rate_7d:          walletData.runner_success_rate,
-            // FIX 7: consistency derived from runner history, not zero
             consistency_score:    computeConsistency(walletData.other_runners),
           }
         }),
@@ -700,7 +727,7 @@ export default function SifterKYS() {
                 )}
               </button>
 
-              {/* Active Analyses Dropdown */}
+              {/* Active Analyses Dropdown - UPDATED with queue status */}
               {showActiveAnalyses && activeCount > 0 && (
                 <div className="absolute right-44 top-12 w-80 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
                   <div className="p-3 border-b border-white/10">
@@ -746,6 +773,14 @@ export default function SifterKYS() {
                               {Math.round((Date.now() - analysis.startTime) / 1000 / 60)}m elapsed
                             </span>
                           </div>
+                          {/* Show queue status if available */}
+                          {analysis.in_queue && (
+                            <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
+                              ⏳ #{analysis.queue_position || '?'} in queue 
+                              {analysis.estimated_wait && ` • ~${analysis.estimated_wait}m wait`}
+                            </div>
+                          )}
                           <button
                             onClick={() => {
                               setOpenPanel(type === 'analyze' ? 'analyze' : type);
@@ -771,7 +806,7 @@ export default function SifterKYS() {
                 <span className="text-sm font-bold">{userPoints.toLocaleString()}</span>
               </div>
 
-              {/* Profile dropdown */}
+              {/* Profile dropdown - UPDATED with better positioning */}
               <div className="relative">
                 <button
                   onClick={() => setShowProfileDropdown(!showProfileDropdown)}
@@ -785,9 +820,8 @@ export default function SifterKYS() {
                 </button>
 
                 {showProfileDropdown && (
-                  <div className="absolute right-0 top-12 w-64 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
-                    <div className="p-4 border-b border-white/10">
-                      <div className="font-semibold">{user?.email?.split('@')[0]}</div>
+                   <div className="absolute right-0 top-12 w-64 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
+                      <div className="p-4 border-b border-white/10">
                       <div className="text-xs text-gray-400">{user?.email}</div>
                     </div>
                     <div className="p-2">
@@ -801,7 +835,7 @@ export default function SifterKYS() {
                         <HelpCircle size={16} className="text-blue-400" /> Help & Support
                       </button>
                     </div>
-                    <div className="p-2 border-t border-white/10">
+                    <div className="p-2 border-t border-white/10 sticky bottom-0 bg-black/95">
                       <button onClick={signOut} className="w-full p-2 hover:bg-red-500/10 rounded-lg text-left text-sm transition flex items-center gap-2 text-red-400">
                         <LogOut size={16} /> Sign Out
                       </button>

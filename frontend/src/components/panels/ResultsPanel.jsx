@@ -1,18 +1,14 @@
-// ResultsPanel.jsx — CENTERED MODAL VERSION with SELECTION
+// ResultsPanel.jsx — CENTERED MODAL VERSION with SELECTION and COMPACT EXPANDED VIEW
 // - Added checkbox selection for wallets
 // - Dynamic "Add Selected" button that updates with count
-// - Compact footer with proper spacing
+// - Compact footer with dynamic sizing based on expanded state
 // - Full wallet addresses in collapsed view
 // - Full token address in header with copy button
-// - Enhanced "Other Runners" section with full token details:
-//   * Ticker + contract address (with copy)
-//   * Entry Market Cap
-//   * Entry→ATH multiplier
-//   * Total Profit multiplier
-//   * Invested + Return in USD and %
+// - Enhanced "Other Runners" section with full token details
 // - Increased panel height to 98vh
+// - FIXED: Expanded view now fully visible without scrolling
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BookmarkPlus, BarChart3, ChevronDown, ChevronUp, Copy, CheckSquare, Square, TrendingUp, Award, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -37,15 +33,15 @@ const fmtPct = (v) => v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).t
 
 // ── StatBar ───────────────────────────────────────────────────────────────────
 const StatBar = ({ label, val, pct, color = '#3b82f6' }) => (
-  <div style={{ marginBottom: 10 }}>
+  <div style={{ marginBottom: 8 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
       <span style={{
-        fontSize: 10, color: '#9aa4b8', fontFamily: 'monospace',
+        fontSize: 9, color: '#9aa4b8', fontFamily: 'monospace',
         textTransform: 'uppercase', letterSpacing: '0.08em',
       }}>
         {label}
       </span>
-      <span style={{ fontSize: 11, color, fontFamily: 'monospace', fontWeight: 700 }}>
+      <span style={{ fontSize: 10, color, fontFamily: 'monospace', fontWeight: 700 }}>
         {val}
       </span>
     </div>
@@ -95,6 +91,21 @@ export default function ResultsPanel({
   const isBatch = resultType?.includes('batch') || resultType === 'discovery';
   const isTrending = resultType?.includes('trending');
   const isDiscovery = resultType === 'discovery';
+
+  // Check if any wallet is expanded
+  const hasExpanded = Object.values(expandedWallets).some(Boolean);
+
+  // Handle Escape key
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        setSelectedWallets(new Set());
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   const copyToClipboard = (addr, type = 'wallet') => {
     navigator.clipboard?.writeText(addr);
@@ -183,8 +194,8 @@ export default function ResultsPanel({
 
   // ── Column templates ─────────────────────────────────────────────────────
   const colTemplate = isBatch
-    ? '30px 40px minmax(280px, 2.5fr) 50px 60px 110px 110px 95px 70px 80px 70px'
-    : '30px 40px minmax(280px, 3fr) 50px 60px 110px 110px 95px 70px';
+    ? '30px 40px minmax(280px, 2.5fr) 50px 60px 110px 110px 95px 70px 80px 90px'
+    : '30px 40px minmax(280px, 3fr) 50px 60px 110px 110px 95px 70px 90px';
 
   // ── Per-wallet card ─────────────────────────────────────────────────────────
   const renderWalletCard = (wallet, idx) => {
@@ -276,7 +287,7 @@ export default function ResultsPanel({
             gridTemplateColumns: colTemplate,
             gap: 8,
             alignItems: 'center',
-            padding: '12px 20px',
+            padding: '10px 20px',
             cursor: 'pointer',
             background: isExpanded ? 'rgba(124,58,237,0.08)' : 'transparent',
             transition: 'background 0.15s',
@@ -355,8 +366,8 @@ export default function ResultsPanel({
           {/* Tier badge */}
           <div style={{ textAlign: 'center' }}>
             <span style={{
-              display: 'inline-block', padding: '2px 8px', borderRadius: 3,
-              fontSize: 11, fontWeight: 700, fontFamily: 'monospace',
+              display: 'inline-block', padding: '2px 6px', borderRadius: 3,
+              fontSize: 10, fontWeight: 700, fontFamily: 'monospace',
               color: tc.text, background: tc.bg, border: `1px solid ${tc.border}`,
             }}>
               {tier || 'C'}
@@ -376,7 +387,7 @@ export default function ResultsPanel({
             <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>
               {fmtX(entryATHMult)}
             </div>
-            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#7c879c' }}>
               {isBatch ? 'avg ' : ''}{fmtPct(distATH)} from ATH
             </div>
           </div>
@@ -389,7 +400,7 @@ export default function ResultsPanel({
             }}>
               {fmtX(totalMult)}
             </div>
-            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#7c879c' }}>
               {roiPct != null
                 ? `${roiPct > 0 ? '+' : ''}${Number(roiPct).toFixed(1)}%`
                 : '—'}
@@ -401,7 +412,7 @@ export default function ResultsPanel({
             <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>
               {fmtUsd(totalInvested)}
             </div>
-            <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#7c879c' }}>
               {isBatch ? 'total' : 'invested'}
             </div>
           </div>
@@ -411,9 +422,9 @@ export default function ResultsPanel({
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
                 {runnerCount}
-                <span style={{ fontSize: 9, color: '#7c879c' }}>/{summary.tokensAnalyzed || '?'}</span>
+                <span style={{ fontSize: 8, color: '#7c879c' }}>/{summary.tokensAnalyzed || '?'}</span>
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>tokens</div>
+              <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#7c879c' }}>tokens</div>
             </div>
           )}
 
@@ -423,12 +434,12 @@ export default function ResultsPanel({
               <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#a855f7' }}>
                 {consistency != null ? Number(consistency).toFixed(0) : '—'}
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#7c879c' }}>consist.</div>
+              <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#7c879c' }}>consist.</div>
             </div>
           )}
 
           {/* Actions */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -445,10 +456,17 @@ export default function ResultsPanel({
                 });
               }}
               style={{
-                padding: '4px 10px', borderRadius: 4, border: 'none',
-                background: 'rgba(168,85,247,0.15)', color: '#a855f7',
-                fontSize: 11, fontFamily: 'monospace', fontWeight: 700,
-                cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: 'none',
+                background: 'rgba(168,85,247,0.15)',
+                color: '#a855f7',
+                fontSize: 10,
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                minWidth: '36px',
               }}
               onMouseEnter={e => e.currentTarget.style.background = 'rgba(168,85,247,0.25)'}
               onMouseLeave={e => e.currentTarget.style.background = 'rgba(168,85,247,0.15)'}
@@ -476,16 +494,16 @@ export default function ResultsPanel({
                 background: '#141b29',
                 borderTop: '1px solid #2a3344',
                 borderBottom: '1px solid #1f2838',
-                padding: '20px 24px',
+                padding: '16px 20px',
                 display: 'grid',
                 gridTemplateColumns: '1.1fr 1.2fr 0.9fr',
-                gap: 24,
+                gap: 20,
               }}>
                 {/* Col 1: Score breakdown + Price/MCap */}
                 <div>
                   <div style={{
-                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
-                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14,
+                    fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 12,
                     fontWeight: 500,
                   }}>
                     ● Score Breakdown
@@ -520,26 +538,26 @@ export default function ResultsPanel({
                   )}
 
                   <div style={{
-                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+                    fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
                     letterSpacing: '0.1em', color: '#9aa4b8',
-                    marginTop: 20, marginBottom: 12, fontWeight: 500,
+                    marginTop: 16, marginBottom: 10, fontWeight: 500,
                   }}>
                     ● Market Cap at Entry / ATH
                   </div>
 
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
-                    padding: '8px 12px', marginBottom: 8, borderRadius: 4,
+                    padding: '6px 10px', marginBottom: 6, borderRadius: 4,
                     background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.2)',
                   }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
                       Entry MCap
                     </span>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#f1f5f9' }}>
                         {fmtMcap(entryMcap)}
                       </div>
-                      <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#9aa4b8' }}>
                         {entryPrice ? formatPrice(entryPrice) : '—'}
                       </div>
                     </div>
@@ -547,24 +565,24 @@ export default function ResultsPanel({
 
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
-                    padding: '8px 12px', borderRadius: 4,
+                    padding: '6px 10px', borderRadius: 4,
                     background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)',
                   }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8', textTransform: 'uppercase', alignSelf: 'center' }}>
                       ATH MCap
                     </span>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#eab308' }}>
                         {fmtMcap(athMcap)}
                       </div>
-                      <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#9aa4b8' }}>
                         {athPrice ? formatPrice(athPrice) : '—'}
                       </div>
                     </div>
                   </div>
 
                   {firstBuy && (
-                    <div style={{ marginTop: 10, fontFamily: 'monospace', fontSize: 10, color: '#5d6a81' }}>
+                    <div style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 9, color: '#5d6a81' }}>
                       First buy: {new Date(firstBuy * 1000).toLocaleDateString()}
                     </div>
                   )}
@@ -573,8 +591,8 @@ export default function ResultsPanel({
                 {/* Col 2: PnL breakdown + 30d runner stats summary */}
                 <div>
                   <div style={{
-                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
-                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14, fontWeight: 500,
+                    fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 12, fontWeight: 500,
                   }}>
                     ● PnL Breakdown
                   </div>
@@ -604,13 +622,13 @@ export default function ResultsPanel({
                   )}
 
                   <div style={{
-                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
-                    letterSpacing: '0.1em', color: '#9aa4b8', marginTop: 20, marginBottom: 12, fontWeight: 500,
+                    fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginTop: 16, marginBottom: 10, fontWeight: 500,
                   }}>
                     ● 30-Day Runner Summary
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
                     {[
                       { label: 'Runners Hit', val: runners30d, color: '#eab308' },
                       { label: 'Win Rate (5x+)', val: winRate != null ? `${winRate}%` : '—', color: winRate >= 50 ? '#22c55e' : '#ef4444' },
@@ -618,13 +636,13 @@ export default function ResultsPanel({
                       { label: 'Grade', val: grade || '—', color: gradeColor(grade) },
                     ].map(({ label, val, color }) => (
                       <div key={label} style={{
-                        padding: '6px 10px', borderRadius: 4,
+                        padding: '4px 8px', borderRadius: 4,
                         background: '#1a2232', border: '1px solid #28303f',
                       }}>
-                        <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#9aa4b8', textTransform: 'uppercase', marginBottom: 3 }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#9aa4b8', textTransform: 'uppercase', marginBottom: 2 }}>
                           {label}
                         </div>
-                        <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>
                           {val}
                         </div>
                       </div>
@@ -635,42 +653,42 @@ export default function ResultsPanel({
                 {/* Col 3: Detailed Other Runners (30-Day Runner Stats) */}
                 <div>
                   <div style={{
-                    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
-                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 14, fontWeight: 500,
+                    fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+                    letterSpacing: '0.1em', color: '#9aa4b8', marginBottom: 12, fontWeight: 500,
                     display: 'flex', alignItems: 'center', gap: 6
                   }}>
-                    <TrendingUp size={14} color="#eab308" />
+                    <TrendingUp size={13} color="#eab308" />
                     ● Other Runners (Last 30 Days)
-                    <span style={{ color: '#eab308', marginLeft: 'auto', fontSize: 11 }}>
+                    <span style={{ color: '#eab308', marginLeft: 'auto', fontSize: 10 }}>
                       {otherRunners.length} tokens
                     </span>
                   </div>
 
                   {otherRunners.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
                       {otherRunners.map((r, ridx) => {
                         const entryToAth = r.entry_to_ath_multiplier || r.multiplier || 0;
                         const totalProfit = r.total_multiplier || r.profit_multiplier || 0;
-                        const invested = r.invested_amount || 0;
-                        const returned = r.returned_amount || (invested * totalProfit);
+                        const invested = r.invested_amount || r.invested || 0;
+                        const returned = r.returned_amount || (invested * totalProfit) || 0;
                         const profitPct = invested > 0 ? ((returned - invested) / invested) * 100 : 0;
-                        const isWin = totalProfit >= 5; // 5x = win
+                        const isWin = totalProfit >= 5;
 
                         return (
                           <div key={ridx} style={{
-                            padding: '10px 12px',
-                            borderRadius: 6,
+                            padding: '8px 10px',
+                            borderRadius: 4,
                             background: isWin ? 'rgba(34,197,94,0.06)' : '#1a2232',
                             border: `1px solid ${isWin ? 'rgba(34,197,94,0.2)' : '#28303f'}`,
                           }}>
                             {/* Token header with ticker and address */}
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#eab308' }}>
                                   ${r.symbol || r.ticker || '???'}
                                 </span>
                                 <span style={{
-                                  fontSize: 9, padding: '2px 4px', borderRadius: 2,
+                                  fontSize: 8, padding: '2px 4px', borderRadius: 2,
                                   background: isWin ? 'rgba(34,197,94,0.15)' : 'rgba(124,135,156,0.15)',
                                   color: isWin ? '#22c55e' : '#9aa4b8',
                                   fontWeight: 600
@@ -679,8 +697,8 @@ export default function ResultsPanel({
                                 </span>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#5d6a81' }}>
-                                  {r.address?.slice(0, 6)}...{r.address?.slice(-4)}
+                                <span style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81' }}>
+                                  {r.address?.slice(0, 4)}...{r.address?.slice(-4)}
                                 </span>
                                 <button
                                   onClick={(e) => {
@@ -695,60 +713,60 @@ export default function ResultsPanel({
                                     cursor: 'pointer',
                                   }}
                                 >
-                                  <Copy size={10} />
+                                  <Copy size={9} />
                                 </button>
                               </div>
                             </div>
 
                             {/* Stats grid */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                               {/* Entry MCap */}
                               <div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', textTransform: 'uppercase' }}>
                                   Entry MCap
                                 </div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#f1f5f9' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 600, color: '#f1f5f9' }}>
                                   {fmtMcap(r.entry_market_cap)}
                                 </div>
                               </div>
 
                               {/* Entry→ATH Mult */}
                               <div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', textTransform: 'uppercase' }}>
                                   Entry→ATH
                                 </div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#a855f7' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 600, color: '#a855f7' }}>
                                   {fmtX(entryToAth)}
                                 </div>
                               </div>
 
                               {/* Total Profit Mult */}
                               <div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', textTransform: 'uppercase' }}>
                                   Total Profit
                                 </div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: totalProfit >= 5 ? '#22c55e' : '#ef4444' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 10, fontWeight: 600, color: totalProfit >= 5 ? '#22c55e' : '#ef4444' }}>
                                   {fmtX(totalProfit)}
                                 </div>
                               </div>
 
                               {/* Invested / Return */}
                               <div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', textTransform: 'uppercase' }}>
                                   Invested / Return
                                 </div>
-                                <div style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: '#f1f5f9' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 600, color: '#f1f5f9' }}>
                                   {fmtUsd(invested)} → {fmtUsd(returned)}
                                 </div>
                               </div>
 
                               {/* ROI % */}
                               <div style={{ gridColumn: 'span 2' }}>
-                                <div style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', textTransform: 'uppercase' }}>
+                                <div style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', textTransform: 'uppercase' }}>
                                   ROI %
                                 </div>
                                 <div style={{
-                                  fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+                                  fontFamily: 'monospace', fontSize: 10, fontWeight: 700,
                                   color: profitPct > 0 ? '#22c55e' : '#ef4444'
                                 }}>
                                   {fmtPct(profitPct)}
@@ -761,14 +779,14 @@ export default function ResultsPanel({
                     </div>
                   ) : (
                     <div style={{
-                      padding: '24px 16px',
+                      padding: '20px 12px',
                       background: '#1a2232',
-                      borderRadius: 6,
+                      borderRadius: 4,
                       border: '1px dashed #28303f',
                       textAlign: 'center'
                     }}>
-                      <TrendingUp size={24} style={{ color: '#3f4a5c', marginBottom: 8 }} />
-                      <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#7c879c' }}>
+                      <TrendingUp size={20} style={{ color: '#3f4a5c', marginBottom: 6 }} />
+                      <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#7c879c' }}>
                         No other runners in last 30 days
                       </div>
                     </div>
@@ -795,14 +813,14 @@ export default function ResultsPanel({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px 16px', // Reduced padding to maximize height
+        padding: '12px 12px',
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
         width: '100%',
-        maxWidth: 1200, // Slightly wider to accommodate detailed runner cards
-        height: '98vh', // Increased from 92vh to 98vh
+        maxWidth: 1200,
+        height: '98vh',
         background: '#0b0f17',
         borderRadius: 12,
         border: '1px solid #242b3a',
@@ -814,20 +832,20 @@ export default function ResultsPanel({
         {/* Header with FULL TOKEN ADDRESS */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '16px 24px', // Slightly reduced padding
+          padding: '12px 20px',
           background: '#1e1b2e',
           borderBottom: '1px solid #2d2642',
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div>
-              <div style={{ fontFamily: 'monospace', fontSize: 18, fontWeight: 700, color: '#ffffff', letterSpacing: '0.02em' }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 700, color: '#ffffff', letterSpacing: '0.02em' }}>
                 {titleText} Results
               </div>
               {summary.token && (
                 <div style={{
                   fontFamily: 'monospace',
-                  fontSize: 12,
+                  fontSize: 11,
                   color: '#9aa4b8',
                   marginTop: 2,
                   display: 'flex',
@@ -860,16 +878,20 @@ export default function ResultsPanel({
                 </div>
               )}
               {isBatch && summary.tokensAnalyzed && (
-                <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#9aa4b8', marginTop: 2 }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#9aa4b8', marginTop: 2 }}>
                   {summary.tokensAnalyzed} tokens analyzed
                 </div>
               )}
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedWallets(new Set());
+              onClose();
+            }}
             style={{
-              width: 36, height: 36, borderRadius: 6,
+              width: 32, height: 32, borderRadius: 6,
               border: '1px solid #3d2d3a',
               background: 'rgba(239,68,68,0.15)', color: '#f87171',
               fontSize: 16, cursor: 'pointer',
@@ -883,7 +905,7 @@ export default function ResultsPanel({
           </button>
         </div>
 
-        {/* Summary stats */}
+        {/* Summary stats - compact */}
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 1, background: '#3a2d22',
@@ -896,16 +918,17 @@ export default function ResultsPanel({
             { label: 'A-Tier', val: summary.aTier, color: '#22c55e' },
           ].map(({ label, val, color }, i) => (
             <div key={label} style={{
-              padding: '16px 24px', background: '#281f16',
+              padding: '8px 12px',
+              background: '#281f16',
               textAlign: 'center',
               borderRight: i < 2 ? '1px solid #3a2d22' : 'none',
             }}>
-              <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 900, color }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 22, fontWeight: 900, color }}>
                 {val}
               </div>
               <div style={{
-                fontFamily: 'monospace', fontSize: 11, color: '#b3967a',
-                textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4,
+                fontFamily: 'monospace', fontSize: 9, color: '#b3967a',
+                textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 2,
               }}>
                 {label}
               </div>
@@ -918,10 +941,10 @@ export default function ResultsPanel({
           display: 'grid',
           gridTemplateColumns: colTemplate,
           gap: 8,
-          padding: '10px 20px',
+          padding: '6px 20px',
           background: '#1a2232',
           borderBottom: '1px solid #28303f',
-          fontFamily: 'monospace', fontSize: 10,
+          fontFamily: 'monospace', fontSize: 9,
           textTransform: 'uppercase', letterSpacing: '0.08em',
           color: '#9aa4b8',
           flexShrink: 0,
@@ -941,7 +964,7 @@ export default function ResultsPanel({
               }}
               title={selectedCount === wallets.length ? 'Deselect all' : 'Select all'}
             >
-              {selectedCount === wallets.length ? <CheckSquare size={14} /> : <Square size={14} />}
+              {selectedCount === wallets.length ? <CheckSquare size={12} /> : <Square size={12} />}
             </button>
           </div>
           <div style={{ textAlign: 'center' }}>#</div>
@@ -957,14 +980,20 @@ export default function ResultsPanel({
         </div>
 
         {/* Wallet rows */}
-        <div style={{ flex: 1, overflowY: 'auto', background: '#0b0f17' }}>
+        <div style={{ 
+          flex: 1, 
+          overflowY: 'auto', 
+          background: '#0b0f17',
+          scrollbarWidth: 'thin',
+          scrollbarColor: '#3f4a5c #1a2232',
+        }}>
           {wallets.length === 0 ? (
-            <div style={{ padding: '64px 24px', textAlign: 'center' }}>
-              <BarChart3 size={42} style={{ color: '#3f4a5c', margin: '0 auto 16px', display: 'block' }} />
-              <div style={{ fontFamily: 'monospace', fontSize: 14, color: '#7c879c' }}>
+            <div style={{ padding: '40px 24px', textAlign: 'center' }}>
+              <BarChart3 size={40} style={{ color: '#3f4a5c', margin: '0 auto 16px', display: 'block' }} />
+              <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#7c879c' }}>
                 No qualifying wallets found
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#5d6a81', marginTop: 6 }}>
+              <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#5d6a81', marginTop: 6 }}>
                 Try lowering your ROI threshold
               </div>
             </div>
@@ -973,32 +1002,35 @@ export default function ResultsPanel({
           )}
         </div>
 
-        {/* Compact footer with selection controls */}
+        {/* COMPACT FOOTER - changes based on expanded state */}
         {wallets.length > 0 && (
           <div style={{
-            padding: '10px 20px',
+            padding: hasExpanded ? '4px 20px' : '8px 20px',
             background: '#1a2232',
             borderTop: '1px solid #28303f',
             flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            transition: 'padding 0.2s ease',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            
+            {/* Left side - selection controls */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: hasExpanded ? 6 : 12 }}>
               <button
                 onClick={toggleSelectAll}
                 style={{
                   background: 'none',
                   border: 'none',
-                  padding: '6px 10px',
+                  padding: hasExpanded ? '3px 5px' : '4px 8px',
                   borderRadius: 4,
                   color: '#9aa4b8',
-                  fontSize: 11,
+                  fontSize: hasExpanded ? 9 : 10,
                   fontFamily: 'monospace',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: 4,
                   backgroundColor: '#1f2937',
                 }}
                 onMouseEnter={e => e.currentTarget.style.backgroundColor = '#2d3748'}
@@ -1006,48 +1038,56 @@ export default function ResultsPanel({
               >
                 {selectedCount === wallets.length ? (
                   <>
-                    <CheckSquare size={14} color="#a855f7" />
-                    Deselect All
+                    <CheckSquare size={hasExpanded ? 11 : 13} />
+                    {hasExpanded ? 'All' : 'Deselect All'}
                   </>
                 ) : (
                   <>
-                    <Square size={14} />
-                    Select All
+                    <Square size={hasExpanded ? 11 : 13} />
+                    {hasExpanded ? 'All' : 'Select All'}
                   </>
                 )}
               </button>
 
               {selectedCount > 0 && (
-                <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#9aa4b8' }}>
-                  {selectedCount} wallet{selectedCount !== 1 ? 's' : ''} selected
+                <span style={{ 
+                  fontFamily: 'monospace', 
+                  fontSize: hasExpanded ? 9 : 10, 
+                  color: '#9aa4b8' 
+                }}>
+                  {selectedCount} {hasExpanded ? 'sel' : 'selected'}
                 </span>
               )}
             </div>
 
+            {/* Right side - add button */}
             <button
               onClick={addSelectedToWatchlist}
               disabled={selectedCount === 0}
               style={{
-                padding: '8px 16px', borderRadius: 6,
+                padding: hasExpanded ? '3px 10px' : '6px 14px',
+                borderRadius: 4,
                 border: 'none',
                 background: selectedCount > 0
                   ? 'linear-gradient(90deg, #7c3aed, #9333ea)'
                   : '#374151',
                 color: selectedCount > 0 ? '#ffffff' : '#6b7280',
-                fontSize: 13,
+                fontSize: hasExpanded ? 10 : 12,
                 fontFamily: 'monospace', fontWeight: 600,
                 cursor: selectedCount > 0 ? 'pointer' : 'default',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 8,
-                transition: 'opacity 0.15s',
+                gap: hasExpanded ? 4 : 6,
+                transition: 'all 0.15s',
                 opacity: selectedCount > 0 ? 1 : 0.5,
               }}
               onMouseEnter={e => { if (selectedCount > 0) e.currentTarget.style.opacity = '0.9'; }}
               onMouseLeave={e => { if (selectedCount > 0) e.currentTarget.style.opacity = '1'; }}
             >
-              <BookmarkPlus size={16} />
-              Add {selectedCount > 0 ? `Selected (${selectedCount})` : 'Wallets'}
+              <BookmarkPlus size={hasExpanded ? 13 : 15} />
+              {hasExpanded 
+                ? `Add ${selectedCount}` 
+                : `Add Selected (${selectedCount})`}
             </button>
           </div>
         )}

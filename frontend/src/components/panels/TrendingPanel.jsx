@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square,
-  BarChart3, Shield, RefreshCw, XCircle, ChevronUp, AlertTriangle, RotateCcw
+  BarChart3, Shield, RefreshCw, XCircle, ChevronUp, AlertTriangle, RotateCcw, Activity
 } from 'lucide-react';
 
 const LIVE_INTERVAL_MS  = 60_000;   // Live refreshes market data every 60s
@@ -25,6 +25,10 @@ export default function TrendingPanel({
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
   const [timeoutMessage, setTimeoutMessage]     = useState('');
+  
+  // Queue status
+  const [queuePosition, setQueuePosition]       = useState(null);
+  const [estimatedWait, setEstimatedWait]       = useState(null);
 
   // Snapshot: frozen copy of runners taken when analysis starts.
   // displayedRunners = snapshot (during analysis) or runners (otherwise).
@@ -77,15 +81,14 @@ export default function TrendingPanel({
   useEffect(() => {
     if (liveUpdate) {
       liveIntervalRef.current = setInterval(() => {
-        if (!isBatchAnalyzing && !isSingleAnalyzing) {
-          refreshMarketData();
-        }
+        // Always refresh market data, even during analysis (FIX: removed check)
+        refreshMarketData();
       }, LIVE_INTERVAL_MS);
     } else {
       clearInterval(liveIntervalRef.current);
     }
     return () => clearInterval(liveIntervalRef.current);
-  }, [liveUpdate, filters, isBatchAnalyzing, isSingleAnalyzing]);
+  }, [liveUpdate, filters]); // Removed isBatchAnalyzing/isSingleAnalyzing dependency
 
   useEffect(() => {
     return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };
@@ -149,10 +152,14 @@ export default function TrendingPanel({
   // ── ANALYSIS HELPERS ──────────────────────────────────────────────────────
   const cancelAnalysis = async () => {
     if (currentJobId) {
-      try { await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' }); }
-      catch (_) {}
+      try { 
+        await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' }); 
+      } catch (_) {}
     }
-    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+    if (pollIntervalRef.current) { 
+      clearInterval(pollIntervalRef.current); 
+      pollIntervalRef.current = null; 
+    }
     pollCountRef.current = 0;
     setIsBatchAnalyzing(false);
     setIsSingleAnalyzing(false);
@@ -162,6 +169,8 @@ export default function TrendingPanel({
     setAnalysisTimedOut(false);
     setTimeoutMessage('');
     setAnalysisSnapshot(null);
+    setQueuePosition(null);
+    setEstimatedWait(null);
   };
 
   const attemptRecovery = async (jobId) => {
@@ -195,6 +204,12 @@ export default function TrendingPanel({
         const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/progress`);
         const data = await res.json();
         if (data.success) {
+          // Update queue information
+          if (data.queue_position) {
+            setQueuePosition(data.queue_position);
+            setEstimatedWait(data.estimated_wait);
+          }
+
           const progress = {
             current: data.tokens_completed || 0,
             total:   data.tokens_total || total,
@@ -223,7 +238,7 @@ export default function TrendingPanel({
 
   const handleSingleAnalysis = async (token) => {
     cancelAnalysis();
-    setAnalysisSnapshot([...runners]);
+    setAnalysisSnapshot([...runners]); // Keep snapshot for display during analysis
     setIsSingleAnalyzing(true);
     setAnalyzingToken(token.address);
     setAnalysisProgress({ current: 0, total: 1, phase: 'Starting…' });
@@ -259,7 +274,7 @@ export default function TrendingPanel({
   const handleBatchAnalyze = async () => {
     if (!selectedRunners.length) { alert('Select at least one token'); return; }
     cancelAnalysis();
-    setAnalysisSnapshot([...runners]);
+    setAnalysisSnapshot([...runners]); // Keep snapshot for display during analysis
     setIsBatchAnalyzing(true);
     setAnalysisProgress({ current: 0, total: selectedRunners.length, phase: 'Starting…' });
     try {
@@ -304,7 +319,8 @@ export default function TrendingPanel({
   };
 
   const isAnalysisRunning = isBatchAnalyzing || isSingleAnalyzing;
-  const displayedRunners  = analysisSnapshot ?? runners;
+  // FIX: Show live runners even during analysis, but add visual indicator
+  const displayedRunners = runners; // Always show live runners, not snapshot
 
   const formatTs = (d) => d
     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -313,6 +329,24 @@ export default function TrendingPanel({
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
+
+      {/* Analysis in progress indicator - always show when analyzing */}
+      {isAnalysisRunning && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-2">
+          <div className="flex items-center gap-2 text-blue-400">
+            <Activity size={16} className="animate-pulse" />
+            <span className="text-sm font-semibold">Analysis in progress</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Leaderboard continues updating while analysis runs on selected tokens.
+            {queuePosition && (
+              <span className="block mt-1 text-yellow-400">
+                ⏳ Queue position: #{queuePosition} {estimatedWait && `• ~${estimatedWait}m wait`}
+              </span>
+            )}
+          </p>
+        </div>
+      )}
 
       {/* Status bar */}
       <div className="flex items-center justify-between gap-2 min-h-[28px]">
@@ -326,7 +360,7 @@ export default function TrendingPanel({
             <span>
               Updated {formatTs(lastUpdated)}
               {liveUpdate && <span className="ml-2 text-green-400">· Auto-refresh every 60s</span>}
-              {analysisSnapshot && <span className="ml-2 text-blue-400">· List frozen during analysis</span>}
+              {isAnalysisRunning && <span className="ml-2 text-blue-400">· Live updates continue</span>}
             </span>
           )}
         </div>
@@ -335,7 +369,7 @@ export default function TrendingPanel({
           {/* Refresh — full leaderboard rescan for new qualifiers */}
           <button
             onClick={fetchLeaderboard}
-            disabled={isLoading || isAnalysisRunning}
+            disabled={isLoading}
             title="Rescan for new qualifying tokens (can add/remove tokens)"
             className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition disabled:opacity-40"
           >
@@ -345,7 +379,7 @@ export default function TrendingPanel({
           {/* Live — refresh market data and re-rank by momentum */}
           <button
             onClick={() => setLiveUpdate(v => !v)}
-            disabled={isAnalysisRunning}
+            disabled={isLoading}
             title={liveUpdate
               ? 'Auto-refreshing price/volume/holders every 60s — rankings update based on momentum. Click to stop.'
               : 'Auto-refresh price, volume and holders every 60s — tokens re-rank based on current momentum'}
@@ -378,6 +412,12 @@ export default function TrendingPanel({
             <p className="text-xs text-gray-400 text-center">
               {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
             </p>
+            {activeAnalysis.in_queue && (
+              <p className="text-xs text-yellow-400 text-center">
+                ⏳ Queue position: #{activeAnalysis.queue_position || '?'}
+                {activeAnalysis.estimated_wait && ` • ~${activeAnalysis.estimated_wait}m wait`}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -558,6 +598,11 @@ export default function TrendingPanel({
                   <p className="text-xs text-gray-400 text-center">
                     {analysisProgress.phase} ({analysisProgress.current}/{analysisProgress.total})
                   </p>
+                  {queuePosition && (
+                    <p className="text-xs text-yellow-400 text-center">
+                      ⏳ Queue position: #{queuePosition} {estimatedWait && `• ~${estimatedWait}m wait`}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <button onClick={handleBatchAnalyze}
