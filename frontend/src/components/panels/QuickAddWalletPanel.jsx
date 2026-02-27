@@ -4,7 +4,8 @@ import { Plus, CheckCircle, Zap, AlertCircle } from 'lucide-react';
 export default function QuickAddWalletPanel({ 
   userId, 
   apiUrl, 
-  onSuccess // Callback after successful add
+  onSuccess,
+  getAccessToken,
 }) {
   const [walletAddress, setWalletAddress] = useState('');
   const [tags, setTags] = useState('');
@@ -19,7 +20,6 @@ export default function QuickAddWalletPanel({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState(null);
 
-  // Stress Test Presets - from your existing code
   const presets = [
     { 
       label: 'Binance Hot Wallet', 
@@ -44,13 +44,11 @@ export default function QuickAddWalletPanel({
   ];
 
   const handleAdd = async () => {
-    // Validation
     if (!walletAddress.trim()) {
       setError('Please enter a wallet address');
       return;
     }
 
-    // Basic Solana address validation (44 characters, base58)
     if (walletAddress.trim().length < 32 || walletAddress.trim().length > 44) {
       setError('Invalid Solana wallet address format');
       return;
@@ -60,18 +58,25 @@ export default function QuickAddWalletPanel({
     setIsAdding(true);
 
     try {
+      const token = getAccessToken?.();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/add`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           user_id: userId,
-          wallet_address: walletAddress.trim(),
-          tags: tags.split(',').map(t => t.trim()).filter(Boolean),
-          notes: notes.trim() || null,
-          alert_enabled: alertSettings.enabled,
-          alert_on_buy: alertSettings.onBuy,
-          alert_on_sell: alertSettings.onSell,
-          min_trade_usd: alertSettings.minTradeUsd
+          wallet: {
+            wallet: walletAddress.trim(),
+            tier: 'C',
+            tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+            notes: notes.trim() || null,
+            alert_enabled: alertSettings.enabled,
+            alert_on_buy: alertSettings.onBuy,
+            alert_on_sell: alertSettings.onSell,
+            min_trade_usd: alertSettings.minTradeUsd
+          }
         })
       });
 
@@ -79,21 +84,12 @@ export default function QuickAddWalletPanel({
 
       if (data.success) {
         setSuccess(true);
-        
-        // Clear form after 2 seconds
         setTimeout(() => {
           setSuccess(false);
           setWalletAddress('');
           setTags('');
           setNotes('');
-          setAlertSettings({
-            enabled: true,
-            onBuy: true,
-            onSell: true,
-            minTradeUsd: 100
-          });
-          
-          // Trigger callback
+          setAlertSettings({ enabled: true, onBuy: true, onSell: true, minTradeUsd: 100 });
           if (onSuccess) onSuccess();
         }, 2000);
       } else {
@@ -102,9 +98,9 @@ export default function QuickAddWalletPanel({
     } catch (err) {
       console.error('Add wallet error:', err);
       setError('Network error. Please try again.');
+    } finally {
+      setIsAdding(false);
     }
-
-    setIsAdding(false);
   };
 
   const applyPreset = (preset) => {
@@ -115,7 +111,7 @@ export default function QuickAddWalletPanel({
 
   return (
     <div className="space-y-4">
-      {/* Quick Presets - Stress Testing */}
+      {/* Quick Presets */}
       <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <Zap className="text-purple-400" size={16} />
@@ -152,7 +148,6 @@ export default function QuickAddWalletPanel({
         <h3 className="text-sm font-semibold mb-3">Manual Entry</h3>
         
         <div className="space-y-3">
-          {/* Wallet Address */}
           <div>
             <label className="block text-sm font-medium mb-2">
               Wallet Address <span className="text-red-400">*</span>
@@ -172,7 +167,6 @@ export default function QuickAddWalletPanel({
             )}
           </div>
 
-          {/* Tags */}
           <div>
             <label className="block text-sm font-medium mb-2">
               Tags <span className="text-gray-500 text-xs">(optional)</span>
@@ -184,12 +178,9 @@ export default function QuickAddWalletPanel({
               placeholder="e.g., exchange, high-volume, whale"
               className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Separate multiple tags with commas
-            </p>
+            <p className="text-xs text-gray-500 mt-1">Separate multiple tags with commas</p>
           </div>
 
-          {/* Notes */}
           <div>
             <label className="block text-sm font-medium mb-2">
               Notes <span className="text-gray-500 text-xs">(optional)</span>
@@ -212,7 +203,6 @@ export default function QuickAddWalletPanel({
         </h3>
         
         <div className="space-y-3">
-          {/* Enable Alerts Toggle */}
           <label className="flex items-center justify-between cursor-pointer">
             <span className="text-sm">Enable alerts</span>
             <div 
@@ -227,7 +217,6 @@ export default function QuickAddWalletPanel({
             </div>
           </label>
 
-          {/* Alert Type Checkboxes */}
           <div className={`space-y-2 ${!alertSettings.enabled ? 'opacity-50' : ''}`}>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -252,7 +241,6 @@ export default function QuickAddWalletPanel({
             </label>
           </div>
 
-          {/* Min Trade Amount */}
           <div className={!alertSettings.enabled ? 'opacity-50' : ''}>
             <label className="block text-xs text-gray-400 mb-1">
               Minimum Trade Amount ($)
@@ -266,9 +254,7 @@ export default function QuickAddWalletPanel({
               min="0"
               step="10"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Only alert for trades above this amount
-            </p>
+            <p className="text-xs text-gray-500 mt-1">Only alert for trades above this amount</p>
           </div>
         </div>
       </div>
@@ -300,7 +286,7 @@ export default function QuickAddWalletPanel({
       {/* Info Banner */}
       <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
         <p className="text-xs text-blue-300">
-          💡 <strong>Monitoring begins within 2 minutes.</strong> You'll receive Telegram alerts based on your settings. High-volume wallets may generate many alerts - adjust thresholds accordingly.
+          💡 <strong>Monitoring begins within 2 minutes.</strong> You'll receive Telegram alerts based on your settings. High-volume wallets may generate many alerts — adjust thresholds accordingly.
         </p>
       </div>
 

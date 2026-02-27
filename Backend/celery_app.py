@@ -33,56 +33,78 @@ celery.conf.beat_schedule = {
         'schedule': crontab(hour=3, minute=0),
         'options': {'expires': 3600}
     },
-    
+
     # Weekly rerank on Sunday at 4am UTC
     'weekly-rerank': {
         'task': 'tasks.weekly_rerank_all',
         'schedule': crontab(day_of_week='sunday', hour=4, minute=0),
         'options': {'expires': 7200}
     },
-    
+
     # 4-week degradation check every 28 days at 5am UTC
     'four-week-degradation': {
         'task': 'tasks.four_week_degradation_check',
-        'schedule': crontab(day_of_month='1,29', hour=5, minute=0),  # Every 28 days (approx)
+        'schedule': crontab(day_of_month='1,29', hour=5, minute=0),
         'options': {'expires': 7200}
     },
-    
-    # Elite 100 refresh every hour
+
+    # Elite 100 refresh every hour (top of hour)
     'elite-100-refresh': {
         'task': 'tasks.refresh_elite_100',
-        'schedule': crontab(minute=0),  # Top of every hour
+        'schedule': crontab(minute=0),
         'options': {'expires': 3600}
     },
-    
-    # Community Top 100 refresh every hour
+
+    # Community Top 100 refresh every hour (:15 past)
     'community-top-100-refresh': {
         'task': 'tasks.refresh_community_top_100',
-        'schedule': crontab(minute=15),  # 15 minutes past every hour
+        'schedule': crontab(minute=15),
+        'options': {'expires': 3600}
+    },
+
+    # Redis → DuckDB flush every hour (:30 past, staggered from other hourly tasks)
+    'flush-redis-to-duckdb': {
+        'task': 'tasks.flush_redis_to_duckdb',
+        'schedule': crontab(minute=30),
+        'options': {'expires': 3600}
+    },
+
+    # ATH invalidation — checks all active token caches for stale scores (:45 past)
+    # If a token's ATH moved >10% since the cached result was computed, the Redis
+    # cache key is deleted so the next search triggers a fresh pipeline with
+    # correct distance_to_ath_pct / entry_to_ath_multiplier / professional_score.
+    'invalidate-stale-ath-caches': {
+        'task': 'tasks.invalidate_stale_ath_caches',
+        'schedule': crontab(minute=45),
         'options': {'expires': 3600}
     },
 }
 
-# Task routes (optional - for multiple queues)
+# Task routes
 celery.conf.task_routes = {
-    'tasks.daily_stats_refresh': {'queue': 'stats'},
-    'tasks.weekly_rerank_all': {'queue': 'stats'},
-    'tasks.four_week_degradation_check': {'queue': 'stats'},
-    'tasks.refresh_elite_100': {'queue': 'rankings'},
-    'tasks.refresh_community_top_100': {'queue': 'rankings'},
+    'tasks.daily_stats_refresh':          {'queue': 'stats'},
+    'tasks.weekly_rerank_all':            {'queue': 'stats'},
+    'tasks.four_week_degradation_check':  {'queue': 'stats'},
+    'tasks.refresh_elite_100':            {'queue': 'rankings'},
+    'tasks.refresh_community_top_100':    {'queue': 'rankings'},
+    'tasks.flush_redis_to_duckdb':        {'queue': 'stats'},
+    'tasks.invalidate_stale_ath_caches':  {'queue': 'stats'},
+    'tasks.purge_stale_analysis_cache':   {'queue': 'stats'},
 }
 
 print("""
 ╔══════════════════════════════════════════════════════════════════╗
-║                   CELERY BEAT SCHEDULER CONFIGURED               ║
+║              CELERY BEAT SCHEDULER CONFIGURED                    ║
 ╚══════════════════════════════════════════════════════════════════╝
-  📅 Daily stats refresh: 3am UTC
-  📊 Weekly rerank: Sunday 4am UTC
-  🔍 4-week degradation: 1st & 29th of month at 5am UTC
-  🏆 Elite 100 refresh: Every hour (top of hour)
-  👥 Community Top 100: Every hour (:15 past)
-  
+  📅 Daily stats refresh:      3am UTC
+  📊 Weekly rerank:            Sunday 4am UTC
+  🔍 4-week degradation:       1st & 29th of month at 5am UTC
+  🏆 Elite 100 refresh:        Every hour (:00)
+  👥 Community Top 100:        Every hour (:15)
+  💾 Redis → DuckDB flush:     Every hour (:30)
+  🔄 ATH cache invalidation:   Every hour (:45)  ← NEW
+
   Start with:
-    celery -A celery_app worker --loglevel=info
+    celery -A celery_app worker --loglevel=info -Q stats,rankings
     celery -A celery_app beat --loglevel=info
 """)

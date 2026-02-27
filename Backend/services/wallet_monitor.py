@@ -5,6 +5,13 @@ Creates notifications when activity matches user alert settings
 Supports Telegram alerts integration
 
 Uses Supabase for persistent storage.
+
+FIXES:
+  - float() on dict: sol_amount/solAmount can be a dict from the API — safely extract numeric value
+  - bigint timestamp: wallet_monitor_status.last_checked_at is a bigint column — store Unix ints,
+    not ISO strings. The previous to_iso() conversion was wrong for this column type.
+  - signature column: wallet_activity.signature column added to Supabase for dedup checks
+  - Telegram alerts: Celery first, direct send fallback if Celery not configured
 """
 
 import requests
@@ -18,6 +25,34 @@ from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
 if TYPE_CHECKING:
     from services.telegram_notifier import TelegramNotifier
+
+
+def _safe_float(value, fallback=0.0) -> float:
+    """
+    Safely convert an API value to float.
+    Handles: None, int, float, str, and dict (e.g. {'amount': 1.5, 'currency': 'SOL'}).
+    FIX: Solana Tracker sometimes returns sol_amount as a dict object, not a number.
+    """
+    if value is None:
+        return fallback
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return fallback
+    if isinstance(value, dict):
+        # Try common keys in order of preference
+        for key in ('amount', 'value', 'usd', 'sol', 'lamports'):
+            v = value.get(key)
+            if v is not None:
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    continue
+        return fallback
+    return fallback
 
 
 class WalletActivityMonitor:
@@ -170,14 +205,16 @@ class WalletActivityMonitor:
             return {'min_buy_usd': 50.0}
 
     def _check_wallet_activity(self, wallet_info):
-        """Check a single wallet for new transactions - FIXED timestamps"""
+        """Check a single wallet for new transactions."""
         wallet_address = wallet_info['wallet_address']
         last_checked = wallet_info.get('last_checked_at')
 
-        # Handle ISO strings from Supabase TIMESTAMPTZ
+        # last_checked_at is stored as a Unix bigint in the DB.
+        # Handle both int and legacy ISO string values gracefully.
         if last_checked:
             try:
                 if isinstance(last_checked, str):
+                    # Legacy ISO string — parse it
                     dt = datetime.fromisoformat(last_checked.replace('Z', '+00:00'))
                     last_checked_epoch = int(dt.timestamp())
                 else:
@@ -221,11 +258,12 @@ class WalletActivityMonitor:
                 for token_address, wallets_buying in tokens_bought.items():
                     self._buffer_multi_wallet_signal(token_address, wallets_buying, wallet_info)
 
-            # Pass Unix int - _update_monitor_status converts to ISO
+            # Store as Unix int — column is bigint, not TIMESTAMPTZ
+            now_unix = int(time.time())
             self._update_monitor_status(
                 wallet_address,
-                last_checked_at=int(time.time()),
-                last_activity_at=int(time.time()) if transactions else None,
+                last_checked_at=now_unix,
+                last_activity_at=now_unix if transactions else None,
                 success=True
             )
 
@@ -276,7 +314,10 @@ class WalletActivityMonitor:
 
     def _fetch_wallet_all_trades(self, wallet_address, after_time, before_time):
         """
-        Fetch ALL trades (buys AND sells) for a wallet using Solana Tracker API
+        Fetch ALL trades (buys AND sells) for a wallet using Solana Tracker API.
+
+        FIX: sol_amount / solAmount can be a dict object from the API, not a plain number.
+        Use _safe_float() for all numeric API fields to handle dict, None, str, and int/float.
         """
         url = f"{self.solanatracker_trades_url}/{wallet_address}/trades"
         headers = {
@@ -285,7 +326,8 @@ class WalletActivityMonitor:
         }
         params = {
             'since_time': after_time * 1000,  # Convert to ms
-            'limit': 100
+            'limit': 100,
+            'tx_type': 'swap'  # only buys and sells
         }
 
         try:
@@ -296,17 +338,23 @@ class WalletActivityMonitor:
 
                 normalized_trades = []
                 for trade in raw_trades:
+                    # FIX: Use _safe_float() — sol_amount can arrive as a dict
+                    sol_amount = _safe_float(
+                        trade.get('sol_amount') or trade.get('solAmount'), 0.0
+                    )
+                    usd_value = sol_amount * 150  # approximate SOL → USD
+
                     normalized_trades.append({
                         'token_address': trade.get('token_address') or trade.get('tokenAddress'),
-                        'token_ticker': trade.get('symbol') or trade.get('tokenSymbol'),
-                        'token_name': trade.get('token_name') or trade.get('tokenName'),
-                        'side': trade.get('type', '').lower(),  # 'buy' or 'sell'
-                        'token_amount': float(trade.get('token_amount', 0) or trade.get('tokenAmount', 0)),
-                        'usd_value': float(trade.get('sol_amount', 0) or trade.get('solAmount', 0)) * 150,
-                        'price': float(trade.get('price', 0)),
-                        'tx_hash': trade.get('signature') or trade.get('tx_hash'),
-                        'block_time': int(trade.get('timestamp', 0) / 1000) if trade.get('timestamp') else int(time.time()),
-                        'dex': trade.get('dex', 'unknown')
+                        'token_ticker':  trade.get('symbol') or trade.get('tokenSymbol'),
+                        'token_name':    trade.get('token_name') or trade.get('tokenName'),
+                        'side':          trade.get('type', '').lower(),  # 'buy' or 'sell'
+                        'token_amount':  _safe_float(trade.get('token_amount') or trade.get('tokenAmount'), 0.0),
+                        'usd_value':     usd_value,
+                        'price':         _safe_float(trade.get('price'), 0.0),
+                        'tx_hash':       trade.get('signature') or trade.get('tx_hash'),
+                        'block_time':    int(trade.get('timestamp', 0) / 1000) if trade.get('timestamp') else int(time.time()),
+                        'dex':           trade.get('dex', 'unknown')
                     })
 
                 return normalized_trades
@@ -315,6 +363,8 @@ class WalletActivityMonitor:
 
         except Exception as e:
             print(f"    ❌ Error fetching trades from Solana Tracker: {e}")
+            import traceback
+            traceback.print_exc()
 
         return []
 
@@ -361,6 +411,9 @@ class WalletActivityMonitor:
 
     def _save_wallet_activity(self, tx, wallet_address) -> Optional[int]:
         """Save transaction to wallet_activity table"""
+        if not tx.get('token_address'):
+            return None
+
         try:
             existing = self._table('wallet_activity').select('id').eq(
                 'signature', tx.get('tx_hash')
@@ -371,15 +424,15 @@ class WalletActivityMonitor:
 
             result = self._table('wallet_activity').insert({
                 'wallet_address': wallet_address,
-                'token_address': tx.get('token_address'),
-                'token_ticker': tx.get('token_ticker'),
-                'token_name': tx.get('token_name'),
-                'side': tx.get('side'),
-                'amount': tx.get('token_amount', 0),
-                'usd_value': tx.get('usd_value', 0),
+                'token_address':  tx.get('token_address'),
+                'token_ticker':   tx.get('token_ticker'),
+                'token_name':     tx.get('token_name'),
+                'side':           tx.get('side'),
+                'amount':         tx.get('token_amount', 0),
+                'usd_value':      tx.get('usd_value', 0),
                 'price_per_token': tx.get('price', 0),
-                'signature': tx.get('tx_hash'),
-                'block_time': datetime.utcfromtimestamp(tx.get('block_time', time.time())).isoformat()
+                'signature':      tx.get('tx_hash'),
+                'block_time':     int(tx.get('block_time', time.time()))
             }).execute()
 
             if result.data:
@@ -408,32 +461,29 @@ class WalletActivityMonitor:
             return {'tier': 'C', 'consistency_score': 0}
 
     def _send_telegram_alert(self, user_id: str, alert_type: str, alert_data: Dict):
-        """Queue Telegram alert for background sending"""
+        """
+        Send Telegram alert.
+        Tries Celery first for async delivery.
+        Falls back to direct synchronous send if Celery is not configured.
+        """
         if not self.telegram_notifier:
             return
 
-        if alert_type == 'trade':
-            settings = self._get_user_settings(user_id)
-            if alert_data.get('usd_value', 0) < settings.get('min_buy_usd', 50.0):
-                print(f"    ⏭️ Trade below user threshold: ${alert_data.get('usd_value')}")
-                return
-
+        # Try Celery first, fall back to direct send if not configured
         try:
-            from flask import current_app
-            q = current_app.config.get('RQ_QUEUE')
-
-            if q:
-                q.enqueue('tasks.send_telegram_alert_async',
-                          user_id, alert_type, alert_data)
-                print(f"[WALLET MONITOR] ✓ Alert queued for {user_id[:8]}...")
-            else:
-                self._send_alert_direct(user_id, alert_type, alert_data)
+            from tasks import send_telegram_alert_async
+            send_telegram_alert_async.delay(user_id, alert_type, alert_data)
+            print(f"[WALLET MONITOR] ✓ Alert queued via Celery for {user_id[:8]}...")
         except Exception as e:
-            print(f"[WALLET MONITOR] ⚠️ Alert queue failed: {e}")
-            self._send_alert_direct(user_id, alert_type, alert_data)
+            print(f"[WALLET MONITOR] ⚠️ Celery unavailable ({e}), sending directly...")
+            try:
+                self._send_alert_direct(user_id, alert_type, alert_data)
+                print(f"[WALLET MONITOR] ✓ Alert sent directly for {user_id[:8]}...")
+            except Exception as e2:
+                print(f"[WALLET MONITOR] ⚠️ Direct alert also failed: {e2}")
 
     def _send_alert_direct(self, user_id: str, alert_type: str, alert_data: Dict):
-        """Direct send (fallback)"""
+        """Direct send (fallback when Celery is unavailable)"""
         if alert_type == 'trade':
             self._send_trade_alert_direct(user_id, alert_data)
         elif alert_type == 'multi_wallet':
@@ -447,27 +497,27 @@ class WalletActivityMonitor:
 
             alert_payload = {
                 'wallet': {
-                    'address': wallet_address,
-                    'tier': wallet_info.get('tier', 'C'),
+                    'address':           wallet_address,
+                    'tier':              wallet_info.get('tier', 'C'),
                     'consistency_score': wallet_info.get('consistency_score', 0)
                 },
                 'action': tx.get('side', 'buy'),
                 'token': {
                     'address': tx.get('token_address', ''),
-                    'symbol': tx.get('token_ticker', 'UNKNOWN'),
-                    'name': tx.get('token_name', 'Unknown')
+                    'symbol':  tx.get('token_ticker', 'UNKNOWN'),
+                    'name':    tx.get('token_name', 'Unknown')
                 },
                 'trade': {
                     'amount_tokens': tx.get('token_amount', 0),
-                    'amount_usd': tx.get('usd_value', 0),
-                    'price': tx.get('price', 0),
-                    'tx_hash': tx.get('tx_hash', ''),
-                    'dex': tx.get('dex', 'unknown'),
-                    'timestamp': tx.get('block_time', int(time.time()))
+                    'amount_usd':    tx.get('usd_value', 0),
+                    'price':         tx.get('price', 0),
+                    'tx_hash':       tx.get('tx_hash', ''),
+                    'dex':           tx.get('dex', 'unknown'),
+                    'timestamp':     tx.get('block_time', int(time.time()))
                 },
                 'links': {
-                    'solscan': f"https://solscan.io/tx/{tx.get('tx_hash', '')}",
-                    'birdeye': f"https://birdeye.so/token/{tx.get('token_address', '')}",
+                    'solscan':     f"https://solscan.io/tx/{tx.get('tx_hash', '')}",
+                    'birdeye':     f"https://birdeye.so/token/{tx.get('token_address', '')}",
                     'dexscreener': f"https://dexscreener.com/solana/{tx.get('token_address', '')}"
                 }
             }
@@ -482,7 +532,7 @@ class WalletActivityMonitor:
         """Create notifications for all users watching this wallet"""
         try:
             result = self._table('wallet_watchlist').select(
-                'user_id, alert_enabled, alert_threshold_usd'
+                'user_id, alert_enabled, alert_threshold_usd, min_trade_usd, alert_on_buy, alert_on_sell'
             ).eq('wallet_address', wallet_address).eq('alert_enabled', True).execute()
 
             watchers = result.data
@@ -500,16 +550,16 @@ class WalletActivityMonitor:
                     if self._should_notify(tx, watcher):
                         try:
                             self._table('wallet_notifications').insert({
-                                'user_id': watcher['user_id'],
-                                'wallet_address': wallet_address,
+                                'user_id':           watcher['user_id'],
+                                'wallet_address':    wallet_address,
                                 'notification_type': tx.get('side', 'trade'),
-                                'title': f"{tx.get('side', 'Trade').upper()}: {tx.get('token_ticker', 'UNKNOWN')}",
-                                'message': f"${tx.get('usd_value', 0):.2f} {tx.get('side', 'trade')}",
+                                'title':             f"{tx.get('side', 'Trade').upper()}: {tx.get('token_ticker', 'UNKNOWN')}",
+                                'message':           f"${tx.get('usd_value', 0):.2f} {tx.get('side', 'trade')}",
                                 'metadata': {
-                                    'activity_id': activity_id,
+                                    'activity_id':   activity_id,
                                     'token_address': tx.get('token_address'),
-                                    'tx_hash': tx.get('tx_hash'),
-                                    'usd_value': tx.get('usd_value', 0)
+                                    'tx_hash':       tx.get('tx_hash'),
+                                    'usd_value':     tx.get('usd_value', 0)
                                 }
                             }).execute()
 
@@ -517,12 +567,8 @@ class WalletActivityMonitor:
 
                             if self.telegram_notifier:
                                 tx['wallet_address'] = wallet_address
-                                tx['activity_id'] = activity_id
-                                self._send_telegram_alert(
-                                    watcher['user_id'],
-                                    'trade',
-                                    tx
-                                )
+                                tx['activity_id']    = activity_id
+                                self._send_telegram_alert(watcher['user_id'], 'trade', tx)
 
                         except Exception as e:
                             print(f"    ⚠️ Error creating notification: {e}")
@@ -535,29 +581,41 @@ class WalletActivityMonitor:
 
     def _should_notify(self, tx, settings):
         """Determine if user should be notified about this transaction"""
-        usd_value = tx.get('usd_value', 0)
-        threshold = settings.get('alert_threshold_usd', 100)
-
-        if usd_value < threshold:
+        # Check trade type (buy/sell)
+        side = tx.get('side', 'buy')
+        if side == 'buy' and not settings.get('alert_on_buy', True):
+            return False
+        if side == 'sell' and not settings.get('alert_on_sell', False):
             return False
 
-        return True
+        # Check minimum trade value — prefer min_trade_usd, fall back to alert_threshold_usd
+        usd_value = tx.get('usd_value', 0)
+        threshold = settings.get('min_trade_usd') or settings.get('alert_threshold_usd') or 100
+        return usd_value >= threshold
 
     def _update_monitor_status(self, wallet_address, last_checked_at,
                                last_activity_at=None, success=True, error_message=None):
-        """Update monitoring status - FIXED: converts Unix timestamps to ISO for Supabase TIMESTAMPTZ"""
+        """
+        Update monitoring status.
+
+        FIX: wallet_monitor_status.last_checked_at is a BIGINT column, not TIMESTAMPTZ.
+        Store Unix timestamps (integers) directly — do NOT convert to ISO strings.
+        """
         try:
-            # ✅ FIX: Always convert to ISO string for Supabase TIMESTAMPTZ columns
-            def to_iso(ts):
+            def to_unix(ts):
                 if ts is None:
                     return None
                 if isinstance(ts, str):
-                    return ts  # Already ISO
-                return datetime.utcfromtimestamp(int(ts)).isoformat() + 'Z'
+                    try:
+                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                        return int(dt.timestamp())
+                    except Exception:
+                        return None
+                return int(ts)
 
-            last_checked_iso = to_iso(last_checked_at)
-            last_activity_iso = to_iso(last_activity_at) if last_activity_at else None
-            updated_at_iso = datetime.utcnow().isoformat() + 'Z'
+            last_checked_unix  = to_unix(last_checked_at)
+            last_activity_unix = to_unix(last_activity_at) if last_activity_at else None
+            updated_at_iso     = datetime.utcnow().isoformat() + 'Z'  # updated_at is TIMESTAMPTZ
 
             existing = self._table('wallet_monitor_status').select('wallet_address').eq(
                 'wallet_address', wallet_address
@@ -565,15 +623,15 @@ class WalletActivityMonitor:
 
             if existing.data:
                 update_data = {
-                    'last_checked_at': last_checked_iso,
-                    'updated_at': updated_at_iso
+                    'last_checked_at': last_checked_unix,   # bigint — store as int
+                    'updated_at':      updated_at_iso,      # TIMESTAMPTZ — store as ISO
                 }
 
                 if success:
                     update_data['error_count'] = 0
-                    update_data['last_error'] = None
-                    if last_activity_iso:
-                        update_data['last_activity_at'] = last_activity_iso
+                    update_data['last_error']  = None
+                    if last_activity_unix:
+                        update_data['last_activity_at'] = last_activity_unix
                 else:
                     update_data['last_error'] = error_message
 
@@ -591,14 +649,14 @@ class WalletActivityMonitor:
 
             else:
                 self._table('wallet_monitor_status').insert({
-                    'wallet_address': wallet_address,
-                    'last_checked_at': last_checked_iso,
-                    'last_activity_at': last_activity_iso,
-                    'updated_at': updated_at_iso,
-                    'check_count': 1,
-                    'error_count': 0 if success else 1,
-                    'last_error': None if success else error_message,
-                    'is_active': True
+                    'wallet_address':  wallet_address,
+                    'last_checked_at': last_checked_unix,   # bigint
+                    'last_activity_at': last_activity_unix, # bigint
+                    'updated_at':      updated_at_iso,      # TIMESTAMPTZ
+                    'check_count':     1,
+                    'error_count':     0 if success else 1,
+                    'last_error':      None if success else error_message,
+                    'is_active':       True
                 }).execute()
 
         except Exception as e:
@@ -628,41 +686,38 @@ class WalletActivityMonitor:
             ).execute()
 
             total_monitored = len(health_result.data)
-            with_errors = sum(1 for r in health_result.data if (r.get('error_count') or 0) > 0)
-            avg_checks = sum(r.get('check_count', 0) for r in health_result.data) / max(total_monitored, 1)
+            with_errors     = sum(1 for r in health_result.data if (r.get('error_count') or 0) > 0)
+            avg_checks      = sum(r.get('check_count', 0) for r in health_result.data) / max(total_monitored, 1)
 
             return {
-                'active_wallets': active_wallets,
-                'recent_activities': recent_activities,
-                'pending_notifications': pending_notifications,
+                'active_wallets':         active_wallets,
+                'recent_activities':      recent_activities,
+                'pending_notifications':  pending_notifications,
                 'monitor_health': {
                     'total_monitored': total_monitored,
-                    'with_errors': with_errors,
-                    'avg_checks': round(avg_checks, 1)
+                    'with_errors':     with_errors,
+                    'avg_checks':      round(avg_checks, 1)
                 },
-                'running': self.running,
-                'poll_interval_seconds': self.poll_interval,
-                'telegram_enabled': self.telegram_notifier is not None
+                'running':                self.running,
+                'poll_interval_seconds':  self.poll_interval,
+                'telegram_enabled':       self.telegram_notifier is not None
             }
 
         except Exception as e:
             print(f"[MONITOR] Error getting stats: {e}")
             return {
-                'active_wallets': 0,
-                'recent_activities': 0,
-                'pending_notifications': 0,
+                'active_wallets': 0, 'recent_activities': 0, 'pending_notifications': 0,
                 'monitor_health': {'total_monitored': 0, 'with_errors': 0, 'avg_checks': 0},
-                'running': self.running,
-                'poll_interval_seconds': self.poll_interval,
+                'running': self.running, 'poll_interval_seconds': self.poll_interval,
                 'telegram_enabled': self.telegram_notifier is not None
             }
 
     def force_check_wallet(self, wallet_address):
         """Manually trigger a check for a specific wallet (for testing/debugging)"""
         wallet_info = {
-            'wallet_address': wallet_address,
-            'tier': None,
-            'last_checked_at': None,
+            'wallet_address':   wallet_address,
+            'tier':             None,
+            'last_checked_at':  None,
             'last_activity_at': None
         }
 
@@ -750,9 +805,7 @@ def update_alert_settings(user_id, wallet_address, settings, db_path=None) -> bo
     try:
         supabase = get_supabase_client()
 
-        update_data = {
-            'last_updated': datetime.utcnow().isoformat()
-        }
+        update_data = {'last_updated': datetime.utcnow().isoformat()}
 
         if 'alert_enabled' in settings:
             update_data['alert_enabled'] = settings['alert_enabled']
@@ -797,11 +850,11 @@ if __name__ == '__main__':
             print(f"\n{'='*80}")
             print(f"MONITORING STATS - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"{'='*80}")
-            print(f"  Active Wallets: {stats['active_wallets']}")
-            print(f"  Recent Activities (1h): {stats['recent_activities']}")
-            print(f"  Pending Notifications: {stats['pending_notifications']}")
-            print(f"  Monitor Health: {stats['monitor_health']}")
-            print(f"  Telegram: {'Enabled' if stats['telegram_enabled'] else 'Disabled'}")
+            print(f"  Active Wallets:           {stats['active_wallets']}")
+            print(f"  Recent Activities (1h):   {stats['recent_activities']}")
+            print(f"  Pending Notifications:    {stats['pending_notifications']}")
+            print(f"  Monitor Health:           {stats['monitor_health']}")
+            print(f"  Telegram:                 {'Enabled' if stats['telegram_enabled'] else 'Disabled'}")
             print(f"{'='*80}\n")
 
     except KeyboardInterrupt:

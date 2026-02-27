@@ -17,6 +17,8 @@ from routes import whop_bp
 from routes import referral_points_bp
 from routes import auth_bp
 from routes import tokens_bp
+from routes.recents import recents_bp     
+from routes import diary_bp # ✅ NEW
 
 
 telegram_polling_started = False
@@ -126,6 +128,8 @@ def create_app() -> Flask:
     app.register_blueprint(referral_points_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(tokens_bp)
+    app.register_blueprint(recents_bp)  
+    app.register_blueprint(diary_bp) # ✅ NEW
 
     redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
     app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
@@ -157,7 +161,7 @@ def preload_trending_cache():
     """
     try:
         print("[CACHE WARMUP] Queuing runner list warmup (7d + 14d)...")
-        from worker_tasks import preload_trending_cache as _warmup
+        from services.worker_tasks import preload_trending_cache as _warmup
         _warmup()
         print("  ✅ Warmup jobs queued")
     except Exception as e:
@@ -176,7 +180,6 @@ def start_wallet_monitoring():
         from flask import current_app
         telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
 
-        # ✅ CORRECT: pass solanatracker_api_key, not birdeye_api_key
         monitor = WalletActivityMonitor(
             solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
             poll_interval=120,

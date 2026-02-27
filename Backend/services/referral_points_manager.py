@@ -369,6 +369,7 @@ class ReferralPointsManager:
                 'tier_multiplier': self.tier_multipliers.get(tier, 1.0),
                 'daily_streak': 0,
                 'last_activity_date': datetime.utcnow().date().isoformat(),
+                'longest_streak': 0,
                 'level': 1
             }).execute()
             
@@ -454,7 +455,7 @@ class ReferralPointsManager:
         try:
             # Get current streak info
             user_points = self._table('user_points').select(
-                'daily_streak, last_activity_date'
+                'daily_streak, last_activity_date, longest_streak'
             ).eq('user_id', user_id).limit(1).execute()
             
             if not user_points.data:
@@ -464,6 +465,7 @@ class ReferralPointsManager:
             data = user_points.data[0]
             last_date = data['last_activity_date']
             current_streak = data['daily_streak'] or 0
+            current_longest = data['longest_streak'] or 0
             
             today = datetime.utcnow().date()
             
@@ -480,14 +482,14 @@ class ReferralPointsManager:
                 # Streak broken
                 new_streak = 1
             
+            # Calculate new longest streak in Python
+            new_longest = max(current_longest, new_streak)
+            
             # Update streak
             self._table('user_points').update({
                 'daily_streak': new_streak,
                 'last_activity_date': today.isoformat(),
-                'longest_streak': self.supabase.rpc('greatest', {
-                    'a': data.get('longest_streak', 0),
-                    'b': new_streak
-                })
+                'longest_streak': new_longest  # Fixed: using calculated value
             }).eq('user_id', user_id).execute()
             
             # Award streak bonuses
@@ -517,6 +519,7 @@ class ReferralPointsManager:
                 'total_points': 0,
                 'lifetime_points': 0,
                 'daily_streak': 0,
+                'longest_streak': 0,
                 'level': 1
             }
             
@@ -530,7 +533,7 @@ class ReferralPointsManager:
             sort_field = 'lifetime_points' if leaderboard_type == 'lifetime' else 'total_points'
             
             result = self._table('user_points').select(
-                'user_id, total_points, lifetime_points, current_tier, daily_streak, level'
+                'user_id, total_points, lifetime_points, current_tier, daily_streak, longest_streak, level'
             ).order(sort_field, desc=True).limit(limit).execute()
             
             return result.data
@@ -540,9 +543,12 @@ class ReferralPointsManager:
             return []
 
 
+# Singleton instance
+_referral_manager = None
+
 def get_referral_manager():
     """Singleton getter"""
     global _referral_manager
-    if '_referral_manager' not in globals():
+    if _referral_manager is None:
         _referral_manager = ReferralPointsManager()
     return _referral_manager
