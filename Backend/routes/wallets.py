@@ -274,19 +274,6 @@ def recover_job(job_id):
 
 # =============================================================================
 # ANALYSIS HISTORY — Supabase permanent storage
-# FIX 3: Four new endpoints replacing Redis-backed /api/user/recents.
-# Results are now permanent, no TTL, queryable across sessions and devices.
-#
-# Required schema (run once in Supabase SQL editor):
-#   create table sifter.user_analysis_history (
-#     id uuid default gen_random_uuid() primary key,
-#     user_id uuid not null references auth.users(id) on delete cascade,
-#     result_type text not null,
-#     label text, sublabel text, data jsonb not null,
-#     created_at timestamptz default now()
-#   );
-#   create index on sifter.user_analysis_history (user_id, created_at desc);
-#   -- auto-prune trigger keeps last 50 per user (see useRecents.js comments)
 # =============================================================================
 
 @wallets_bp.route('/history', methods=['GET'])
@@ -434,8 +421,12 @@ def analyze_stream():
         all_wallets = []
 
         for i, token in enumerate(tokens, 1):
+            # Extract ticker into a variable — backslash escapes are not allowed
+            # inside f-string expressions, so token.get(...) must live outside.
+            ticker = token.get('ticker', 'token')
             try:
-                yield f"data: {json.dumps({'type': 'progress', 'message': f'Analyzing {token.get(chr(116)+chr(105)+chr(99)+chr(107)+chr(101)+chr(114), chr(116)+chr(111)+chr(107)+chr(101)+chr(110))} ({i}/{len(tokens)})...'})}\n\n"
+                progress_msg = f'Analyzing {ticker} ({i}/{len(tokens)})...'
+                yield f"data: {json.dumps({'type': 'progress', 'message': progress_msg})}\n\n"
                 wallets = wallet_analyzer.analyze_token_professional(
                     token_address=token['address'],
                     token_symbol=token.get('ticker', 'UNKNOWN'),
@@ -446,7 +437,8 @@ def analyze_stream():
                     wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
                 all_wallets.extend(wallets[:20])
             except Exception as e:
-                yield f"data: {json.dumps({'type': 'progress', 'message': f'Error on {token.get(chr(116)+chr(105)+chr(99)+chr(107)+chr(101)+chr(114))}: {str(e)}'})}\n\n"
+                error_msg = f'Error on {ticker}: {str(e)}'
+                yield f"data: {json.dumps({'type': 'progress', 'message': error_msg})}\n\n"
 
         yield f"data: {json.dumps({'type': 'complete', 'data': {'wallets': all_wallets, 'total': len(all_wallets)}})}\n\n"
 
@@ -700,6 +692,7 @@ def add_wallet_to_watchlist():
             'wallet_address':     wallet_data['wallet'],
             'tier':               wallet_data.get('tier', 'C'),
             'professional_score': wallet_data.get('professional_score', 0),
+            'source_type': 'batch' if wallet_data.get('is_cross_token') else 'single',
 
             # Analysis-time performance stats — populated from day one (SifterKYS Fix 6)
             'roi_30d':            wallet_data.get('roi_30d') or wallet_data.get('roi_percent', 0),
@@ -1100,12 +1093,13 @@ def replace_wallet():
         db = WatchlistDatabase()
         db.remove_wallet_from_watchlist(user_id, old_wallet)
         db.add_wallet_to_watchlist(user_id, {
-            'wallet_address':     new_wallet_data['wallet'],
-            'tier':               new_wallet_data.get('tier', 'C'),
+            'wallet_address':       new_wallet_data['wallet'],
+            'tier':                 new_wallet_data.get('tier', 'C'),
             'avg_distance_to_peak': new_wallet_data.get('professional_score', 0),
-            'avg_roi_to_peak':    new_wallet_data.get('roi_multiplier', 0) * 100,
-            'pump_count':         new_wallet_data.get('runner_hits_30d', 0),
-            'consistency_score':  new_wallet_data.get('consistency_score', 50),
+            'avg_roi_to_peak':      new_wallet_data.get('roi_multiplier', 0) * 100,
+            'pump_count':           new_wallet_data.get('runner_hits_30d', 0),
+            'consistency_score':    new_wallet_data.get('consistency_score', 50),
+            'source_type': 'batch' if new_wallet_data.get('is_cross_token') else 'single',
         })
 
         return jsonify({'success': True, 'message': 'Wallet replaced successfully',
@@ -1356,7 +1350,6 @@ def get_top_100_community():
 
 # =============================================================================
 # ACTIVE ANALYSIS PERSISTENCE (Redis, 6hr TTL)
-# Note: registered under /api/wallets/user/... which matches SifterKYS.jsx calls.
 # =============================================================================
 
 @wallets_bp.route('/user/active-analysis', methods=['POST', 'OPTIONS'])

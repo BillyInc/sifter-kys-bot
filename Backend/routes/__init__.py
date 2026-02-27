@@ -11,6 +11,7 @@ from .referral_points_routes import referral_points_bp
 from .auth import auth_bp
 from .token_routes import tokens_bp
 from .recents import recents_bp
+from .diary_routes import diary_bp
 
 __all__ = [
     'analyze_bp',
@@ -25,4 +26,5 @@ __all__ = [
     'auth_bp',
     'tokens_bp',
     'recents_bp',
+    'diary_bp',
 ]

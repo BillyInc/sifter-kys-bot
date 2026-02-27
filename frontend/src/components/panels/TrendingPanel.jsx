@@ -1,19 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square,
   BarChart3, Shield, RefreshCw, XCircle, ChevronUp, AlertTriangle, RotateCcw, Activity
 } from 'lucide-react';
 
-const LIVE_INTERVAL_MS  = 60_000;   // Live refreshes market data every 60s
+const LIVE_INTERVAL_MS  = 60_000;
 const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 400;      // 400 × 3s = 20 min
 
-export default function TrendingPanel({
+// ─── Inner panel (pure display — receives runners as props) ────────────────────
+function TrendingPanelCore({
   userId, apiUrl, onClose, formatNumber, formatPrice, onResultsReady,
-  onAnalysisStart, onAnalysisProgress, onAnalysisComplete, activeAnalysis
+  onAnalysisStart, onAnalysisProgress, onAnalysisComplete, activeAnalysis,
+  // Cache-aware props injected by the wrapper:
+  preloadedRunners = [],
+  isRefreshingRunners = false,
+  lastRefreshed = null,
+  onRefreshRunners,
 }) {
-  // Leaderboard returned by the backend. Order = rank. Re-ranked on every Live refresh.
-  const [runners, setRunners]         = useState([]);
+  const [runners, setRunners]         = useState(preloadedRunners);
   const [isLoading, setIsLoading]     = useState(false);
   const [isLiveRefreshing, setIsLiveRefreshing] = useState(false);
 
@@ -25,82 +30,65 @@ export default function TrendingPanel({
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
   const [timeoutMessage, setTimeoutMessage]     = useState('');
-  
-  // Queue status
+
   const [queuePosition, setQueuePosition]       = useState(null);
   const [estimatedWait, setEstimatedWait]       = useState(null);
 
-  // Snapshot: frozen copy of runners taken when analysis starts.
-  // displayedRunners = snapshot (during analysis) or runners (otherwise).
-  // This prevents count drift if a leaderboard update sneaks in mid-analysis.
-  const [analysisSnapshot, setAnalysisSnapshot] = useState(null);
-
   const [liveUpdate, setLiveUpdate]     = useState(false);
-  const [lastUpdated, setLastUpdated]   = useState(null);
+  const [lastUpdated, setLastUpdated]   = useState(lastRefreshed ? new Date(lastRefreshed) : null);
   const [showBatch, setShowBatch]       = useState(false);
 
-  const [filters, setFilters] = useState({
-    timeframe: '7d', minMultiplier: 5,
-    minLiquidity: 10000, minVolume: 50000,
-    showAdvanced: false,
+  const [filters, setFilters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('trendingFilters')) || defaultFilters(); }
+    catch { return defaultFilters(); }
   });
 
   const liveIntervalRef = useRef(null);
   const pollIntervalRef = useRef(null);
   const pollCountRef    = useRef(0);
 
-  // ── On mount: restore cached leaderboard ──────────────────────────────────
-  useEffect(() => {
-    const saved   = localStorage.getItem('trendingRunners');
-    const savedTs = localStorage.getItem('trendingRunnersTs');
-    const savedF  = localStorage.getItem('trendingFilters');
-    if (saved && savedTs && Date.now() - parseInt(savedTs) < 5 * 60_000) {
-      setRunners(JSON.parse(saved));
-      setLastUpdated(new Date(parseInt(savedTs)));
-    }
-    if (savedF) {
-      try { setFilters(JSON.parse(savedF)); } catch (_) {}
-    }
-  }, []);
+  function defaultFilters() {
+    return { timeframe: '7d', minMultiplier: 5, minLiquidity: 10000, minVolume: 50000, showAdvanced: false };
+  }
 
+  // Sync preloaded runners when wrapper passes them in
   useEffect(() => {
-    if (runners.length > 0) {
-      localStorage.setItem('trendingRunners', JSON.stringify(runners));
-      localStorage.setItem('trendingRunnersTs', Date.now().toString());
+    if (preloadedRunners.length > 0 && runners.length === 0) {
+      setRunners(preloadedRunners);
     }
-  }, [runners]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preloadedRunners]);
+
+  // Also sync lastRefreshed → lastUpdated
+  useEffect(() => {
+    if (lastRefreshed) setLastUpdated(new Date(lastRefreshed));
+  }, [lastRefreshed]);
 
   useEffect(() => {
     localStorage.setItem('trendingFilters', JSON.stringify(filters));
   }, [filters]);
 
-  // Reload leaderboard when timeframe or multiplier threshold changes
-  useEffect(() => { fetchLeaderboard(); }, [filters.timeframe, filters.minMultiplier]);
+  // Trigger full leaderboard fetch when timeframe / multiplier changes
+  useEffect(() => { fetchLeaderboard(); }, [filters.timeframe, filters.minMultiplier]); // eslint-disable-line
 
-  // ── Live interval: market data refresh + re-rank ─────────────────────────
+  // Live interval — re-rank market data
   useEffect(() => {
     if (liveUpdate) {
-      liveIntervalRef.current = setInterval(() => {
-        // Always refresh market data, even during analysis (FIX: removed check)
-        refreshMarketData();
-      }, LIVE_INTERVAL_MS);
+      liveIntervalRef.current = setInterval(() => refreshMarketData(), LIVE_INTERVAL_MS);
     } else {
       clearInterval(liveIntervalRef.current);
     }
     return () => clearInterval(liveIntervalRef.current);
-  }, [liveUpdate, filters]); // Removed isBatchAnalyzing/isSingleAnalyzing dependency
+  }, [liveUpdate, filters]); // eslint-disable-line
 
   useEffect(() => {
     return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };
   }, []);
 
   // ── FULL LEADERBOARD FETCH ────────────────────────────────────────────────
-  // This is what the Refresh button calls. Runs find_trending_runners_enhanced
-  // on the backend. Can add/remove tokens based on new qualifiers.
   const fetchLeaderboard = async () => {
     setIsLoading(true);
     setSelectedRunners([]);
-    setAnalysisSnapshot(null);
     try {
       const params = new URLSearchParams({
         timeframe:      filters.timeframe,
@@ -113,6 +101,7 @@ export default function TrendingPanel({
       if (data.success) {
         setRunners(data.runners || []);
         setLastUpdated(new Date());
+        onRefreshRunners?.(data.runners || []); // notify wrapper to cache
       }
     } catch (err) {
       console.error('Leaderboard fetch error:', err);
@@ -121,10 +110,7 @@ export default function TrendingPanel({
     }
   };
 
-  // ── LIVE MARKET DATA REFRESH + RE-RANK ────────────────────────────────────
-  // Updates price/volume/holders/liquidity AND re-ranks based on momentum.
-  // Tokens with surging volume/price rise, dead tokens sink.
-  // Called by Live interval and the manual Live refresh button.
+  // ── LIVE MARKET DATA REFRESH ──────────────────────────────────────────────
   const refreshMarketData = async () => {
     setIsLiveRefreshing(true);
     try {
@@ -139,8 +125,9 @@ export default function TrendingPanel({
       });
       const data = await res.json();
       if (data.success && data.runners) {
-        setRunners(data.runners); // New order from backend
+        setRunners(data.runners);
         setLastUpdated(new Date());
+        onRefreshRunners?.(data.runners); // notify wrapper to cache
       }
     } catch (err) {
       console.error('Live refresh error:', err);
@@ -150,16 +137,11 @@ export default function TrendingPanel({
   };
 
   // ── ANALYSIS HELPERS ──────────────────────────────────────────────────────
-  const cancelAnalysis = async () => {
+  const cancelAnalysis = useCallback(async () => {
     if (currentJobId) {
-      try { 
-        await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' }); 
-      } catch (_) {}
+      try { await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' }); } catch (_) {}
     }
-    if (pollIntervalRef.current) { 
-      clearInterval(pollIntervalRef.current); 
-      pollIntervalRef.current = null; 
-    }
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
     pollCountRef.current = 0;
     setIsBatchAnalyzing(false);
     setIsSingleAnalyzing(false);
@@ -168,10 +150,9 @@ export default function TrendingPanel({
     setAnalysisProgress({ current: 0, total: 0, phase: '' });
     setAnalysisTimedOut(false);
     setTimeoutMessage('');
-    setAnalysisSnapshot(null);
     setQueuePosition(null);
     setEstimatedWait(null);
-  };
+  }, [currentJobId, apiUrl]);
 
   const attemptRecovery = async (jobId) => {
     setTimeoutMessage('Attempting to recover result from server…');
@@ -204,20 +185,10 @@ export default function TrendingPanel({
         const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/progress`);
         const data = await res.json();
         if (data.success) {
-          // Update queue information
-          if (data.queue_position) {
-            setQueuePosition(data.queue_position);
-            setEstimatedWait(data.estimated_wait);
-          }
-
-          const progress = {
-            current: data.tokens_completed || 0,
-            total:   data.tokens_total || total,
-            phase:   data.phase || '',
-          };
+          if (data.queue_position) { setQueuePosition(data.queue_position); setEstimatedWait(data.estimated_wait); }
+          const progress = { current: data.tokens_completed || 0, total: data.tokens_total || total, phase: data.phase || '' };
           setAnalysisProgress(progress);
           onAnalysisProgress(progress);
-
           if (data.status === 'completed') {
             clearInterval(pollIntervalRef.current);
             const rRes  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}`);
@@ -238,7 +209,6 @@ export default function TrendingPanel({
 
   const handleSingleAnalysis = async (token) => {
     cancelAnalysis();
-    setAnalysisSnapshot([...runners]); // Keep snapshot for display during analysis
     setIsSingleAnalyzing(true);
     setAnalyzingToken(token.address);
     setAnalysisProgress({ current: 0, total: 1, phase: 'Starting…' });
@@ -254,27 +224,15 @@ export default function TrendingPanel({
       const data = await res.json();
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
-        onAnalysisStart({
-          jobId: data.job_id,
-          total: 1,
-          analysisType: 'trending-single',
-          token: token.symbol
-        });
+        onAnalysisStart({ jobId: data.job_id, total: 1, analysisType: 'trending-single', token: token.symbol });
         startPolling(data.job_id, 'trending-single', 1);
-      } else {
-        alert('Failed to start analysis');
-        cancelAnalysis();
-      }
-    } catch (err) {
-      console.error('Single analysis error:', err);
-      cancelAnalysis();
-    }
+      } else { alert('Failed to start analysis'); cancelAnalysis(); }
+    } catch (err) { console.error('Single analysis error:', err); cancelAnalysis(); }
   };
 
   const handleBatchAnalyze = async () => {
     if (!selectedRunners.length) { alert('Select at least one token'); return; }
     cancelAnalysis();
-    setAnalysisSnapshot([...runners]); // Keep snapshot for display during analysis
     setIsBatchAnalyzing(true);
     setAnalysisProgress({ current: 0, total: selectedRunners.length, phase: 'Starting…' });
     try {
@@ -285,29 +243,16 @@ export default function TrendingPanel({
           user_id: userId,
           min_runner_hits: 2,
           min_roi_multiplier: 3.0,
-          runners: selectedRunners.map(t => ({
-            address: t.address, chain: t.chain, symbol: t.ticker || t.symbol,
-          })),
+          runners: selectedRunners.map(t => ({ address: t.address, chain: t.chain, symbol: t.ticker || t.symbol })),
         }),
       });
       const data = await res.json();
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
-        onAnalysisStart({
-          jobId: data.job_id,
-          total: selectedRunners.length,
-          analysisType: 'trending-batch',
-          runners: selectedRunners.map(r => r.symbol)
-        });
+        onAnalysisStart({ jobId: data.job_id, total: selectedRunners.length, analysisType: 'trending-batch', runners: selectedRunners.map(r => r.symbol) });
         startPolling(data.job_id, 'trending-batch', selectedRunners.length);
-      } else {
-        alert('Failed to start batch analysis');
-        cancelAnalysis();
-      }
-    } catch (err) {
-      console.error('Batch error:', err);
-      cancelAnalysis();
-    }
+      } else { alert('Failed to start batch analysis'); cancelAnalysis(); }
+    } catch (err) { console.error('Batch error:', err); cancelAnalysis(); }
   };
 
   const toggleSelect = (token) => {
@@ -319,18 +264,13 @@ export default function TrendingPanel({
   };
 
   const isAnalysisRunning = isBatchAnalyzing || isSingleAnalyzing;
-  // FIX: Show live runners even during analysis, but add visual indicator
-  const displayedRunners = runners; // Always show live runners, not snapshot
-
-  const formatTs = (d) => d
-    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : '';
+  const formatTs = (d) => d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
 
-      {/* Analysis in progress indicator - always show when analyzing */}
+      {/* Analysis in progress banner */}
       {isAnalysisRunning && (
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-2">
           <div className="flex items-center gap-2 text-blue-400">
@@ -345,6 +285,14 @@ export default function TrendingPanel({
               </span>
             )}
           </p>
+        </div>
+      )}
+
+      {/* Stale-cache indicator — shown if wrapper pre-loaded data */}
+      {isRefreshingRunners && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/20 rounded-lg text-xs text-green-400">
+          <RefreshCw size={11} className="animate-spin" />
+          Refreshing runners in background…
         </div>
       )}
 
@@ -366,48 +314,31 @@ export default function TrendingPanel({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Refresh — full leaderboard rescan for new qualifiers */}
-          <button
-            onClick={fetchLeaderboard}
-            disabled={isLoading}
-            title="Rescan for new qualifying tokens (can add/remove tokens)"
-            className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition disabled:opacity-40"
-          >
+          <button onClick={fetchLeaderboard} disabled={isLoading} title="Rescan for new qualifying tokens"
+            className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition disabled:opacity-40">
             <RefreshCw size={15} className={isLoading ? 'animate-spin text-orange-400' : 'text-gray-400'} />
           </button>
-
-          {/* Live — refresh market data and re-rank by momentum */}
-          <button
-            onClick={() => setLiveUpdate(v => !v)}
-            disabled={isLoading}
-            title={liveUpdate
-              ? 'Auto-refreshing price/volume/holders every 60s — rankings update based on momentum. Click to stop.'
-              : 'Auto-refresh price, volume and holders every 60s — tokens re-rank based on current momentum'}
+          <button onClick={() => setLiveUpdate(v => !v)} disabled={isLoading}
+            title={liveUpdate ? 'Stop auto-refresh' : 'Auto-refresh price/volume every 60s'}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
-              liveUpdate
-                ? 'bg-green-500/20 border-green-500/50 text-green-400'
-                : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-            } disabled:opacity-40 disabled:cursor-not-allowed`}
-          >
+              liveUpdate ? 'bg-green-500/20 border-green-500/50 text-green-400' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+            } disabled:opacity-40 disabled:cursor-not-allowed`}>
             <span className={`w-1.5 h-1.5 rounded-full ${liveUpdate ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
-            {liveUpdate ? 'Live' : 'Live'}
+            Live
           </button>
         </div>
       </div>
 
-      {/* Show active analysis from parent if any */}
+      {/* Parent-managed active analysis */}
       {activeAnalysis && !isAnalysisRunning && (
         <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
           <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-            <BarChart3 className="text-green-400" size={16} />
-            Analysis in Progress
+            <BarChart3 className="text-green-400" size={16} /> Analysis in Progress
           </h3>
           <div className="space-y-2">
             <div className="bg-white/10 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-green-500 h-2 transition-all duration-500"
-                style={{ width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` }}
-              />
+              <div className="bg-green-500 h-2 transition-all duration-500"
+                style={{ width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` }} />
             </div>
             <p className="text-xs text-gray-400 text-center">
               {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
@@ -422,13 +353,11 @@ export default function TrendingPanel({
         </div>
       )}
 
-      {/* Live explanation pill — updated text */}
       {liveUpdate && (
         <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
           <p className="text-xs text-green-400">
             🟢 Live: price, volume &amp; holders refresh every 60s.
-            Rankings update based on momentum — tokens with surging volume/price rise,
-            dead tokens sink. Tokens that pump again get their 7-day window extended.
+            Rankings update based on momentum — surging tokens rise, dead tokens sink.
           </p>
         </div>
       )}
@@ -441,10 +370,8 @@ export default function TrendingPanel({
             <div className="text-sm font-semibold text-orange-400">Analysis Timed Out</div>
             <p className="text-xs text-gray-400 mt-1">{timeoutMessage}</p>
           </div>
-          <button
-            onClick={() => currentJobId && attemptRecovery(currentJobId)}
-            className="shrink-0 flex items-center gap-1 px-3 py-1.5 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 rounded-lg text-xs font-semibold text-orange-400 transition"
-          >
+          <button onClick={() => currentJobId && attemptRecovery(currentJobId)}
+            className="shrink-0 flex items-center gap-1 px-3 py-1.5 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 rounded-lg text-xs font-semibold text-orange-400 transition">
             <RotateCcw size={12} /> Retry Recovery
           </button>
         </div>
@@ -456,22 +383,11 @@ export default function TrendingPanel({
           <TrendingUp className="text-orange-400" size={16} /> Timeframe
         </h3>
         <div className="grid grid-cols-3 gap-2">
-          {[
-            { value: '7d',  label: '7 Days',  emoji: '📅' },
-            { value: '14d', label: '14 Days', emoji: '📆' },
-            { value: '30d', label: '30 Days', emoji: '🗓️' },
-          ].map(opt => (
-            <button key={opt.value}
-              onClick={() => setFilters(p => ({ ...p, timeframe: opt.value }))}
+          {[{ value: '7d', label: '7 Days', emoji: '📅' }, { value: '14d', label: '14 Days', emoji: '📆' }, { value: '30d', label: '30 Days', emoji: '🗓️' }].map(opt => (
+            <button key={opt.value} onClick={() => setFilters(p => ({ ...p, timeframe: opt.value }))}
               disabled={isAnalysisRunning}
-              className={`px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
-                filters.timeframe === opt.value
-                  ? 'bg-gradient-to-r from-orange-600 to-orange-500 shadow-lg shadow-orange-500/30 scale-105'
-                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
-              } disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              <div className="text-lg mb-1">{opt.emoji}</div>
-              {opt.label}
+              className={`px-4 py-3 rounded-lg font-semibold text-sm transition-all ${filters.timeframe === opt.value ? 'bg-gradient-to-r from-orange-600 to-orange-500 shadow-lg shadow-orange-500/30 scale-105' : 'bg-white/5 hover:bg-white/10 border border-white/10'} disabled:opacity-40 disabled:cursor-not-allowed`}>
+              <div className="text-lg mb-1">{opt.emoji}</div>{opt.label}
             </button>
           ))}
         </div>
@@ -483,21 +399,10 @@ export default function TrendingPanel({
           <Sparkles className="text-purple-400" size={16} /> Minimum Multiplier
         </h3>
         <div className="grid grid-cols-4 gap-2">
-          {[
-            { value: 5,  label: '5x',  cls: 'from-yellow-600 to-yellow-500 shadow-yellow-500/30' },
-            { value: 10, label: '10x', cls: 'from-green-600 to-green-500 shadow-green-500/30' },
-            { value: 20, label: '20x', cls: 'from-blue-600 to-blue-500 shadow-blue-500/30' },
-            { value: 50, label: '50x', cls: 'from-purple-600 to-purple-500 shadow-purple-500/30' },
-          ].map(opt => (
-            <button key={opt.value}
-              onClick={() => setFilters(p => ({ ...p, minMultiplier: opt.value }))}
+          {[{ value: 5, label: '5x', cls: 'from-yellow-600 to-yellow-500 shadow-yellow-500/30' }, { value: 10, label: '10x', cls: 'from-green-600 to-green-500 shadow-green-500/30' }, { value: 20, label: '20x', cls: 'from-blue-600 to-blue-500 shadow-blue-500/30' }, { value: 50, label: '50x', cls: 'from-purple-600 to-purple-500 shadow-purple-500/30' }].map(opt => (
+            <button key={opt.value} onClick={() => setFilters(p => ({ ...p, minMultiplier: opt.value }))}
               disabled={isAnalysisRunning}
-              className={`px-3 py-2 rounded-lg font-bold text-sm transition-all ${
-                filters.minMultiplier === opt.value
-                  ? `bg-gradient-to-r ${opt.cls} shadow-lg scale-105`
-                  : 'bg-white/5 hover:bg-white/10 border border-white/10'
-              } disabled:opacity-40`}
-            >
+              className={`px-3 py-2 rounded-lg font-bold text-sm transition-all ${filters.minMultiplier === opt.value ? `bg-gradient-to-r ${opt.cls} shadow-lg scale-105` : 'bg-white/5 hover:bg-white/10 border border-white/10'} disabled:opacity-40`}>
               {opt.label}
             </button>
           ))}
@@ -505,11 +410,8 @@ export default function TrendingPanel({
       </div>
 
       {/* Advanced filters */}
-      <button
-        onClick={() => setFilters(p => ({ ...p, showAdvanced: !p.showAdvanced }))}
-        disabled={isAnalysisRunning}
-        className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-semibold transition flex items-center justify-between disabled:opacity-40"
-      >
+      <button onClick={() => setFilters(p => ({ ...p, showAdvanced: !p.showAdvanced }))} disabled={isAnalysisRunning}
+        className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-semibold transition flex items-center justify-between disabled:opacity-40">
         <span className="flex items-center gap-2"><Filter size={14} /> Advanced Filters</span>
         <ChevronDown size={16} className={`transition-transform ${filters.showAdvanced ? 'rotate-180' : ''}`} />
       </button>
@@ -517,22 +419,13 @@ export default function TrendingPanel({
       {filters.showAdvanced && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            {[
-              { field: 'minLiquidity', label: 'Min Liquidity ($)', hint: 'default 10k' },
-              { field: 'minVolume',    label: 'Min Volume ($)',    hint: 'default 50k' },
-            ].map(({ field, label, hint }) => (
+            {[{ field: 'minLiquidity', label: 'Min Liquidity ($)', hint: 'default 10k' }, { field: 'minVolume', label: 'Min Volume ($)', hint: 'default 50k' }].map(({ field, label, hint }) => (
               <div key={field}>
-                <label className="block text-xs text-gray-400 mb-1">
-                  {label} <span className="text-gray-600">{hint}</span>
-                </label>
+                <label className="block text-xs text-gray-400 mb-1">{label} <span className="text-gray-600">{hint}</span></label>
                 <input type="number" min="0" value={filters[field]}
-                  onChange={e => {
-                    const v = parseInt(e.target.value, 10);
-                    setFilters(p => ({ ...p, [field]: isNaN(v) || v < 0 ? 0 : v }));
-                  }}
+                  onChange={e => { const v = parseInt(e.target.value, 10); setFilters(p => ({ ...p, [field]: isNaN(v) || v < 0 ? 0 : v })); }}
                   disabled={isAnalysisRunning}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500 disabled:opacity-40"
-                />
+                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500 disabled:opacity-40" />
               </div>
             ))}
           </div>
@@ -540,29 +433,24 @@ export default function TrendingPanel({
             className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-semibold transition disabled:opacity-40">
             Apply Filters &amp; Refresh
           </button>
-          <button
-            onClick={() => setFilters(p => ({ ...p, minLiquidity: 10000, minVolume: 50000 }))}
-            disabled={isAnalysisRunning}
-            className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 transition disabled:opacity-40"
-          >
+          <button onClick={() => setFilters(p => ({ ...p, minLiquidity: 10000, minVolume: 50000 }))} disabled={isAnalysisRunning}
+            className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 transition disabled:opacity-40">
             Reset to defaults
           </button>
         </div>
       )}
 
-      {/* Batch selection panel */}
-      {displayedRunners.length > 0 && (
+      {/* Batch panel */}
+      {runners.length > 0 && (
         <div className="border border-white/10 rounded-xl overflow-hidden">
-          <button
-            onClick={() => setShowBatch(v => !v)}
-            className="w-full px-4 py-3 bg-gradient-to-r from-blue-900/20 to-blue-800/10 hover:from-blue-900/30 flex items-center justify-between transition"
-          >
+          <button onClick={() => setShowBatch(v => !v)}
+            className="w-full px-4 py-3 bg-gradient-to-r from-blue-900/20 to-blue-800/10 hover:from-blue-900/30 flex items-center justify-between transition">
             <div className="flex items-center gap-2">
               <Sparkles size={18} className="text-blue-400" />
               <span className="font-semibold text-blue-400">Batch Analysis</span>
               {selectedRunners.length > 0 && (
                 <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">
-                  {selectedRunners.length} / {displayedRunners.length}
+                  {selectedRunners.length} / {runners.length}
                 </span>
               )}
             </div>
@@ -574,14 +462,10 @@ export default function TrendingPanel({
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-400">Select tokens to find common smart-money wallets</p>
                 <div className="flex gap-2">
-                  <button onClick={() => setSelectedRunners([...displayedRunners])} disabled={isAnalysisRunning}
-                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition disabled:opacity-40">
-                    All
-                  </button>
+                  <button onClick={() => setSelectedRunners([...runners])} disabled={isAnalysisRunning}
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition disabled:opacity-40">All</button>
                   <button onClick={() => { setSelectedRunners([]); cancelAnalysis(); }} disabled={isAnalysisRunning}
-                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition disabled:opacity-40">
-                    Clear
-                  </button>
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold transition disabled:opacity-40">Clear</button>
                 </div>
               </div>
 
@@ -605,8 +489,7 @@ export default function TrendingPanel({
                   )}
                 </div>
               ) : (
-                <button onClick={handleBatchAnalyze}
-                  disabled={!selectedRunners.length || isSingleAnalyzing}
+                <button onClick={handleBatchAnalyze} disabled={!selectedRunners.length || isSingleAnalyzing}
                   className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 disabled:opacity-40 rounded-lg font-semibold flex items-center justify-center gap-2">
                   <Sparkles size={18} /> Analyze {selectedRunners.length} Selected
                 </button>
@@ -622,7 +505,7 @@ export default function TrendingPanel({
           [...Array(4)].map((_, i) => (
             <div key={i} className="animate-pulse bg-white/5 border border-white/10 rounded-lg p-4 h-20" />
           ))
-        ) : displayedRunners.length === 0 ? (
+        ) : runners.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
             <TrendingUp size={48} className="mx-auto mb-3 opacity-20" />
             <p className="text-sm">No trending runners found</p>
@@ -633,31 +516,22 @@ export default function TrendingPanel({
             </button>
           </div>
         ) : (
-          displayedRunners.map((token, idx) => {
+          runners.map((token, idx) => {
             const rank            = idx + 1;
             const isSelected      = selectedRunners.some(t => t.address === token.address && t.chain === token.chain);
             const isAnalyzingThis = isSingleAnalyzing && analyzingToken === token.address;
 
             return (
               <div key={`${token.chain}-${token.address}`}
-                className={`bg-white/5 hover:bg-white/10 border rounded-lg p-4 transition ${
-                  isSelected ? 'border-orange-500/50 bg-orange-500/10' : 'border-white/10'
-                } ${isAnalyzingThis ? 'opacity-60' : ''}`}
-              >
+                className={`bg-white/5 hover:bg-white/10 border rounded-lg p-4 transition ${isSelected ? 'border-orange-500/50 bg-orange-500/10' : 'border-white/10'} ${isAnalyzingThis ? 'opacity-60' : ''}`}>
                 <div className="flex items-start gap-3">
-                  {/* Rank */}
                   <div className="w-6 text-center mt-0.5 flex-shrink-0">
-                    <span className={`text-xs font-bold ${rank <= 3 ? 'text-yellow-400' : 'text-gray-600'}`}>
-                      #{rank}
-                    </span>
+                    <span className={`text-xs font-bold ${rank <= 3 ? 'text-yellow-400' : 'text-gray-600'}`}>#{rank}</span>
                   </div>
 
-                  {/* Batch checkbox */}
                   {showBatch && (
                     <button onClick={() => toggleSelect(token)} disabled={isAnalysisRunning} className="mt-1 flex-shrink-0">
-                      {isSelected
-                        ? <CheckSquare size={20} className="text-orange-400" />
-                        : <Square size={20} className="text-gray-600 hover:text-gray-400" />}
+                      {isSelected ? <CheckSquare size={20} className="text-orange-400" /> : <Square size={20} className="text-gray-600 hover:text-gray-400" />}
                     </button>
                   )}
 
@@ -665,48 +539,26 @@ export default function TrendingPanel({
                     <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                       <span className="font-semibold">{token.ticker || token.symbol}</span>
                       <span className="text-xs px-2 py-0.5 bg-white/10 rounded">{token.chain?.toUpperCase()}</span>
-                      <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded font-bold">
-                        {token.multiplier}x
-                      </span>
+                      <span className="text-xs px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded font-bold">{token.multiplier}x</span>
                       <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded font-bold flex items-center gap-1">
                         <Shield size={10} /> Verified
                       </span>
                     </div>
                     <div className="text-sm text-gray-400 mb-2 truncate">{token.name}</div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div>
-                        <span className="text-gray-500">Price </span>
-                        <span className="text-white font-semibold">{formatPrice(token.current_price)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Vol </span>
-                        <span className="text-white font-semibold">{formatNumber(token.volume_24h)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Liq </span>
-                        <span className="text-white font-semibold">{formatNumber(token.liquidity)}</span>
-                      </div>
+                      <div><span className="text-gray-500">Price </span><span className="text-white font-semibold">{formatPrice(token.current_price)}</span></div>
+                      <div><span className="text-gray-500">Vol </span><span className="text-white font-semibold">{formatNumber(token.volume_24h)}</span></div>
+                      <div><span className="text-gray-500">Liq </span><span className="text-white font-semibold">{formatNumber(token.liquidity)}</span></div>
                     </div>
                     {token.holders && (
-                      <div className="text-xs mt-1">
-                        <span className="text-gray-500">Holders </span>
-                         <span className="text-white font-semibold">{token.holders.toLocaleString()}</span>
-                      </div>
+                      <div className="text-xs mt-1"><span className="text-gray-500">Holders </span><span className="text-white font-semibold">{token.holders.toLocaleString()}</span></div>
                     )}
                     {token.momentum_score && (
-                      <div className="text-xs mt-1">
-                        <span className="text-gray-500">Momentum </span>
-                        <span className="text-green-400 font-semibold">{token.momentum_score}</span>
-                      </div>
+                      <div className="text-xs mt-1"><span className="text-gray-500">Momentum </span><span className="text-green-400 font-semibold">{token.momentum_score}</span></div>
                     )}
-                    {isAnalyzingThis && (
-                      <div className="mt-2 bg-white/10 rounded-full h-1 overflow-hidden">
-                        <div className="bg-purple-500 h-1 w-3/4 animate-pulse" />
-                      </div>
-                    )}
+                    {isAnalyzingThis && <div className="mt-2 bg-white/10 rounded-full h-1 overflow-hidden"><div className="bg-purple-500 h-1 w-3/4 animate-pulse" /></div>}
                   </div>
 
-                  {/* Analyze button */}
                   {isSingleAnalyzing && isAnalyzingThis ? (
                     <button onClick={cancelAnalysis}
                       className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-lg text-xs font-semibold flex items-center gap-1 flex-shrink-0">
@@ -728,13 +580,11 @@ export default function TrendingPanel({
         )}
       </div>
 
-      {/* Updated explanation text */}
       <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
         <p className="text-xs text-blue-300">
           💡 <strong>How rankings work:</strong> Tokens earn a slot by pumping {filters.minMultiplier}x+ within {filters.timeframe}.
           <span className="block mt-1">
-            <strong>Live mode</strong> refreshes prices every 60s and <strong>re-ranks by momentum</strong> — volume surge (40%), price momentum (30%), holder growth (20%), liquidity (10%).
-            Dead tokens sink, surging tokens rise. Tokens that pump again get their 7-day window extended.
+            <strong>Live mode</strong> refreshes every 60s and re-ranks by momentum — volume surge (40%), price momentum (30%), holder growth (20%), liquidity (10%).
           </span>
           <span className="block mt-1">
             <strong>Refresh button (↺)</strong> scans for new qualifiers — can add/remove tokens.
@@ -742,5 +592,73 @@ export default function TrendingPanel({
         </p>
       </div>
     </div>
+  );
+}
+
+
+// ─── Wrapper: stale-while-revalidate cache layer ───────────────────────────────
+// Usage in parent:
+//   <TrendingPanel
+//     {...existingProps}
+//     cachedRunners={cachedTrendingRunners}        // from localStorage / state
+//     onRunnersLoaded={runners => saveToCache(runners)}
+//   />
+export default function TrendingPanel({
+  cachedRunners = [],
+  onRunnersLoaded,
+  ...coreProps
+}) {
+  const [runners, setRunners]         = useState(cachedRunners);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
+  const fetchedRef = useRef(false);
+
+  const fetchRunners = useCallback(async (force = false) => {
+    if (isRefreshing && !force) return;
+    setIsRefreshing(true);
+    try {
+      const params = new URLSearchParams({
+        timeframe:      'TODO_MATCH_FILTER', // NOTE: wrapper uses its own quick fetch;
+        // the full filter-aware fetch is handled inside TrendingPanelCore.
+        // This background fetch is just to warm the cache on panel open.
+      });
+      const res  = await fetch(`${coreProps.apiUrl}/api/wallets/trending/runners`);
+      const data = await res.json();
+      if (data.success && data.runners) {
+        setRunners(data.runners);
+        setLastRefreshed(Date.now());
+        onRunnersLoaded?.(data.runners);
+      }
+    } catch (e) {
+      console.error('[TrendingPanel wrapper] fetch error:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [coreProps.apiUrl, onRunnersLoaded, isRefreshing]);
+
+  useEffect(() => {
+    if (!fetchedRef.current) {
+      fetchedRef.current = true;
+      // If we have cached runners, show them instantly then refresh in background.
+      // If no cache, fetch immediately (no delay).
+      setTimeout(() => fetchRunners(), cachedRunners.length > 0 ? 500 : 0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRunnersLoaded = useCallback((freshRunners) => {
+    setRunners(freshRunners);
+    setLastRefreshed(Date.now());
+    onRunnersLoaded?.(freshRunners);
+  }, [onRunnersLoaded]);
+
+  return (
+    <TrendingPanelCore
+      {...coreProps}
+      preloadedRunners={runners}
+      isRefreshingRunners={isRefreshing}
+      lastRefreshed={lastRefreshed}
+      onRefreshRunners={handleRunnersLoaded}
+    />
   );
 }

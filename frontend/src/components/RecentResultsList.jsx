@@ -11,8 +11,8 @@ const TYPE_META = {
 };
 
 function timeAgo(ts) {
-  // ts is ms — same unit as Date.now()
-  const diff = Date.now() - ts;
+  const diff = Date.now() - new Date(ts).getTime();
+  if (isNaN(diff) || diff < 0) return 'just now';
   const m = Math.floor(diff / 60_000);
   const h = Math.floor(diff / 3_600_000);
   const d = Math.floor(diff / 86_400_000);

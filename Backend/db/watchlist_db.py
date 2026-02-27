@@ -364,15 +364,13 @@ class WatchlistDatabase:
                     'stats': {}
                 }
             
-            # ✅ FIX: Sort by consistency_score first, then avg_roi_to_peak
-            # This ensures newly added wallets don't end up at the bottom
-            current_wallets.sort(
-                key=lambda x: (
-                    x.get('consistency_score', 0),
-                    x.get('avg_roi_to_peak', 0)
-                ), 
-                reverse=True
-            )
+            # ✅ FIX: Sort using confidence multiplier — batch wallets rank on full score,
+            # single-token wallets rank at 75% to account for lower cross-token confidence.
+            def ranking_score(w):
+                base = w.get('professional_score', 0) or w.get('avg_roi_to_peak', 0)
+                return base if w.get('source_type') == 'batch' else base * 0.75
+
+            current_wallets.sort(key=ranking_score, reverse=True)
             
             # Get yesterday's positions for movement tracking
             yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
