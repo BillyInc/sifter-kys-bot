@@ -6,8 +6,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import WatchlistExpandedCard from '../WatchlistExpandedCard';
-import DiaryUnlock from './DiaryUnlock';
-import { useGlobalDiary } from './useDiary';
+import DiaryUnlock from '../DiaryUnlock';
+import { useGlobalDiary } from "../hooks/Usediary";
 
 // ─── Note type config ──────────────────────────────────────────────────────────
 const NOTE_TYPES = [
@@ -159,7 +159,18 @@ function GlobalDiary({ userId, apiUrl }) {
   };
 
   // ── Show unlock screen if locked ─────────────────────────────────────────
-  if (diary.locked) {
+ if (diary.locked) {
+    // isNew === null means we're still initializing — show spinner, not the
+    // wrong DiaryUnlock mode (which was the root cause of bug #1)
+    if (diary.isNew === null) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 px-4">
+          <div className="w-8 h-8 border-2 border-white/20 border-t-purple-500 rounded-full animate-spin mb-3" />
+          <p className="text-xs text-gray-600">Loading diary…</p>
+        </div>
+      );
+    }
+
     return (
       <DiaryUnlock
         userId={userId}
@@ -171,6 +182,7 @@ function GlobalDiary({ userId, apiUrl }) {
       />
     );
   }
+
 
   let visible = filter === 'all' ? diary.notes : diary.notes.filter(n => n.type === filter);
   if (search.trim()) {
@@ -292,7 +304,9 @@ export default function WatchlistPanel({ userId, apiUrl }) {
   const loadWatchlist = async () => {
     setIsRefreshing(true);
     try {
-      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/table?user_id=${userId}`);
+      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/table?user_id=${userId}`, {
+  headers: { 'Accept': 'application/json' },
+});
       const data = await res.json();
       if (data.success) { setWallets(data.wallets || []); setLastUpdate(new Date()); }
     } catch (err) { console.error('Error loading watchlist:', err); }

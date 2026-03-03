@@ -6,6 +6,7 @@
 // 5. Tokens column added to batch results (tokens participated count)
 // 6. Single-token wallets in batch results tagged "UNCONFIRMED" badge
 // 7. Entry consistency in score breakdown now reflects distance from launch price
+// 8. ⚗ SIM button added to actions column — opens SimulatorModal
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -85,8 +86,8 @@ const TIER_COLORS = {
 };
 
 // Column template — includes Tokens column for batch mode
-const COL_TEMPLATE_BATCH  = '30px 40px minmax(220px, 3fr) 50px 55px 60px 100px 100px 90px 90px';
-const COL_TEMPLATE_SINGLE = '30px 40px minmax(260px, 3fr) 50px 60px 110px 110px 100px 90px';
+const COL_TEMPLATE_BATCH  = '30px 40px minmax(220px, 3fr) 50px 55px 60px 100px 100px 90px 110px';
+const COL_TEMPLATE_SINGLE = '30px 40px minmax(260px, 3fr) 50px 60px 110px 110px 100px 110px';
 
 // ── Per-token breakdown table ─────────────────────────────────────────────────
 const PerTokenTable = ({ roiDetails, copyToClipboard, copiedRunnerAddress }) => {
@@ -187,7 +188,7 @@ const SectionDivider = ({ label, count, sublabel }) => (
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function ResultsPanel({ data, onClose, onAddToWatchlist, resultType, formatNumber, formatPrice }) {
+export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimulate, resultType, formatNumber, formatPrice }) {
   const [expandedWallets,     setExpandedWallets]     = useState({});
   const [selectedWallets,     setSelectedWallets]     = useState(new Set());
   const [copiedAddress,       setCopiedAddress]       = useState(null);
@@ -323,6 +324,18 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, resultTy
     // Tokens participated (for batch mode)
     const tokensParticipated = runnersHit.length || runnerCount || 0;
     const totalTokensAnalyzed = data?.tokens_analyzed || data?.tokens_analyzed_list?.length || null;
+
+    // ── Build the payload we'll pass to the simulator ──────────────────────
+    const simulatorPayload = {
+      wallet:                  addr,
+      wallet_address:          addr,
+      roi_details:             roiDetails,
+      other_runners:           otherRunners,
+      consistency_score:       consistency,
+      score_breakdown:         breakdown,
+      entry_to_ath_multiplier: entryATHMult,
+      avg_total_roi:           totalMult,
+    };
 
     return (
       <div
@@ -460,8 +473,28 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, resultTy
             </div>
           </div>
 
-          {/* Actions */}
-          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+          {/* ── Actions — SIM + WL + expand ── */}
+          <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', alignItems: 'center' }}>
+            {/* ⚗ SIMULATE button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSimulate?.(simulatorPayload);
+              }}
+              style={{
+                padding: '4px 7px', borderRadius: 4, border: 'none',
+                background: 'rgba(34,197,94,0.13)', color: '#22c55e',
+                fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+                cursor: 'pointer', flexShrink: 0,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(34,197,94,0.25)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(34,197,94,0.13)'}
+              title="Open Wallet Simulator"
+            >
+              ⚗ SIM
+            </button>
+
+            {/* + WL button */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -484,6 +517,7 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, resultTy
             >
               +WL
             </button>
+
             <div style={{ color: '#7c879c', lineHeight: 1 }}>
               {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </div>

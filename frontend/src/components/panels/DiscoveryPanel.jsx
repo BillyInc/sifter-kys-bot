@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Zap, Search, Sparkles, CheckCircle, AlertCircle, Shield, XCircle, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Zap, Search, Sparkles, CheckCircle, AlertCircle, Shield, XCircle, AlertTriangle, RotateCcw, Minimize2, Activity } from 'lucide-react';
 
 const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 400;   // 400 × 3s = 20 minutes
@@ -14,33 +14,27 @@ export default function DiscoveryPanel({
   onAnalysisStart,
   onAnalysisProgress,
   onAnalysisComplete,
-  activeAnalysis
+  activeAnalysis,
+  onMinimize,
 }) {
-  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [isDiscovering, setIsDiscovering]       = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState(null);
-  const [currentJobId, setCurrentJobId] = useState(null);
+  const [currentJobId, setCurrentJobId]         = useState(null);
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
-  // ✅ NEW: timeout state
-  const [timedOut, setTimedOut] = useState(false);
-  const [timeoutMessage, setTimeoutMessage] = useState('');
+  const [timedOut, setTimedOut]                 = useState(false);
+  const [timeoutMessage, setTimeoutMessage]     = useState('');
 
   const pollIntervalRef = useRef(null);
   const pollCountRef    = useRef(0);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
+    return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };
   }, []);
 
   const cancelDiscovery = async () => {
     if (currentJobId) {
-      try {
-        await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' });
-      } catch (error) {
-        console.error('Error cancelling job:', error);
-      }
+      try { await fetch(`${apiUrl}/api/wallets/jobs/${currentJobId}/cancel`, { method: 'POST' }); }
+      catch (e) { console.error('Error cancelling job:', e); }
     }
     if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
     pollCountRef.current = 0;
@@ -51,21 +45,13 @@ export default function DiscoveryPanel({
     setTimeoutMessage('');
   };
 
-  // ─── Recovery helper ────────────────────────────────────────────────────────
   const attemptRecovery = async (jobId) => {
     setTimeoutMessage('Attempting to recover result from server…');
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/recover`, { method: 'POST' });
       const data = await res.json();
-
       if (data.results) {
-        // ✅ Normalise to the shape DiscoveryPanel expects (top_wallets / smart_money_wallets / wallets)
-        const wallets =
-          data.results.top_wallets         ||
-          data.results.smart_money_wallets ||
-          data.results.wallets             ||
-          [];
-
+        const wallets = data.results.top_wallets || data.results.smart_money_wallets || data.results.wallets || [];
         setDiscoveryResults(wallets);
         onAnalysisComplete(data.results);
         if (onResultsReady) onResultsReady(data.results, 'discovery');
@@ -75,41 +61,34 @@ export default function DiscoveryPanel({
         setTimeoutMessage('');
         return true;
       }
-    } catch (err) {
-      console.warn('[DISCOVERY] Recovery failed:', err);
-    }
+    } catch (err) { console.warn('[DISCOVERY] Recovery failed:', err); }
     setTimeoutMessage('No recoverable result found. Please try again.');
     return false;
   };
 
+  // Local poll — feeds progress into parent's global tracking
   const pollJobProgress = (jobId) => {
     pollCountRef.current = 0;
 
     pollIntervalRef.current = setInterval(async () => {
       pollCountRef.current++;
 
-      // ── Timeout guard ────────────────────────────────────────────────────────
       if (pollCountRef.current > MAX_POLL_ATTEMPTS) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
         setTimedOut(true);
         setTimeoutMessage('⏱️ Discovery timed out after 20 minutes.');
         setAnalysisProgress(p => ({ ...p, phase: 'Timed out' }));
-        // Auto-attempt recovery
         await attemptRecovery(jobId);
         return;
       }
 
       try {
         const response = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/progress`);
-        const data = await response.json();
+        const data     = await response.json();
 
         if (data.success) {
-          const progress = {
-            current: data.tokens_completed || 0,
-            total:   data.tokens_total || 10,
-            phase:   data.phase || ''
-          };
+          const progress = { current: data.tokens_completed || 0, total: data.tokens_total || 10, phase: data.phase || '' };
           setAnalysisProgress(progress);
           onAnalysisProgress(progress);
 
@@ -117,16 +96,9 @@ export default function DiscoveryPanel({
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
 
-            // Fetch final result
             const resultRes  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}`);
             const resultData = await resultRes.json();
-
-            // ✅ Normalise data shape for DiscoveryPanel's local list
-            const wallets =
-              resultData.top_wallets         ||
-              resultData.smart_money_wallets ||
-              resultData.wallets             ||
-              [];
+            const wallets    = resultData.top_wallets || resultData.smart_money_wallets || resultData.wallets || [];
 
             setDiscoveryResults(wallets);
             onAnalysisComplete(resultData);
@@ -142,9 +114,7 @@ export default function DiscoveryPanel({
             setCurrentJobId(null);
           }
         }
-      } catch (error) {
-        console.error('Polling error:', error);
-      }
+      } catch (error) { console.error('Polling error:', error); }
     }, POLL_INTERVAL_MS);
   };
 
@@ -155,7 +125,7 @@ export default function DiscoveryPanel({
     setDiscoveryResults(null);
     setTimedOut(false);
     setTimeoutMessage('');
-    setAnalysisProgress({ current: 0, total: 10, phase: 'Starting discovery...' });
+    setAnalysisProgress({ current: 0, total: 10, phase: 'Starting discovery…' });
 
     try {
       const response = await fetch(`${apiUrl}/api/wallets/discover`, {
@@ -167,12 +137,9 @@ export default function DiscoveryPanel({
 
       if (data.success && data.job_id) {
         setCurrentJobId(data.job_id);
-        onAnalysisStart({
-          jobId: data.job_id,
-          total: 10,
-          analysisType: 'discovery'
-        });
+        onAnalysisStart({ jobId: data.job_id, total: 10, analysisType: 'discovery' });
         pollJobProgress(data.job_id);
+        // Auto-minimize so user can keep working — panel stays open but hint is shown
       } else {
         alert(`Discovery failed: ${data.error || 'Unknown error'}`);
         setIsDiscovering(false);
@@ -199,38 +166,36 @@ export default function DiscoveryPanel({
             avg_roi_to_peak:      wallet.avg_roi || 0,
             professional_score:   wallet.avg_professional_score || wallet.professional_score || 0,
             consistency_score:    wallet.consistency_score || 0,
-            tokens_hit:           wallet.runners_hit || []
+            tokens_hit:           wallet.runners_hit || [],
           }
         })
       });
       const data = await response.json();
-      if (data.success) {
-        alert(`✅ Added ${wallet.wallet.slice(0, 8)}... to watchlist`);
-      } else {
-        alert(`Failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Add to watchlist error:', error);
-      alert('Failed to add wallet to watchlist');
-    }
+      if (data.success) alert(`✅ Added ${wallet.wallet.slice(0, 8)}… to watchlist`);
+      else alert(`Failed: ${data.error}`);
+    } catch (error) { console.error('Add to watchlist error:', error); alert('Failed to add wallet to watchlist'); }
   };
 
   const handleAddAll = async () => {
-    if (!discoveryResults || discoveryResults.length === 0) return;
-    const confirm = window.confirm(`Add all ${discoveryResults.length} wallets to your watchlist?`);
-    if (!confirm) return;
-
+    if (!discoveryResults?.length) return;
+    if (!window.confirm(`Add all ${discoveryResults.length} wallets to your watchlist?`)) return;
     let successCount = 0;
     for (const wallet of discoveryResults) {
-      try { await handleAddWallet(wallet); successCount++; } catch { /* ignore individual failures */ }
+      try { await handleAddWallet(wallet); successCount++; } catch { /* ignore */ }
     }
     alert(`✅ Added ${successCount}/${discoveryResults.length} wallets to your watchlist!`);
   };
 
+  // Progress to show — prefer local (more granular) over parent summary
+  const displayProgress = isDiscovering ? analysisProgress : activeAnalysis?.progress;
+  const displayPct = displayProgress
+    ? Math.round(((displayProgress.current || 0) / (displayProgress.total || 1)) * 100)
+    : 0;
+
   return (
     <div className="space-y-4">
 
-      {/* Discovery button card */}
+      {/* ── Discovery launch card ── */}
       <div className="bg-gradient-to-br from-yellow-900/20 to-yellow-800/10 border border-yellow-500/30 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <Zap className="text-yellow-400" size={20} />
@@ -247,67 +212,92 @@ export default function DiscoveryPanel({
             <span className="text-green-400 font-semibold">Security Filter Active</span>
           </div>
           <p className="text-xs text-gray-400 mt-1">
-            All tokens are verified for: Liquidity locked • Mint authority revoked • Social presence
+            All tokens verified: Liquidity locked · Mint authority revoked · Social presence
           </p>
         </div>
 
-        {isDiscovering ? (
-          <button
-            onClick={cancelDiscovery}
-            className="w-full px-4 py-3 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 rounded-lg font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-red-500/30"
-          >
-            <XCircle size={18} /> Cancel Discovery
-          </button>
-        ) : (
-          <button
-            onClick={handleAutoDiscovery}
-            className="w-full px-4 py-3 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-700 hover:to-yellow-600 rounded-lg font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/30"
-          >
-            <Search size={18} /> Start Auto Discovery
-          </button>
-        )}
+        {/* Action buttons */}
+        <div className="flex gap-2">
+          {isDiscovering ? (
+            <button
+              onClick={cancelDiscovery}
+              className="flex-1 px-4 py-3 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 rounded-lg font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-red-500/30"
+            >
+              <XCircle size={18} /> Cancel
+            </button>
+          ) : (
+            <button
+              onClick={handleAutoDiscovery}
+              className="flex-1 px-4 py-3 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-700 hover:to-yellow-600 rounded-lg font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/30"
+            >
+              <Search size={18} /> Start Auto Discovery
+            </button>
+          )}
+
+          {/* Minimize — only while running */}
+          {isDiscovering && onMinimize && (
+            <button
+              onClick={onMinimize}
+              title="Minimize to background"
+              className="px-3 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition flex items-center gap-1.5 text-gray-400 hover:text-white"
+            >
+              <Minimize2 size={16} />
+            </button>
+          )}
+        </div>
 
         {/* Progress bar */}
-        {isDiscovering && (
+        {(isDiscovering || (activeAnalysis && !discoveryResults)) && (
           <div className="mt-4 space-y-2">
             <div className="bg-white/10 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-yellow-500 h-2 transition-all duration-500"
-                style={{ width: `${(analysisProgress.current / Math.max(analysisProgress.total, 1)) * 100}%` }}
+                className="bg-gradient-to-r from-yellow-500 to-amber-400 h-2 transition-all duration-500"
+                style={{ width: `${displayPct}%` }}
               />
             </div>
-            <div className="text-xs text-gray-400 text-center">
-              {analysisProgress.phase} ({analysisProgress.current}/{analysisProgress.total})
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>{displayProgress?.phase || 'Processing…'}</span>
+              <span>{displayProgress?.current}/{displayProgress?.total} · {displayPct}%</span>
             </div>
-            <p className="text-xs text-gray-600 text-center">
-              Times out after 20 min — auto-recovery will trigger
-            </p>
+            {isDiscovering && (
+              <p className="text-xs text-gray-600 text-center">
+                You can minimize this panel — discovery runs in the background
+              </p>
+            )}
           </div>
         )}
       </div>
 
-      {/* Show active analysis from parent if any */}
-      {activeAnalysis && !isDiscovering && (
+      {/* ── Active analysis card from parent (cross-session restore) ── */}
+      {activeAnalysis && !isDiscovering && !discoveryResults && (
         <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-          <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-            <Zap className="text-green-400" size={16} />
-            Analysis in Progress
-          </h3>
-          <div className="space-y-2">
-            <div className="bg-white/10 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-green-500 h-2 transition-all duration-500"
-                style={{ width: `${(activeAnalysis.progress?.current / activeAnalysis.progress?.total) * 100}%` }}
-              />
-            </div>
-            <p className="text-xs text-gray-400 text-center">
-              {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
-            </p>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Activity size={14} className="text-green-400 animate-pulse" />
+              Discovery In Progress
+            </h3>
+            {onMinimize && (
+              <button
+                onClick={onMinimize}
+                className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-xs text-gray-400 transition"
+              >
+                <Minimize2 size={12} /> Minimize
+              </button>
+            )}
           </div>
+          <div className="bg-white/10 rounded-full h-2 overflow-hidden mb-2">
+            <div
+              className="bg-green-500 h-2 transition-all duration-500"
+              style={{ width: `${Math.round(((activeAnalysis.progress?.current || 0) / (activeAnalysis.progress?.total || 1)) * 100)}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-400 text-center">
+            {activeAnalysis.progress?.phase} ({activeAnalysis.progress?.current}/{activeAnalysis.progress?.total})
+          </p>
         </div>
       )}
 
-      {/* ✅ NEW: Timeout / recovery banner */}
+      {/* ── Timeout / recovery banner ── */}
       {timedOut && (
         <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -326,7 +316,7 @@ export default function DiscoveryPanel({
         </div>
       )}
 
-      {/* Discovery results */}
+      {/* ── Results ── */}
       {discoveryResults && (
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
           <div className="flex items-center justify-between mb-4">
@@ -364,48 +354,27 @@ export default function DiscoveryPanel({
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-yellow-400 font-bold">#{idx + 1}</span>
-                        <code className="text-sm font-mono text-gray-300">
-                          {wallet.wallet?.slice(0, 16)}...
-                        </code>
+                        <code className="text-sm font-mono text-gray-300">{wallet.wallet?.slice(0, 16)}…</code>
                         {wallet.tier && (
                           <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                             wallet.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400' :
                             wallet.tier === 'A' ? 'bg-green-500/20 text-green-400'  :
                             wallet.tier === 'B' ? 'bg-blue-500/20 text-blue-400'    :
                             'bg-gray-500/20 text-gray-400'
-                          }`}>
-                            {wallet.tier}-Tier
-                          </span>
+                          }`}>{wallet.tier}-Tier</span>
                         )}
                       </div>
                       <div className="grid grid-cols-3 gap-3 text-xs">
-                        <div>
-                          <span className="text-gray-500">Runners:</span>
-                          <span className="ml-1 text-yellow-400 font-bold">
-                            {wallet.runner_count || wallet.runner_hits_30d || 0}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Score:</span>
-                          <span className="ml-1 text-white font-bold">
-                            {wallet.avg_professional_score || wallet.professional_score || 0}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Avg ROI:</span>
-                          <span className="ml-1 text-green-400 font-bold">
-                            +{(wallet.avg_roi || 0).toFixed(1)}%
-                          </span>
-                        </div>
+                        <div><span className="text-gray-500">Runners:</span><span className="ml-1 text-yellow-400 font-bold">{wallet.runner_count || wallet.runner_hits_30d || 0}</span></div>
+                        <div><span className="text-gray-500">Score:</span><span className="ml-1 text-white font-bold">{wallet.avg_professional_score || wallet.professional_score || 0}</span></div>
+                        <div><span className="text-gray-500">Avg ROI:</span><span className="ml-1 text-green-400 font-bold">+{(wallet.avg_roi || 0).toFixed(1)}%</span></div>
                       </div>
-                      {wallet.runners_hit && wallet.runners_hit.length > 0 && (
+                      {wallet.runners_hit?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-white/10">
                           <div className="text-xs text-gray-500 mb-1">Recent Hits:</div>
                           <div className="flex flex-wrap gap-1">
                             {wallet.runners_hit.slice(0, 5).map((token, tidx) => (
-                              <span key={tidx} className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
-                                {token}
-                              </span>
+                              <span key={tidx} className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">{token}</span>
                             ))}
                           </div>
                         </div>
@@ -425,7 +394,7 @@ export default function DiscoveryPanel({
         </div>
       )}
 
-      {/* How it works */}
+      {/* ── How it works ── */}
       <div className="bg-white/5 border border-white/10 rounded-lg p-4">
         <h4 className="text-sm font-semibold mb-2">How Auto Discovery Works</h4>
         <ol className="space-y-2 text-xs text-gray-400">

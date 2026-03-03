@@ -42,17 +42,20 @@ class WalletPumpAnalyzer:
     Redis = Hot cache (fast reads, all workers write)
     DuckDB = Cold storage (persistent, flushed from Redis every hour via Celery)
 
-    WALLET SOURCES (3):
+    WALLET SOURCES (2 — top_holders removed):
       1. top_traders   — wallets ranked by realized PnL (active traders, exited positions)
       2. first_buyers  — wallets that entered earliest by time
-      3. top_holders   — wallets holding the largest current positions
-                         Catches conviction holders (no/partial sells) invisible to top_traders.
-                         Qualifies via total_multiplier (realized + unrealized >= 3x).
+
+    top_holders removed: added no signal beyond top_traders and wasted ~30% of
+    API quota per run. Conviction holders invisible to top_traders are captured
+    via first_buyers (they bought early and held).
 
     SCORING (log-scale via _roi_to_score, ceiling=1000 throughout):
       Single token:  60% entry_to_ath_multiplier | 30% total_multiplier | 10% realized_multiplier
       Batch cross-token:    60% avg entry_to_ath_multiplier | 30% avg total ROI | 10% entry consistency
       Batch single-token:   individual professional_score (same as single token mode)
+
+      total_multiplier = realized + unrealized (no selling penalty for open positions).
 
       Percentages (distance_to_ath_pct, avg_distance_to_ath_pct) are display-only and
       never feed into any score calculation.
@@ -99,9 +102,6 @@ class WalletPumpAnalyzer:
         self.max_workers = 8
         self.solana_tracker_semaphore       = Semaphore(1)
         self.pnl_semaphore                  = Semaphore(1)
-        # FIX: Reduced async semaphores from 1 to match safe concurrency levels.
-        # With multiple concurrent workers, even AsyncSemaphore(2) can mean 10+ simultaneous
-        # requests to SolanaTracker, which triggers rate limiting.
         self.solana_tracker_async_semaphore = AsyncSemaphore(1)
         self.pnl_async_semaphore            = AsyncSemaphore(1)
         self.executor = None
@@ -281,15 +281,6 @@ class WalletPumpAnalyzer:
 
     async def async_fetch_with_retry(self, session, url, headers, params=None,
                                      semaphore=None, max_retries=3):
-        """
-        FIX: Rewrote to properly handle 429 rate limits with continue (old version had a
-        scoping bug where continue inside the `if semaphore` block could break out of the
-        wrong scope). Also added:
-          - Jitter on all retries to spread load across concurrent workers
-          - Increased timeout from 15s to 20s for slow endpoints
-          - Proper handling of 502/503/504 gateway errors with exponential backoff
-          - 429 does NOT consume a retry attempt (don't count against max_retries)
-        """
         timeout = aiohttp.ClientTimeout(total=20)
         for attempt in range(max_retries):
             try:
@@ -305,8 +296,6 @@ class WalletPumpAnalyzer:
                             wait_time = int(response.headers.get('Retry-After', 15))
                             self._log(f"Rate limited on {url[-30:]} — waiting {wait_time}s")
                             await asyncio.sleep(wait_time + random.uniform(1, 3))
-                            # 429 does not count as an attempt — loop continues without
-                            # incrementing attempt, so we fall through to next iteration
                             continue
                         elif response.status in (502, 503, 504):
                             await asyncio.sleep(2 ** attempt + random.uniform(0, 1))
@@ -717,7 +706,7 @@ class WalletPumpAnalyzer:
                 semaphore=self.pnl_semaphore
             )
             if data and data.get('tokens'):
-                return data['tokens']   # {token_addr: {realized, total_invested, cost_basis, ...}}
+                return data['tokens']
             return {}
         except Exception as e:
             self._log(f"[ALL POSITIONS] Error for {wallet_address[:8]}: {e}")
@@ -727,19 +716,6 @@ class WalletPumpAnalyzer:
         """
         Given a list of runner dicts (already confirmed as runners with security pass),
         split them into 7d, 14d, 30d buckets based on first_buy_time.
-
-        A wallet's position falls in the tightest window that contains its first_buy_time.
-        e.g. if bought 5 days ago → in 7d, 14d, AND 30d buckets (cumulative).
-
-        Returns:
-          {
-            'runners_7d':  [list],
-            'runners_14d': [list],
-            'runners_30d': [list],
-            'stats_7d':    {success_rate, avg_roi, avg_entry_to_ath, total},
-            'stats_14d':   {...},
-            'stats_30d':   {...},
-          }
         """
         now       = time.time() * 1000   # ms
         window_7  = now - (7  * 86400 * 1000)
@@ -759,7 +735,6 @@ class WalletPumpAnalyzer:
                 buckets['30d'].append(r)
             elif first_buy_time >= window_30:
                 buckets['30d'].append(r)
-            # older than 30d — excluded from all buckets
 
         def _compute_stats(runners):
             if not runners:
@@ -791,7 +766,6 @@ class WalletPumpAnalyzer:
             'stats_7d':    _compute_stats(buckets['7d']),
             'stats_14d':   _compute_stats(buckets['14d']),
             'stats_30d':   _compute_stats(buckets['30d']),
-            # Keep flat list + stats for backward compatibility with existing callers
             'other_runners': buckets['30d'],
             'stats':         _compute_stats(buckets['30d']),
         }
@@ -827,21 +801,10 @@ class WalletPumpAnalyzer:
           2. For each token (excluding current_token):
                a. Check security (mint revoked, liquidity locked, has social)
                b. Check if it's a runner (_get_price_range_in_period with 30d window)
-               c. Compute ROI and entry_to_ath from cost_basis + ATH
+               c. Compute total_multiplier = (realized + unrealized + invested) / invested
+                  NO SELLING PENALTY: open positions counted at full value
           3. Bucket qualifying runners into 7d / 14d / 30d by first_buy_time
           4. Return bucketed results + backward-compatible flat list
-
-        Returns:
-          {
-            'runners_7d':    [...],
-            'runners_14d':   [...],
-            'runners_30d':   [...],
-            'stats_7d':      {...},
-            'stats_14d':     {...},
-            'stats_30d':     {...},
-            'other_runners': [...],   # = runners_30d (backward compat)
-            'stats':         {...},   # = stats_30d   (backward compat)
-          }
         """
         try:
             self._log(f"\n[RUNNER HISTORY] {'='*50}")
@@ -878,15 +841,15 @@ class WalletPumpAnalyzer:
 
                 self._log(f"[RUNNER HISTORY] ✅ {token_addr[:8]} is a runner ({runner_info.get('multiplier')}x)")
 
-                # ── ROI from position data ────────────────────────────────────────
-                realized     = position.get('realized', 0)
-                unrealized   = position.get('unrealized', 0)
-                roi_mult     = (realized + total_invested) / total_invested
+                # ── Total multiplier — no selling penalty for open positions ─────
+                # realized + unrealized + invested = total return if closed now
+                realized   = position.get('realized', 0)
+                unrealized = position.get('unrealized', 0)
+                total_mult = (realized + unrealized + total_invested) / total_invested
 
                 # ── Entry price from cost_basis (avg buy price) ───────────────────
-                # cost_basis = average price paid per token across all buys
-                entry_price  = position.get('cost_basis')
-                ath_price    = runner_info.get('ath_price', 0)
+                entry_price = position.get('cost_basis')
+                ath_price   = runner_info.get('ath_price', 0)
 
                 entry_to_ath = None
                 if entry_price and entry_price > 0 and ath_price and ath_price > 0:
@@ -900,7 +863,7 @@ class WalletPumpAnalyzer:
                     'current_price':         runner_info.get('current_price', 0),
                     'ath_price':             ath_price,
                     'liquidity':             runner_info.get('liquidity', 0),
-                    'roi_multiplier':        round(roi_mult, 2),
+                    'roi_multiplier':        round(total_mult, 2),
                     'invested':              round(total_invested, 2),
                     'realized':              round(realized, 2),
                     'unrealized':            round(unrealized, 2),
@@ -912,7 +875,6 @@ class WalletPumpAnalyzer:
                     'last_trade_time':       position.get('last_trade_time', 0),
                     'buy_transactions':      position.get('buy_transactions', 0),
                     'sell_transactions':     position.get('sell_transactions', 0),
-                    # Security info for display
                     'security': {
                         'mint_revoked':     security.get('is_mint_revoked', False),
                         'liquidity_locked': security.get('is_liquidity_locked', False),
@@ -1003,7 +965,6 @@ class WalletPumpAnalyzer:
         list_cache_key = f"trending:{cache_key}"
         board_key      = f"trending_leaderboard:{cache_key}"
 
-        # ── Fast path: 10-min list cache still hot ────────────────────────────────
         cached = self._redis_get(list_cache_key)
         if cached is not None:
             return cached
@@ -1026,7 +987,6 @@ class WalletPumpAnalyzer:
             except Exception as e:
                 self._log(f"DuckDB trending read error: {e}")
 
-        # ── Load persisted leaderboard ────────────────────────────────────────────
         leaderboard      = self._redis_get(board_key) or []
         board_by_address = {r['address']: r for r in leaderboard}
 
@@ -1035,7 +995,6 @@ class WalletPumpAnalyzer:
                   f"({len(leaderboard)}/{MAX_RUNNERS} slots)")
         self._log(f"{'='*70}")
 
-        # ── Fetch platform candidates ─────────────────────────────────────────────
         try:
             response = self.fetch_with_retry(
                 f"{self.st_base_url}/tokens/trending",
@@ -1068,7 +1027,6 @@ class WalletPumpAnalyzer:
 
                 qual_key = f"trending_qual:{mint}:{cache_key}"
 
-                # ── INCUMBENT: already on leaderboard ─────────────────────────────
                 if mint in board_by_address:
                     cached_qual = self._redis_get(qual_key)
                     if cached_qual is None:
@@ -1097,10 +1055,9 @@ class WalletPumpAnalyzer:
                             }, CACHE_TTL_QUAL)
                     continue
 
-                # ── NEW CANDIDATE ─────────────────────────────────────────────────
                 cached_qual = self._redis_get(qual_key)
                 if cached_qual is not None and not cached_qual.get('qualified'):
-                    continue   # recently failed — skip
+                    continue
 
                 security = self._check_token_security(mint)
                 if not security or not security['passes_security']:
@@ -1112,7 +1069,6 @@ class WalletPumpAnalyzer:
                     self._redis_set(qual_key, {'qualified': False}, CACHE_TTL_QUAL_NEG)
                     continue
 
-                # Build the runner record
                 token_info = self._get_token_detailed_info(mint)
                 if not token_info:
                     continue
@@ -1147,12 +1103,10 @@ class WalletPumpAnalyzer:
                 }
 
                 if len(board_by_address) < MAX_RUNNERS:
-                    # Free slot
                     board_by_address[mint] = new_runner
                     self._log(f"  ✅ {symbol} added ({new_runner['multiplier']}x) "
                               f"— {len(board_by_address)}/{MAX_RUNNERS} slots")
                 else:
-                    # Board full — only displace the weakest if we beat it
                     weakest = min(board_by_address.values(), key=lambda r: r['multiplier'])
                     if new_runner['multiplier'] > weakest['multiplier']:
                         self._log(f"  🔄 {symbol} ({new_runner['multiplier']}x) displaces "
@@ -1166,7 +1120,6 @@ class WalletPumpAnalyzer:
                         self._redis_set(qual_key, {'qualified': False}, CACHE_TTL_QUAL_NEG)
                         continue
 
-                # Store positive qual result for this token
                 self._redis_set(qual_key, {
                     'qualified':    True,
                     'multiplier':   new_runner['multiplier'],
@@ -1179,7 +1132,6 @@ class WalletPumpAnalyzer:
                 self._log(f"⚠️ Token skip: {e}")
                 continue
 
-        # ── Sort and persist ──────────────────────────────────────────────────────
         leaderboard = sorted(board_by_address.values(),
                              key=lambda r: r['multiplier'], reverse=True)
 
@@ -1320,7 +1272,6 @@ class WalletPumpAnalyzer:
             realized_multiplier = wallet_data.get('realized_multiplier') or 0
             total_multiplier    = wallet_data.get('total_multiplier') or 0
 
-            # ── 60%: entry timing relative to ATH — log-scaled ───────────────────
             if entry_price > 0 and ath_price > 0:
                 entry_to_ath_multiplier = ath_price / entry_price
                 distance_to_ath_pct     = ((ath_price - entry_price) / ath_price) * 100  # display only
@@ -1330,10 +1281,8 @@ class WalletPumpAnalyzer:
                 distance_to_ath_pct     = 0
                 entry_score             = 0
 
-            # ── 30%: total ROI (realized + unrealized) — log-scaled ──────────────
             total_roi_score = _roi_to_score(total_multiplier)
 
-            # ── 10%: realized ROI (single token) OR entry consistency (batch) ────
             if consistency_score is not None:
                 tenth_score         = consistency_score
                 score_breakdown_key = 'consistency_score'
@@ -1358,7 +1307,7 @@ class WalletPumpAnalyzer:
                 'professional_score':      round(professional_score, 2),
                 'professional_grade':      grade,
                 'entry_to_ath_multiplier': round(entry_to_ath_multiplier, 2) if entry_to_ath_multiplier else None,
-                'distance_to_ath_pct':     round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,  # display only
+                'distance_to_ath_pct':     round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
                 'realized_multiplier':     round(realized_multiplier, 2) if realized_multiplier else None,
                 'total_multiplier':        round(total_multiplier, 2) if total_multiplier else None,
                 'score_breakdown': {
@@ -1377,7 +1326,7 @@ class WalletPumpAnalyzer:
             }
 
     # =========================================================================
-    # 30-DAY RUNNER HISTORY - FIXED WITH DEBUG LOGGING
+    # RUNNER CHECK
     # =========================================================================
 
     def _check_if_runner(self, token_address, min_multiplier=10.0):
@@ -1414,13 +1363,13 @@ class WalletPumpAnalyzer:
             return None
 
     # =========================================================================
-    # 4-STEP SINGLE TOKEN ANALYSIS
+    # SINGLE TOKEN ANALYSIS — 2 sources (top_holders removed)
     # =========================================================================
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
                                    min_roi_multiplier=3.0, user_id='default_user'):
         self._log(f"\n{'='*80}")
-        self._log(f"4-STEP ANALYSIS: {token_symbol}")
+        self._log(f"2-SOURCE ANALYSIS: {token_symbol}")
         self._log(f"{'='*80}")
 
         try:
@@ -1450,6 +1399,7 @@ class WalletPumpAnalyzer:
 
             # ------------------------------------------------------------------
             # STEP 2: First buyers
+            # Entry price extracted inline — no extra API call needed
             # ------------------------------------------------------------------
             self._log("\n[STEP 2] Fetching first buyers...")
             url  = f"{self.st_base_url}/first-buyers/{token_address}"
@@ -1485,53 +1435,13 @@ class WalletPumpAnalyzer:
                 all_wallets.update(first_buyer_wallets)
                 self._log(f"✓ Found {len(buyers)} first buyers ({len(new_wallets)} new)")
 
-            # ------------------------------------------------------------------
-            # STEP 3: Top holders
-            # ------------------------------------------------------------------
-            self._log("\n[STEP 3] Fetching top holders...")
-            url  = f"{self.st_base_url}/tokens/{token_address}/holders/paginated"
-            data = self.fetch_with_retry(
-                url, self._get_solanatracker_headers(),
-                params={'limit': 500},
-                semaphore=self.solana_tracker_semaphore
-            )
-            if data and data.get('accounts'):
-                holder_wallets = set()
-                for account in data['accounts']:
-                    wallet = account.get('wallet')
-                    if wallet:
-                        holder_wallets.add(wallet)
-                        if wallet not in all_wallets:
-                            wallet_data[wallet] = {
-                                'source':         'top_holders',
-                                'pnl_data':       None,
-                                'earliest_entry': None,
-                                'entry_price':    None,
-                                'holding_amount': account.get('amount', 0),
-                                'holding_usd':    account.get('value', {}).get('usd', 0),
-                                'holding_pct':    account.get('percentage', 0),
-                            }
-                        else:
-                            wallet_data[wallet]['holding_amount'] = account.get('amount', 0)
-                            wallet_data[wallet]['holding_usd']    = account.get('value', {}).get('usd', 0)
-                            wallet_data[wallet]['holding_pct']    = account.get('percentage', 0)
-
-                new_wallets = holder_wallets - all_wallets
-                all_wallets.update(holder_wallets)
-                self._log(
-                    f"✓ Found {len(data['accounts'])} top holders "
-                    f"({len(new_wallets)} new | total supply holders: {data.get('total', '?')})"
-                )
-            else:
-                self._log("  Holders endpoint returned no data — continuing without holder source")
-
-            # NOTE: Step 4 (separate entry price fetch) removed.
-            # Entry price is now extracted from first_buy field in PnL response (Step 5).
+            # NOTE: top_holders (Step 3) removed — added no signal beyond top_traders
+            # and wasted ~30% of API quota per run.
 
             # ------------------------------------------------------------------
-            # STEP 5 (now Step 4): PnL fetch + qualify
+            # STEP 3: PnL fetch + qualify
             # ------------------------------------------------------------------
-            self._log(f"\n[STEP 4] Fetching PnL for {len(all_wallets)} wallets...")
+            self._log(f"\n[STEP 3] Fetching PnL for {len(all_wallets)} wallets...")
 
             wallets_with_pnl = []
             wallets_to_fetch = []
@@ -1544,7 +1454,7 @@ class WalletPumpAnalyzer:
 
             self._log(f"✓ {len(wallets_with_pnl)} wallets have PnL "
                       f"(top_traders + first_buyers)")
-            self._log(f"→ Fetching PnL for {len(wallets_to_fetch)} holder wallets...")
+            self._log(f"→ Fetching PnL for {len(wallets_to_fetch)} remaining wallets...")
 
             qualified_wallets = []
 
@@ -1568,7 +1478,7 @@ class WalletPumpAnalyzer:
                     for wallet in wallets_to_fetch:
                         async def fetch_pnl(w=wallet):
                             async with sem:
-                                await asyncio.sleep(random.uniform(0.5, 1.5))  # jitter
+                                await asyncio.sleep(random.uniform(0.5, 1.5))
                                 return await self.async_fetch_with_retry(
                                     session,
                                     f"{self.st_base_url}/pnl/{w}/{token_address}",
@@ -1582,7 +1492,6 @@ class WalletPumpAnalyzer:
                 for wallet, pnl_data in zip(wallets_to_fetch, results):
                     if pnl_data:
                         wallet_data[wallet]['pnl_data'] = pnl_data
-                        # Extract entry_price from first_buy in PnL response
                         if not wallet_data[wallet].get('entry_price'):
                             first_buy  = pnl_data.get('first_buy', {})
                             amount     = first_buy.get('amount', 0)
@@ -1630,7 +1539,7 @@ class WalletPumpAnalyzer:
                     'roi_percent':             round((wallet_info['realized_multiplier'] - 1) * 100, 2),
                     'roi_multiplier':          round(wallet_info['realized_multiplier'], 2),
                     'entry_to_ath_multiplier': scoring_data.get('entry_to_ath_multiplier'),
-                    'distance_to_ath_pct':     scoring_data.get('distance_to_ath_pct'),  # display only
+                    'distance_to_ath_pct':     scoring_data.get('distance_to_ath_pct'),
                     'realized_profit':         wallet_info['realized'],
                     'unrealized_profit':       wallet_info['unrealized'],
                     'total_invested':          wallet_info['total_invested'],
@@ -1812,7 +1721,7 @@ class WalletPumpAnalyzer:
                     'professional_score':      wallet['professional_score'],
                     'professional_grade':      wallet['professional_grade'],
                     'entry_to_ath_multiplier': wallet.get('entry_to_ath_multiplier'),
-                    'distance_to_ath_pct':     wallet.get('distance_to_ath_pct'),  # display only
+                    'distance_to_ath_pct':     wallet.get('distance_to_ath_pct'),
                     'entry_price':             wallet.get('entry_price'),
                 })
                 wallet_hits[wallet_addr]['professional_scores'].append(wallet['professional_score'])
@@ -1839,14 +1748,12 @@ class WalletPumpAnalyzer:
                 sum(d['total_roi_multipliers']) / len(d['total_roi_multipliers'])
                 if d['total_roi_multipliers'] else 0
             )
-            # distance_to_ath_pct is display-only — not used in scoring
             avg_dist = (
                 sum(d['distance_to_ath_vals']) / len(d['distance_to_ath_vals'])
                 if d['distance_to_ath_vals'] else 0
             )
 
             if runner_count >= min_runner_hits:
-                # Cross-token: 60% log entry timing | 30% log total ROI | 10% consistency
                 consistency_score = self._calculate_consistency(
                     wallet_addr, list(d['runners_hit_addresses'])
                 )
@@ -1870,7 +1777,7 @@ class WalletPumpAnalyzer:
                     'is_cross_token':              True,
                     'runner_count':                runner_count,
                     'runners_hit':                 d['runners_hit'],
-                    'avg_distance_to_ath_pct':     round(avg_dist, 2),        # display only
+                    'avg_distance_to_ath_pct':     round(avg_dist, 2),
                     'avg_entry_to_ath_multiplier': round(avg_ath, 2) if avg_ath else None,
                     'avg_total_roi':               round(avg_total_roi, 2),
                     'consistency_score':           consistency_score,
@@ -1888,7 +1795,6 @@ class WalletPumpAnalyzer:
                 })
 
             else:
-                # Single-token: individual professional_score
                 best_result = max(d['raw_wallet_results'], key=lambda w: w['professional_score'])
                 single_token_wallets.append({
                     **best_result,

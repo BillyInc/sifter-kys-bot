@@ -12,7 +12,8 @@ from .auth import auth_bp
 from .token_routes import tokens_bp
 from .recents import recents_bp
 from .diary_routes import diary_bp
-
+from .simulator_routes import simulator_bp
+from .abm_state_route import abm_state_bp
 __all__ = [
     'analyze_bp',
     'watchlist_bp',
@@ -27,4 +28,6 @@ __all__ = [
     'tokens_bp',
     'recents_bp',
     'diary_bp',
+    'simulator_bp', 
+    'abm_state_bp',
 ]
