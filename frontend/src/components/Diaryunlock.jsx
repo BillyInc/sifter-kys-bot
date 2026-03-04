@@ -8,27 +8,29 @@
  *    - Shows passphrase + confirm fields
  *    - Derives key, generates salt + verification_token
  *    - POSTs salt + verification_token to /api/diary/salt
- *    - Calls onUnlocked() on success
+ *    - Calls onUnlocked({ saltB64, verificationToken }) on success
+ *      ↑ FIX: passes new salt data back so useDiary can update state
+ *        without needing a full re-initialization round-trip
  *
  *  UNLOCK mode (isNew = false):
  *    User has a passphrase set — just needs to enter it.
  *    - Derives key and verifies against stored verification_token
- *    - Calls onUnlocked() on success
+ *    - Calls onUnlocked() on success (no args, existing behaviour)
  *    - Shows error if passphrase is wrong
  *
  * Props:
  *   userId             – string
  *   apiUrl             – string
- *   isNew              – bool
- *   saltB64            – string | null  (null when isNew)
- *   verificationToken  – string | null  (null when isNew)
- *   onUnlocked         – () => void
+ *   isNew              – bool | null  (null = still loading, show spinner)
+ *   saltB64            – string | null
+ *   verificationToken  – string | null
+ *   onUnlocked         – (newSaltData?: { saltB64, verificationToken }) => void
  */
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Lock, Eye, EyeOff, KeyRound, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { setupDiaryEncryption, unlockDiary, passphraseRequirements } from './diaryEncryption';
+import { setupDiaryEncryption, unlockDiary, passphraseRequirements } from './hooks/Diaryencryption';
 
 export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificationToken, onUnlocked }) {
   const [passphrase,    setPassphrase]    = useState('');
@@ -40,7 +42,21 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
   const [strength,      setStrength]      = useState(0); // 0-4
   const inputRef = useRef(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    console.log('🔍 [DiaryUnlock] Props:', {
+      userId,
+      isNew,
+      saltB64: saltB64 ? '✅ present' : '❌ null',
+      verificationToken: verificationToken ? '✅ present' : '❌ null',
+    });
+  }, [userId, isNew, saltB64, verificationToken]);
+
+  useEffect(() => {
+    // Only focus when we know which mode we're in
+    if (isNew !== null) {
+      inputRef.current?.focus();
+    }
+  }, [isNew]);
 
   // ── Passphrase strength indicator ──────────────────────────────────────────
   useEffect(() => {
@@ -57,8 +73,23 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
   const strengthColor  = ['', 'text-red-400', 'text-yellow-400', 'text-blue-400', 'text-green-400'][strength];
   const strengthBg     = ['bg-white/10', 'bg-red-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'][strength];
 
+  // ── Still loading (isNew === null) — show spinner instead of the wrong form ──
+  if (isNew === null) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="flex flex-col items-center justify-center py-16 px-4"
+      >
+        <Loader2 size={28} className="text-purple-400 animate-spin mb-3" />
+        <p className="text-sm text-gray-500">Loading diary…</p>
+      </motion.div>
+    );
+  }
+
   // ── Setup (first time) ─────────────────────────────────────────────────────
   const handleSetup = async () => {
+    console.log('🔍 [DiaryUnlock] Starting setup for new user');
     setError(null);
     const validationError = passphraseRequirements.validate(passphrase);
     if (validationError) { setError(validationError); return; }
@@ -67,9 +98,11 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
     setLoading(true);
     try {
       const { saltB64: newSalt, verificationToken: newToken } = await setupDiaryEncryption(userId, passphrase);
+      console.log('🔍 [DiaryUnlock] Encryption setup complete, saving to server...');
 
       const res  = await fetch(`${apiUrl}/api/diary/salt`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id:            userId,
           salt_b64:           newSalt,
@@ -77,10 +110,15 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
         }),
       });
       const data = await res.json();
+      console.log('🔍 [DiaryUnlock] Server response:', data);
+      
       if (!data.success) throw new Error(data.error || 'Failed to save passphrase.');
 
-      onUnlocked();
+      console.log('🔍 [DiaryUnlock] Setup successful, calling onUnlocked with salt data');
+      // FIX: pass the new salt data back so useDiary can update state in place
+      onUnlocked({ saltB64: newSalt, verificationToken: newToken });
     } catch (err) {
+      console.error('🔍 [DiaryUnlock] Setup error:', err);
       setError(err.message || 'Setup failed. Please try again.');
     } finally {
       setLoading(false);
@@ -89,20 +127,26 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
 
   // ── Unlock (returning user) ────────────────────────────────────────────────
   const handleUnlock = async () => {
+    console.log('🔍 [DiaryUnlock] Starting unlock for existing user');
     setError(null);
     if (!passphrase) { setError('Please enter your passphrase.'); return; }
 
     setLoading(true);
     try {
       const ok = await unlockDiary(userId, passphrase, saltB64, verificationToken);
+      console.log('🔍 [DiaryUnlock] Verification result:', ok);
+      
       if (!ok) {
         setError('Incorrect passphrase. Please try again.');
         setPassphrase('');
         inputRef.current?.focus();
         return;
       }
-      onUnlocked();
+      
+      console.log('🔍 [DiaryUnlock] Unlock successful, calling onUnlocked');
+      onUnlocked(); // no args for existing users
     } catch (err) {
+      console.error('🔍 [DiaryUnlock] Unlock error:', err);
       setError(err.message || 'Unlock failed.');
     } finally {
       setLoading(false);
@@ -110,7 +154,9 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') isNew ? handleSetup() : handleUnlock();
+    if (e.key === 'Enter') {
+      isNew ? handleSetup() : handleUnlock();
+    }
   };
 
   // ── Shared input style ─────────────────────────────────────────────────────
@@ -135,7 +181,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
             </h3>
             <p className="text-xs text-gray-500 mt-1 leading-relaxed">
               {isNew
-                ? 'Your notes are encrypted before leaving your device. Choose a passphrase — it\'s never sent to the server.'
+                ? "Your notes are encrypted before leaving your device. Choose a passphrase — it's never sent to the server."
                 : 'Your notes are end-to-end encrypted. Enter your passphrase to decrypt them.'}
             </p>
           </div>

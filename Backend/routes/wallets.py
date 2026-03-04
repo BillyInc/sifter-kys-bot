@@ -421,8 +421,6 @@ def analyze_stream():
         all_wallets = []
 
         for i, token in enumerate(tokens, 1):
-            # Extract ticker into a variable — backslash escapes are not allowed
-            # inside f-string expressions, so token.get(...) must live outside.
             ticker = token.get('ticker', 'token')
             try:
                 progress_msg = f'Analyzing {ticker} ({i}/{len(tokens)})...'
@@ -636,9 +634,16 @@ def auto_discover_wallets():
             'progress': 0, 'phase': 'queued', 'tokens_total': 10, 'tokens_completed': 0,
         }).execute()
 
+        # Pass is_auto_discovery=True so that the worker pipeline can tag the
+        # user_analysis_history entry as result_type='discovery'.  This is what
+        # allows _get_history_cache_discovery() in worker_tasks.py to distinguish
+        # a cached discovery run from a cached manual batch analysis.
         q_compute.enqueue('services.worker_tasks.perform_auto_discovery', {
-            'user_id': user_id, 'min_runner_hits': min_runner_hits,
-            'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
+            'user_id':            user_id,
+            'min_runner_hits':    min_runner_hits,
+            'min_roi_multiplier': min_roi_multiplier,
+            'job_id':             job_id,
+            'is_auto_discovery':  True,
         })
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
@@ -687,6 +692,8 @@ def add_wallet_to_watchlist():
         if existing.data:
             return jsonify({'success': False, 'error': 'Wallet already in watchlist'}), 400
 
+        added_at = datetime.utcnow().isoformat()
+
         supabase.schema(SCHEMA_NAME).table('wallet_watchlist').insert({
             'user_id':            user_id,
             'wallet_address':     wallet_data['wallet'],
@@ -723,8 +730,8 @@ def add_wallet_to_watchlist():
             'min_trade_usd':      10,
             'tags':               [],
             'notes':              '',
-            'added_at':           datetime.utcnow().isoformat(),
-            'last_updated':       datetime.utcnow().isoformat(),
+            'added_at':           added_at,
+            'last_updated':       added_at,
             'last_trade_time':    None,
         }).execute()
 
@@ -939,10 +946,13 @@ def get_wallet_stats(wallet_address):
 @optional_auth
 def refresh_wallet_stats(wallet_address):
     """
-    FIX 2: Previously passed through metrics.get('consistency_score', 0) directly.
-    That value is stale — it comes from the last analysis session and may be 0
-    if the field was never populated. Now recomputes from runner history variance
-    using the same formula as computeConsistency() in SifterKYS.jsx.
+    FIX 2: Recomputes consistency_score from runner history variance using the
+    same formula as computeConsistency() in SifterKYS.jsx — not the stale value
+    passed through from the last analysis session.
+
+    Also fetches added_at from the watchlist record and passes it to
+    _refresh_wallet_metrics so that only trades that occurred AFTER the wallet
+    was added to the watchlist count toward metrics.
     """
     if request.method == 'OPTIONS':
         return '', 204
@@ -959,7 +969,15 @@ def refresh_wallet_stats(wallet_address):
 
         manager  = WatchlistLeagueManager()
         supabase = get_supabase_client()
-        metrics  = manager._refresh_wallet_metrics(wallet_address)
+
+        # Fetch added_at so _refresh_wallet_metrics only counts post-watchlist trades
+        record = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'added_at'
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+
+        added_at = record.data[0]['added_at'] if record.data else None
+
+        metrics = manager._refresh_wallet_metrics(wallet_address, added_at=added_at)
 
         # FIX 2: recompute from runner history variance instead of passing through
         other_runners     = metrics.get('other_runners', [])
@@ -973,7 +991,7 @@ def refresh_wallet_stats(wallet_address):
             'win_rate_7d':        metrics.get('win_rate_7d', 0),
             'last_trade_time':    metrics.get('last_trade_time'),
             'professional_score': metrics.get('professional_score', 0),
-            'consistency_score':  consistency_score,   # FIX 2
+            'consistency_score':  consistency_score,
             'last_updated':       datetime.utcnow().isoformat(),
         }).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
 

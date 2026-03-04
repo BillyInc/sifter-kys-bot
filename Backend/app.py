@@ -19,6 +19,8 @@ from routes import auth_bp
 from routes import tokens_bp
 from routes.recents import recents_bp     
 from routes import diary_bp # ✅ NEW
+from routes import simulator_bp
+from routes import abm_state_bp
 
 
 telegram_polling_started = False
@@ -89,12 +91,13 @@ def create_app() -> Flask:
 
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com"],
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            "allow_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True,
-            "expose_headers": ["Content-Type", "Authorization"]
-        }
+        "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com", "http://localhost:8080"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+        "expose_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True,
+        "max_age": 600  # Cache preflight requests for 10 minutes
+    }
     })
 
     limiter = Limiter(
@@ -130,6 +133,8 @@ def create_app() -> Flask:
     app.register_blueprint(tokens_bp)
     app.register_blueprint(recents_bp)  
     app.register_blueprint(diary_bp) # ✅ NEW
+    app.register_blueprint(simulator_bp)
+    app.register_blueprint(abm_state_bp)
 
     redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
     app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)

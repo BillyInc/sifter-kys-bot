@@ -24,10 +24,12 @@ CRITICAL BUG FIXES:
       Single-token candidates now include all PnL fields identical to single-token mode.
 
 PIPELINE SIMPLIFICATION:
+  - Removed fetch_top_holders entirely — no signal value, wasted ~30% of API quota.
   - Removed coordinate_entry_prices, fetch_entry_prices_batch, merge_entry_prices entirely.
   - Entry price now extracted from first_buy field in /pnl/{wallet}/{token} response.
   - Runner history now uses /pnl/{wallet} (all positions) instead of /wallet/{wallet}/trades.
   - Runner results bucketed into 7d/14d/30d windows by first_buy_time.
+  - History cache: returns fresh result from user_analysis_history if < 6h old.
 """
 
 from redis import Redis
@@ -52,49 +54,52 @@ from utils import _roi_to_score
 # =============================================================================
 # TTL CONSTANTS
 # =============================================================================
-LOG_TTL = 21600          # 6h
-PIPELINE_TTL = 86400     # 24h
-DEAD_LETTER_TTL = 604800 # 7 days
+LOG_TTL           = 21600   # 6h
+PIPELINE_TTL      = 86400   # 24h
+DEAD_LETTER_TTL   = 604800  # 7 days
+HISTORY_CACHE_TTL = 21600   # 6h — skip full pipeline if fresh result exists
 
 # =============================================================================
 # JOB TIMEOUT CONSTANTS
 # =============================================================================
-TIMEOUT_PHASE1_WORKER  = 50
-TIMEOUT_PNL_BATCH      = 120
+TIMEOUT_PHASE1_WORKER = 50
+TIMEOUT_PNL_BATCH     = 120
 
-JT_PHASE1_WORKER       = 120
-JT_COORD               = 180
-JT_PNL_BATCH           = 600
-JT_MERGE               = 180
-JT_SCORER              = 600
-JT_RUNNER_BATCH        = 180
-JT_MERGE_FINAL         = 180
-JT_AGGREGATE           = 600
-JT_CACHE_PATH          = 120
-JT_WARMUP              = 900
+JT_PHASE1_WORKER = 120
+JT_COORD         = 180
+JT_PNL_BATCH     = 600
+JT_MERGE         = 180
+JT_SCORER        = 600
+JT_RUNNER_BATCH  = 180
+JT_MERGE_FINAL   = 180
+JT_AGGREGATE     = 600
+JT_CACHE_PATH    = 120
+JT_WARMUP        = 900
 
 # =============================================================================
 # CIRCUIT BREAKER
 # =============================================================================
 class APICircuitBreaker:
     def __init__(self, name, failure_threshold=3, recovery_timeout=60):
-        self.name = name
-        self.failure_count = 0
+        self.name              = name
+        self.failure_count     = 0
         self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
+        self.recovery_timeout  = recovery_timeout
         self.last_failure_time = 0
-        self.is_open = False
-        self._lock = threading.Lock()
+        self.is_open           = False
+        self._lock             = threading.Lock()
 
     def call(self, func, *args, **kwargs):
         with self._lock:
             if self.is_open:
                 if time.time() - self.last_failure_time > self.recovery_timeout:
                     print(f"[CIRCUIT BREAKER] {self.name} attempting recovery — closing circuit")
-                    self.is_open = False
+                    self.is_open       = False
                     self.failure_count = 0
                 else:
-                    raise Exception(f"Circuit breaker {self.name} is open (failed {self.failure_count} times)")
+                    raise Exception(
+                        f"Circuit breaker {self.name} is open (failed {self.failure_count} times)"
+                    )
         try:
             result = func(*args, **kwargs)
             with self._lock:
@@ -102,15 +107,14 @@ class APICircuitBreaker:
             return result
         except Exception as e:
             with self._lock:
-                self.failure_count += 1
+                self.failure_count    += 1
                 self.last_failure_time = time.time()
                 if self.failure_count >= self.failure_threshold:
                     print(f"[CIRCUIT BREAKER] {self.name} opened after {self.failure_count} failures")
                     self.is_open = True
             raise e
 
-pnl_circuit_breaker     = APICircuitBreaker("pnl_api",     failure_threshold=3, recovery_timeout=120)
-holders_circuit_breaker = APICircuitBreaker("holders_api", failure_threshold=3, recovery_timeout=60)
+pnl_circuit_breaker = APICircuitBreaker("pnl_api", failure_threshold=3, recovery_timeout=120)
 
 # =============================================================================
 # DEAD LETTER QUEUE HANDLER
@@ -176,17 +180,18 @@ def timeout(seconds=30):
             except SoftTimeoutError as e:
                 signal.alarm(0)
                 print(f"[SOFT TIMEOUT] {e}")
-                job_id   = args[0].get('job_id')   if args and isinstance(args[0], dict) else None
+                job_id = args[0].get('job_id') if args and isinstance(args[0], dict) else None
                 if job_id:
                     if func.__name__ == 'fetch_top_traders':
-                        _save_result_with_retry(f"phase1_top_traders:{job_id}",
-                                                {'wallets': [], 'wallet_data': {}, 'source': 'top_traders', 'error': str(e)})
+                        _save_result_with_retry(
+                            f"phase1_top_traders:{job_id}",
+                            {'wallets': [], 'wallet_data': {}, 'source': 'top_traders', 'error': str(e)}
+                        )
                     elif func.__name__ == 'fetch_first_buyers':
-                        _save_result_with_retry(f"phase1_first_buyers:{job_id}",
-                                                {'wallets': [], 'wallet_data': {}, 'source': 'first_buyers', 'error': str(e)})
-                    elif func.__name__ == 'fetch_top_holders':
-                        _save_result_with_retry(f"phase1_holders:{job_id}",
-                                                {'wallets': [], 'wallet_data': {}, 'source': 'top_holders', 'error': str(e)})
+                        _save_result_with_retry(
+                            f"phase1_first_buyers:{job_id}",
+                            {'wallets': [], 'wallet_data': {}, 'source': 'first_buyers', 'error': str(e)}
+                        )
                 raise
             except Exception:
                 signal.alarm(0)
@@ -284,7 +289,7 @@ def _save_result(key, data, ttl=None):
     r.set(f"job_result:{key}", json.dumps(data), ex=ttl or PIPELINE_TTL)
 
 def _load_result(key):
-    r = _get_redis()
+    r   = _get_redis()
     raw = r.get(f"job_result:{key}")
     return json.loads(raw) if raw else None
 
@@ -308,26 +313,26 @@ def _save_fetch_log(key, entries, ex=None):
 def _build_fetch_log_entry(wallet, url, resp, outcome, reason, price_found=False,
                            error=None, failure_cause=None):
     if resp is None:
-        response_type  = 'null'
-        response_keys  = []
-        response_len   = 0
-        failure_cause  = failure_cause or 'empty_response'
+        response_type = 'null'
+        response_keys = []
+        response_len  = 0
+        failure_cause = failure_cause or 'empty_response'
     elif isinstance(resp, dict):
-        response_type  = 'empty_dict' if not resp else 'dict'
-        response_keys  = list(resp.keys())
-        response_len   = len(resp.get('trades', resp.get('accounts', [])))
+        response_type = 'empty_dict' if not resp else 'dict'
+        response_keys = list(resp.keys())
+        response_len  = len(resp.get('trades', resp.get('accounts', [])))
         if not resp and not failure_cause:
             failure_cause = 'api_error'
     elif isinstance(resp, list):
-        response_type  = 'empty_list' if not resp else 'list'
-        response_keys  = []
-        response_len   = len(resp)
+        response_type = 'empty_list' if not resp else 'list'
+        response_keys = []
+        response_len  = len(resp)
         if not resp and not failure_cause:
             failure_cause = 'api_error'
     else:
-        response_type  = str(type(resp).__name__)
-        response_keys  = []
-        response_len   = 0
+        response_type = str(type(resp).__name__)
+        response_keys = []
+        response_len  = 0
 
     entry = {
         'wallet':        wallet,
@@ -348,17 +353,17 @@ def _build_fetch_log_entry(wallet, url, resp, outcome, reason, price_found=False
 
 def _append_to_job_fetch_summary(job_id, batch_type, batch_idx, total, found,
                                  failure_counts, ex=None):
-    key = f"log:job_fetch_summary:{job_id}"
-    r   = _get_redis()
-    raw = r.get(key)
+    key      = f"log:job_fetch_summary:{job_id}"
+    r        = _get_redis()
+    raw      = r.get(key)
     existing = json.loads(raw) if raw else []
     existing.append({
-        'batch_type':      batch_type,
-        'batch_idx':       batch_idx,
-        'timestamp':       time.time(),
-        'total_wallets':   total,
-        'prices_found':    found,
-        'failure_counts':  failure_counts,
+        'batch_type':       batch_type,
+        'batch_idx':        batch_idx,
+        'timestamp':        time.time(),
+        'total_wallets':    total,
+        'prices_found':     found,
+        'failure_counts':   failure_counts,
         'success_rate_pct': round((found / total * 100) if total > 0 else 0, 1),
     })
     r.set(key, json.dumps(existing, default=str), ex=ex or LOG_TTL)
@@ -403,6 +408,57 @@ def _get_qualified_wallets_cache(token_address):
     return None
 
 # =============================================================================
+# HISTORY CACHE HELPERS
+# Returns fresh result from user_analysis_history if < 6h old, skipping pipeline
+# =============================================================================
+
+def _get_history_cache_single(user_id, token_address, supabase, schema_name):
+    try:
+        cutoff = time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                               time.gmtime(time.time() - HISTORY_CACHE_TTL))
+        rows = supabase.schema(schema_name).table('user_analysis_history').select(
+            'data, created_at'
+        ).eq('user_id', user_id).eq('result_type', 'single').gte(
+            'created_at', cutoff
+        ).order('created_at', desc=True).limit(20).execute()
+
+        if not rows.data:
+            return None
+
+        for row in rows.data:
+            data      = row.get('data') or {}
+            token_obj = data.get('token') or {}
+            if token_obj.get('address') == token_address:
+                wallets = data.get('wallets', [])
+                if wallets and len(wallets) > 0:
+                    print(f"[HISTORY CACHE] Fresh single result found for {token_address[:8]}")
+                    return data
+    except Exception as e:
+        print(f"[HISTORY CACHE] single lookup failed: {e}")
+    return None
+
+def _get_history_cache_discovery(user_id, supabase, schema_name):
+    try:
+        cutoff = time.strftime('%Y-%m-%dT%H:%M:%SZ',
+                               time.gmtime(time.time() - HISTORY_CACHE_TTL))
+        rows = supabase.schema(schema_name).table('user_analysis_history').select(
+            'data, created_at'
+        ).eq('user_id', user_id).eq('result_type', 'discovery').gte(
+            'created_at', cutoff
+        ).order('created_at', desc=True).limit(1).execute()
+
+        if not rows.data:
+            return None
+        data    = rows.data[0].get('data') or {}
+        wallets = data.get('wallets', data.get('smart_money_wallets', []))
+        if wallets and len(wallets) > 0:
+            print(f"[HISTORY CACHE] Fresh discovery result found for {user_id[:8]}")
+            return data
+    except Exception as e:
+        print(f"[HISTORY CACHE] discovery lookup failed: {e}")
+    return None
+
+# =============================================================================
 # WORKER ANALYZER GETTER
 # =============================================================================
 
@@ -418,16 +474,30 @@ def get_worker_analyzer():
 def perform_wallet_analysis(data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
-    tokens    = data.get('tokens', [])
-    user_id   = data.get('user_id', 'default_user')
-    job_id    = data.get('job_id')
-    supabase  = get_supabase_client()
-    r         = _get_redis()
+    tokens   = data.get('tokens', [])
+    user_id  = data.get('user_id', 'default_user')
+    job_id   = data.get('job_id')
+    supabase = get_supabase_client()
+    r        = _get_redis()
 
     if len(tokens) == 1:
         token         = tokens[0]
         token_address = token['address']
 
+        # Check history cache first — skip full pipeline if < 6h old result exists
+        history_result = _get_history_cache_single(user_id, token_address, supabase, SCHEMA_NAME)
+        if history_result is not None:
+            print(f"[HISTORY CACHE] Returning cached result for {token.get('ticker')}")
+            try:
+                supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                    'status': 'completed', 'phase': 'done', 'progress': 100,
+                    'results': history_result,
+                }).eq('job_id', job_id).execute()
+            except Exception as e:
+                print(f"[HISTORY CACHE] Failed to update job: {e}")
+            return
+
+        # Redis cache
         cached = r.get(f"cache:token:{token_address}")
         if cached:
             cached_result = json.loads(cached)
@@ -500,7 +570,7 @@ def perform_wallet_analysis(data):
 
 
 # =============================================================================
-# PIPELINE QUEUING — entry prices now come from PnL first_buy, no job4_coord
+# PIPELINE QUEUING — top_holders removed, 2 phase-1 workers only
 # =============================================================================
 
 def _queue_single_token_pipeline(token, user_id, job_id, supabase):
@@ -521,22 +591,15 @@ def _queue_single_token_pipeline(token, user_id, job_id, supabase):
         retry=RQRetry(max=3, interval=[10, 30, 60]),
         failure_ttl=86400,
     )
-    job3 = q_batch.enqueue(
-        'services.worker_tasks.fetch_top_holders',
-        {'token': token, 'job_id': job_id},
-        job_timeout=JT_PHASE1_WORKER,
-        retry=RQRetry(max=3, interval=[10, 30, 60]),
-        failure_ttl=86400,
-    )
-    # NOTE: No job4_coord — entry prices now extracted from /pnl/{wallet}/{token} first_buy field
+
     pnl_coordinator = q_compute.enqueue(
         'services.worker_tasks.coordinate_pnl_phase',
         {
             'token': token, 'job_id': job_id,
             'user_id': user_id, 'parent_job_id': None,
-            'phase1_jobs': [job1.id, job2.id, job3.id],
+            'phase1_jobs': [job1.id, job2.id],
         },
-        depends_on=Dependency(jobs=[job1, job2, job3], allow_failure=True),
+        depends_on=Dependency(jobs=[job1, job2], allow_failure=True),
         job_timeout=JT_COORD,
         retry=RQRetry(max=3, interval=[10, 30, 60]),
         failure_ttl=86400,
@@ -546,7 +609,7 @@ def _queue_single_token_pipeline(token, user_id, job_id, supabase):
     r.set(f"pipeline:{job_id}:coordinator", pnl_coordinator.id, ex=PIPELINE_TTL)
     r.set(f"pipeline:{job_id}:token",       json.dumps(token),  ex=PIPELINE_TTL)
 
-    print(f"  ✓ Phase 1: traders={job1.id[:8]} buyers={job2.id[:8]} holders={job3.id[:8]}")
+    print(f"  ✓ Phase 1: traders={job1.id[:8]} buyers={job2.id[:8]}")
     print(f"  ✓ PnL coord: {pnl_coordinator.id[:8]} (entry prices from PnL first_buy)")
 
 
@@ -569,7 +632,7 @@ def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
 
         cached_wallets = _get_qualified_wallets_cache(token['address'])
         if cached_wallets:
-            print(f"  ✓ CACHE HIT for {token.get('ticker')} — skipping Phases 1-3")
+            print(f"  ✓ CACHE HIT for {token.get('ticker')} — skipping Phases 1-2")
             q_compute.enqueue(
                 'services.worker_tasks.fetch_from_token_cache',
                 {'token': token, 'job_id': sub_job_id,
@@ -591,22 +654,14 @@ def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
                 retry=RQRetry(max=3, interval=[10, 30, 60]),
                 failure_ttl=86400,
             )
-            job3 = q_batch.enqueue(
-                'services.worker_tasks.fetch_top_holders',
-                {'token': token, 'job_id': sub_job_id},
-                job_timeout=JT_PHASE1_WORKER,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
-            )
-            # NOTE: No job4_coord — entry prices from PnL first_buy
             q_compute.enqueue(
                 'services.worker_tasks.coordinate_pnl_phase',
                 {
                     'token': token, 'job_id': sub_job_id,
                     'user_id': user_id, 'parent_job_id': job_id,
-                    'phase1_jobs': [job1.id, job2.id, job3.id],
+                    'phase1_jobs': [job1.id, job2.id],
                 },
-                depends_on=Dependency(jobs=[job1, job2, job3], allow_failure=True),
+                depends_on=Dependency(jobs=[job1, job2], allow_failure=True),
                 job_timeout=JT_COORD,
                 retry=RQRetry(max=3, interval=[10, 30, 60]),
                 failure_ttl=86400,
@@ -651,9 +706,22 @@ def perform_auto_discovery(data):
     user_id         = data.get('user_id', 'default_user')
     min_runner_hits = data.get('min_runner_hits', 2)
     job_id          = data.get('job_id')
-    analyzer        = get_worker_analyzer()
     supabase        = get_supabase_client()
 
+    # Check history cache first
+    history_result = _get_history_cache_discovery(user_id, supabase, SCHEMA_NAME)
+    if history_result is not None:
+        print(f"[HISTORY CACHE] Returning cached discovery result for {user_id[:8]}")
+        try:
+            supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                'status': 'completed', 'phase': 'done', 'progress': 100,
+                'results': history_result,
+            }).eq('job_id', job_id).execute()
+        except Exception as e:
+            print(f"[HISTORY CACHE] Failed to update job: {e}")
+        return
+
+    analyzer = get_worker_analyzer()
     print(f"\n[AUTO DISCOVERY] Finding runners...")
     supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
         'phase': 'fetching_trending', 'progress': 15
@@ -684,7 +752,7 @@ def perform_auto_discovery(data):
     print(f"[AUTO DISCOVERY] Distributed pipeline queued for {len(tokens)} runners")
 
 # =============================================================================
-# PHASE 1 WORKERS
+# PHASE 1 WORKERS — top_traders and first_buyers only
 # =============================================================================
 
 @timeout(TIMEOUT_PHASE1_WORKER)
@@ -822,9 +890,10 @@ def fetch_first_buyers(data):
                 volume_usd  = first_buy.get('volume_usd', 0)
                 entry_price = (volume_usd / amount) if amount > 0 else None
                 wallet_data[wallet] = {
-                    'source': 'first_buyers', 'pnl_data': buyer,
+                    'source':         'first_buyers',
+                    'pnl_data':       buyer,
                     'earliest_entry': buyer.get('first_buy_time', 0),
-                    'entry_price': entry_price,
+                    'entry_price':    entry_price,
                 }
 
     result = {'wallets': wallets, 'wallet_data': wallet_data, 'source': 'first_buyers'}
@@ -837,70 +906,8 @@ def fetch_first_buyers(data):
     heartbeat.stop()
     return result
 
-
-@timeout(TIMEOUT_PHASE1_WORKER)
-def fetch_top_holders(data):
-    analyzer        = get_worker_analyzer()
-    token           = data['token']
-    job_id          = data['job_id']
-    heartbeat       = HeartbeatManager(_safe_heartbeat_job())
-    heartbeat.start()
-
-    MIN_HOLDING_USD = 100
-    url             = f"{analyzer.st_base_url}/tokens/{token['address']}/holders/paginated"
-
-    try:
-        response = holders_circuit_breaker.call(
-            analyzer.fetch_with_retry,
-            url, analyzer._get_solanatracker_headers(),
-            params={'limit': 1000},
-            semaphore=analyzer.solana_tracker_semaphore,
-        )
-    except Exception as e:
-        print(f"[WORKER 3] Circuit breaker / error: {e}")
-        result = {'wallets': [], 'wallet_data': {}, 'source': 'top_holders',
-                  'total_holders': 0, 'error': str(e)}
-        _save_result_with_retry(f"phase1_holders:{job_id}", result)
-        heartbeat.stop()
-        return result
-
-    wallets      = []
-    wallet_data  = {}
-    total_raw    = 0
-    filtered_out = 0
-
-    if response and response.get('accounts'):
-        total_raw = len(response['accounts'])
-        for account in response['accounts']:
-            wallet      = account.get('wallet')
-            holding_usd = account.get('value', {}).get('usd', 0)
-            if not wallet:
-                continue
-            if holding_usd < MIN_HOLDING_USD:
-                filtered_out += 1
-                continue
-            wallets.append(wallet)
-            wallet_data[wallet] = {
-                'source': 'top_holders', 'pnl_data': None,
-                'earliest_entry': None, 'entry_price': None,
-                'holding_amount': account.get('amount', 0),
-                'holding_usd':    holding_usd,
-                'holding_pct':    account.get('percentage', 0),
-            }
-
-    result = {
-        'wallets': wallets, 'wallet_data': wallet_data, 'source': 'top_holders',
-        'total_holders': response.get('total', 0) if response else 0,
-    }
-    _save_result_with_retry(f"phase1_holders:{job_id}", result)
-    print(f"[WORKER 3] top_holders done: {len(wallets)} kept "
-          f"(from {total_raw} fetched, {filtered_out} filtered <${MIN_HOLDING_USD} USD, "
-          f"total={result['total_holders']})")
-    heartbeat.stop()
-    return result
-
 # =============================================================================
-# PHASE 2 COORDINATOR — everyone goes to PnL fetch, entry price from first_buy
+# PHASE 2 COORDINATOR — top_traders + first_buyers only, entry price from first_buy
 # =============================================================================
 
 def coordinate_pnl_phase(data):
@@ -916,9 +923,9 @@ def coordinate_pnl_phase(data):
 
         all_wallets   = []
         wallet_data   = {}
-        source_counts = {'top_traders': 0, 'first_buyers': 0, 'top_holders': 0}
+        source_counts = {'top_traders': 0, 'first_buyers': 0}
 
-        for key_prefix in ['phase1_top_traders', 'phase1_first_buyers', 'phase1_holders']:
+        for key_prefix in ['phase1_top_traders', 'phase1_first_buyers']:
             result = _load_result(f"{key_prefix}:{job_id}")
             if result:
                 source = result.get('source', key_prefix.replace('phase1_', ''))
@@ -931,42 +938,41 @@ def coordinate_pnl_phase(data):
                     else:
                         existing = wallet_data[wallet]
                         new      = result['wallet_data'].get(wallet, {})
-                        # first_buyers data takes priority for entry_price
+                        # first_buyers entry_price takes priority
                         if new.get('entry_price') and not existing.get('entry_price'):
                             existing['entry_price'] = new['entry_price']
                         if new.get('earliest_entry') and not existing.get('earliest_entry'):
                             existing['earliest_entry'] = new['earliest_entry']
                         if new.get('pnl_data') and not existing.get('pnl_data'):
                             existing['pnl_data'] = new['pnl_data']
-                        for hf in ['holding_amount', 'holding_usd', 'holding_pct']:
-                            if new.get(hf) and not existing.get(hf):
-                                existing[hf] = new[hf]
-                src_key = source if source in source_counts else 'top_holders'
+                        # If this is first_buyers data, prefer it
+                        if source == 'first_buyers' and new.get('pnl_data'):
+                            existing['pnl_data'] = new['pnl_data']
+                            existing['source']   = 'first_buyers'
+                src_key = source if source in source_counts else 'top_traders'
                 source_counts[src_key] = added
             else:
                 print(f"[PNL COORD] Warning: No result for {key_prefix}:{job_id}")
 
         print(f"  ✓ Sources: traders={source_counts['top_traders']} "
-              f"buyers={source_counts['first_buyers']} "
-              f"holders={source_counts['top_holders']} unique={len(all_wallets)}")
+              f"buyers={source_counts['first_buyers']} unique={len(all_wallets)}")
 
         _save_result(f"phase1_merged:{job_id}",
                      {'wallets': all_wallets, 'wallet_data': wallet_data}, ttl=LOG_TTL)
 
-        # ── Pre-qualify wallets that have BOTH pnl_data AND entry_price ──────────
-        # This covers first_buyers (entry_price from first_buy.volume_usd/amount)
-        # All others go to PnL fetch — entry_price extracted from first_buy in PnL response
-        pre_qualified  = []
-        need_pnl_fetch = []
+        # Pre-qualify wallets that already have BOTH pnl_data AND entry_price
+        # (first_buyers — no PnL re-fetch needed)
+        # top_traders without entry_price go to PnL fetch
+        pre_qualified   = []
+        need_pnl_fetch  = []
         pre_qual_failed = defaultdict(int)
 
         for wallet in all_wallets:
-            wdata       = wallet_data.get(wallet, {})
-            has_pnl     = wdata.get('pnl_data') is not None
-            has_price   = wdata.get('entry_price') is not None
+            wdata     = wallet_data.get(wallet, {})
+            has_pnl   = wdata.get('pnl_data') is not None
+            has_price = wdata.get('entry_price') is not None
 
             if has_pnl and has_price:
-                # first_buyers with entry_price already computed — try to qualify directly
                 if not _qualify_wallet(wallet, wdata['pnl_data'], wallet_data,
                                        token, pre_qualified, debug=True):
                     invested = wdata['pnl_data'].get('total_invested', 0)
@@ -975,8 +981,6 @@ def coordinate_pnl_phase(data):
                     else:
                         pre_qual_failed['low_multiplier'] += 1
             else:
-                # top_traders (no entry_price) and top_holders (no pnl_data) both go here
-                # PnL fetch will get us: realized, unrealized, total_invested, first_buy (→ entry_price)
                 need_pnl_fetch.append(wallet)
 
         print(f"  ✓ Pre-qualified: {len(pre_qualified)} | "
@@ -1038,7 +1042,7 @@ def coordinate_pnl_phase(data):
         heartbeat.stop()
 
 # =============================================================================
-# PHASE 2 WORKERS — simplified, entry price from first_buy in PnL response
+# PHASE 2 WORKERS — entry price from first_buy in PnL response
 # =============================================================================
 
 def fetch_pnl_batch(data):
@@ -1134,8 +1138,7 @@ def fetch_pnl_batch(data):
             })
             continue
 
-        # ── Extract entry_price from first_buy in PnL response ────────────────
-        # This works for top_traders AND top_holders — no separate trades fetch needed
+        # Extract entry_price from first_buy in PnL response
         if not wdata.get('entry_price'):
             first_buy  = pnl.get('first_buy', {})
             amount     = first_buy.get('amount', 0)
@@ -1143,8 +1146,7 @@ def fetch_pnl_batch(data):
             if amount > 0:
                 wdata['entry_price']    = volume_usd / amount
                 wdata['earliest_entry'] = first_buy.get('time')
-                # Push back into wallet_data so _qualify_wallet sees it
-                wallet_data[wallet] = wdata
+                wallet_data[wallet]     = wdata
 
         if not _qualify_wallet(wallet, pnl, wallet_data, token, qualified, debug=True):
             invested = pnl.get('total_invested', 0)
@@ -1167,7 +1169,7 @@ def fetch_pnl_batch(data):
                 'has_entry_price': bool(wdata.get('entry_price')),
                 'invested': invested,
                 'realized_multiplier': round(r_mult, 2),
-                'total_multiplier': round(t_mult, 2),
+                'total_multiplier':    round(t_mult, 2),
                 'batch_idx': batch_idx,
             })
 
@@ -1277,7 +1279,7 @@ def score_and_rank_single(data):
         pre_qualified = _load_result(f"pnl_batch:{job_id}:pre")
         if pre_qualified:
             qualified_wallets.extend(pre_qualified)
-            print(f"  Pre-qualified (traders+buyers): {len(pre_qualified)} wallets")
+            print(f"  Pre-qualified (first_buyers): {len(pre_qualified)} wallets")
 
         for i in range(batch_count):
             batch_result = _load_result(f"pnl_batch:{job_id}:{i}")
@@ -1382,7 +1384,6 @@ def score_and_rank_single(data):
                     'ath_market_cap':          ath_mcap,
                     'entry_market_cap':        entry_mcap,
                     'is_cross_token':          False,
-                    # Runner fields — populated by merge_and_save_final after runner history
                     'runner_hits_30d':         0,
                     'runner_hits_7d':          0,
                     'runner_success_rate':     0,
@@ -1544,14 +1545,12 @@ def fetch_runner_history_batch(data):
                 )
                 enriched.append({
                     'wallet':              wallet_addr,
-                    # 7/14/30d bucketed data for watchlist
                     'runners_7d':          runner_history.get('runners_7d', []),
                     'runners_14d':         runner_history.get('runners_14d', []),
                     'runners_30d':         runner_history.get('runners_30d', []),
                     'stats_7d':            runner_history.get('stats_7d', {}),
                     'stats_14d':           runner_history.get('stats_14d', {}),
                     'stats_30d':           runner_history.get('stats_30d', {}),
-                    # Backward compat flat fields
                     'runner_hits_30d':     runner_history['stats_30d'].get('total_other_runners', 0),
                     'runner_hits_7d':      runner_history['stats_7d'].get('total_other_runners', 0),
                     'runner_success_rate': runner_history['stats_30d'].get('success_rate', 0),
@@ -1568,18 +1567,11 @@ def fetch_runner_history_batch(data):
                 }
                 enriched.append({
                     'wallet':              wallet_addr,
-                    'runners_7d':          [],
-                    'runners_14d':         [],
-                    'runners_30d':         [],
-                    'stats_7d':            empty,
-                    'stats_14d':           empty,
-                    'stats_30d':           empty,
-                    'runner_hits_30d':     0,
-                    'runner_hits_7d':      0,
-                    'runner_success_rate': 0,
-                    'runner_avg_roi':      0,
-                    'other_runners':       [],
-                    'other_runners_stats': {},
+                    'runners_7d':          [], 'runners_14d':  [], 'runners_30d': [],
+                    'stats_7d':            empty, 'stats_14d': empty, 'stats_30d': empty,
+                    'runner_hits_30d':     0, 'runner_hits_7d': 0,
+                    'runner_success_rate': 0, 'runner_avg_roi': 0,
+                    'other_runners':       [], 'other_runners_stats': {},
                 })
 
         _save_result_with_retry(f"runner_batch:{job_id}:{batch_idx}", enriched)
@@ -1589,14 +1581,10 @@ def fetch_runner_history_batch(data):
         heartbeat.stop()
 
 # =============================================================================
-# RUNNER HISTORY MERGE HELPER — used by both merge_and_save_final and merge_batch_final
+# RUNNER HISTORY MERGE HELPER
 # =============================================================================
 
 def _merge_runner_history_into_wallets(wallet_list, runner_lookup):
-    """
-    Merges runner history (7d/14d/30d) into wallet result dicts.
-    Called by both merge_and_save_final (single) and merge_batch_final (batch).
-    """
     empty_stats = {
         'total_other_runners': 0, 'success_rate': 0,
         'avg_roi': 0, 'avg_entry_to_ath': 0,
@@ -1618,7 +1606,6 @@ def _merge_runner_history_into_wallets(wallet_list, runner_lookup):
             w['other_runners']       = rh.get('other_runners', [])
             w['other_runners_stats'] = rh.get('other_runners_stats', {})
         else:
-            # Defaults — runner history job may have timed out
             w.setdefault('runners_7d',          [])
             w.setdefault('runners_14d',         [])
             w.setdefault('runners_30d',         [])
@@ -1693,6 +1680,17 @@ def merge_and_save_final(data):
                         'status': 'completed', 'phase': 'done', 'progress': 100,
                         'results': result, 'token_address': token_address,
                     }).eq('job_id', job_id).execute()
+
+                    ticker   = token.get('ticker', token_address[:8])
+                    sublabel = f"{len(wallet_list)} qualified wallets"
+                    supabase.schema(SCHEMA_NAME).table('user_analysis_history').insert({
+                        'user_id':     user_id,
+                        'result_type': 'single',
+                        'label':       ticker,
+                        'sublabel':    sublabel,
+                        'data':        result,
+                    }).execute()
+
                     print(f"  ✅ Saved final result for job {job_id[:8]}")
                     break
                 except Exception as e:
@@ -1794,18 +1792,18 @@ def aggregate_cross_token(data):
                 ath_mcaps[addr]  = 0
 
         wallet_hits = defaultdict(lambda: {
-            'wallet':               None,
-            'runners_hit':          [],
+            'wallet':                None,
+            'runners_hit':           [],
             'runners_hit_addresses': set(),
-            'roi_details':          [],
-            'entry_to_ath_vals':    [],
-            'distance_to_ath_vals': [],
+            'roi_details':           [],
+            'entry_to_ath_vals':     [],
+            'distance_to_ath_vals':  [],
             'total_roi_multipliers': [],
-            'entry_ratios':         [],
-            'raw_wallet_data_list': [],
-            'total_invested_list':  [],
-            'realized_list':        [],
-            'unrealized_list':      [],
+            'entry_ratios':          [],
+            'raw_wallet_data_list':  [],
+            'total_invested_list':   [],
+            'realized_list':         [],
+            'unrealized_list':       [],
         })
 
         for token_result in all_token_results:
@@ -1834,15 +1832,9 @@ def aggregate_cross_token(data):
                     'ath_mcap':    ath_mcap,
                 })
 
-                wallet_hits[addr]['total_invested_list'].append(
-                    wallet_info.get('total_invested', 0)
-                )
-                wallet_hits[addr]['realized_list'].append(
-                    wallet_info.get('realized', 0)
-                )
-                wallet_hits[addr]['unrealized_list'].append(
-                    wallet_info.get('unrealized', 0)
-                )
+                wallet_hits[addr]['total_invested_list'].append(wallet_info.get('total_invested', 0))
+                wallet_hits[addr]['realized_list'].append(wallet_info.get('realized', 0))
+                wallet_hits[addr]['unrealized_list'].append(wallet_info.get('unrealized', 0))
 
                 entry_price         = wallet_info.get('entry_price')
                 distance_to_ath_pct = 0
@@ -1866,15 +1858,15 @@ def aggregate_cross_token(data):
                     entry_mcap = round((entry_price / ath_price) * ath_mcap, 0)
 
                 wallet_hits[addr]['roi_details'].append({
-                    'runner':                   sym,
-                    'runner_address':           token_addr,
-                    'roi_multiplier':           wallet_info.get('realized_multiplier', 0),
-                    'total_multiplier':         wallet_info.get('total_multiplier', 0),
-                    'entry_to_ath_multiplier':  round(entry_to_ath_mult, 2) if entry_to_ath_mult else None,
-                    'distance_to_ath_pct':      round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
-                    'entry_price':              entry_price,
-                    'ath_market_cap':           ath_mcap,
-                    'entry_market_cap':         entry_mcap,
+                    'runner':                  sym,
+                    'runner_address':          token_addr,
+                    'roi_multiplier':          wallet_info.get('realized_multiplier', 0),
+                    'total_multiplier':        wallet_info.get('total_multiplier', 0),
+                    'entry_to_ath_multiplier': round(entry_to_ath_mult, 2) if entry_to_ath_mult else None,
+                    'distance_to_ath_pct':     round(distance_to_ath_pct, 2) if distance_to_ath_pct else None,
+                    'entry_price':             entry_price,
+                    'ath_market_cap':          ath_mcap,
+                    'entry_market_cap':        entry_mcap,
                 })
 
         cross_token_candidates  = []
@@ -1908,15 +1900,15 @@ def aggregate_cross_token(data):
                 consistency_score = 50
 
             if runner_count >= min_runner_hits:
-                entry_score    = _roi_to_score(avg_entry_to_ath) if avg_entry_to_ath else 0
-                roi_score      = _roi_to_score(avg_total_roi)
-                aggregate_score= 0.60 * entry_score + 0.30 * roi_score + 0.10 * consistency_score
-                participation  = runner_count / len(tokens) if tokens else 0
+                entry_score     = _roi_to_score(avg_entry_to_ath) if avg_entry_to_ath else 0
+                roi_score       = _roi_to_score(avg_total_roi)
+                aggregate_score = 0.60 * entry_score + 0.30 * roi_score + 0.10 * consistency_score
+                participation   = runner_count / len(tokens) if tokens else 0
 
                 if   participation >= 0.8 and aggregate_score >= 85: tier = 'S'
                 elif participation >= 0.6 and aggregate_score >= 75: tier = 'A'
                 elif participation >= 0.4 and aggregate_score >= 65: tier = 'B'
-                else:                                                 tier = 'C'
+                else:                                                  tier = 'C'
 
                 cross_token_candidates.append({
                     'wallet':                      addr,
@@ -1933,18 +1925,11 @@ def aggregate_cross_token(data):
                     'professional_grade':          _calculate_grade(aggregate_score),
                     'roi_details':                 d['roi_details'][:5],
                     'is_fresh':                    True,
-                    'runner_hits_30d':             0,
-                    'runner_hits_7d':              0,
-                    'runner_success_rate':         0,
-                    'runner_avg_roi':              0,
-                    'other_runners':               [],
-                    'other_runners_stats':         {},
-                    'runners_7d':                  [],
-                    'runners_14d':                 [],
-                    'runners_30d':                 [],
-                    'stats_7d':                    {},
-                    'stats_14d':                   {},
-                    'stats_30d':                   {},
+                    'runner_hits_30d':             0, 'runner_hits_7d': 0,
+                    'runner_success_rate':         0, 'runner_avg_roi': 0,
+                    'other_runners':               [], 'other_runners_stats': {},
+                    'runners_7d':                  [], 'runners_14d': [], 'runners_30d': [],
+                    'stats_7d':                    {}, 'stats_14d': {}, 'stats_30d': {},
                     'total_invested':              round(total_invested_sum, 2),
                     'total_invested_sum':          round(total_invested_sum, 2),
                     'total_realized_sum':          round(total_realized_sum, 2),
@@ -1958,19 +1943,18 @@ def aggregate_cross_token(data):
                 })
 
             else:
-                best_raw = max(d['raw_wallet_data_list'],
-                               key=lambda x: x['wallet_info'].get('total_multiplier', 0))
-                wi       = best_raw['wallet_info']
+                best_raw       = max(d['raw_wallet_data_list'],
+                                     key=lambda x: x['wallet_info'].get('total_multiplier', 0))
+                wi             = best_raw['wallet_info']
                 ath_price_best = best_raw['ath_price']
                 ath_mcap_best  = best_raw['ath_mcap']
 
-                wallet_info_for_scoring = {**wi, 'ath_price': ath_price_best}
-                scoring = analyzer.calculate_wallet_relative_score(wallet_info_for_scoring)
+                scoring = analyzer.calculate_wallet_relative_score({**wi, 'ath_price': ath_price_best})
 
                 if   scoring['professional_score'] >= 90: tier = 'S'
                 elif scoring['professional_score'] >= 80: tier = 'A'
                 elif scoring['professional_score'] >= 70: tier = 'B'
-                else:                                     tier = 'C'
+                else:                                      tier = 'C'
 
                 entry_price = wi.get('entry_price')
                 entry_mcap  = None
@@ -2007,28 +1991,21 @@ def aggregate_cross_token(data):
                     'roi_details':             d['roi_details'][:5],
                     'score_breakdown':         scoring['score_breakdown'],
                     'is_fresh':                True,
-                    'runner_hits_30d':         0,
-                    'runner_hits_7d':          0,
-                    'runner_success_rate':     0,
-                    'runner_avg_roi':          0,
-                    'other_runners':           [],
-                    'other_runners_stats':     {},
-                    'runners_7d':              [],
-                    'runners_14d':             [],
-                    'runners_30d':             [],
-                    'stats_7d':                {},
-                    'stats_14d':               {},
-                    'stats_30d':               {},
+                    'runner_hits_30d':         0, 'runner_hits_7d': 0,
+                    'runner_success_rate':     0, 'runner_avg_roi': 0,
+                    'other_runners':           [], 'other_runners_stats': {},
+                    'runners_7d':              [], 'runners_14d': [], 'runners_30d': [],
+                    'stats_7d':                {}, 'stats_14d': {}, 'stats_30d': {},
                 })
 
         cross_token_candidates.sort(key=lambda x: (x['runner_count'], x['aggregate_score']),
                                     reverse=True)
         single_token_candidates.sort(key=lambda x: x['professional_score'], reverse=True)
 
-        cross_top      = cross_token_candidates[:20]
-        slots_remaining= max(0, 20 - len(cross_top))
-        single_fill    = single_token_candidates[:slots_remaining]
-        top_20         = cross_top + single_fill
+        cross_top       = cross_token_candidates[:20]
+        slots_remaining = max(0, 20 - len(cross_top))
+        single_fill     = single_token_candidates[:slots_remaining]
+        top_20          = cross_top + single_fill
 
         print(f"  ✓ Cross-token: {len(cross_top)} | Single-token fill: {len(single_fill)} | "
               f"Top 20 total: {len(top_20)}")
@@ -2125,6 +2102,7 @@ def merge_batch_final(data):
                     'results': final_result,
                 }).eq('job_id', job_id).execute()
                 print(f"  ✅ Saved final batch result for job {job_id[:8]}")
+
                 tokens_list  = final_result.get('tokens_analyzed_list', [])
                 wallets_list = final_result.get('wallets', [])
                 label        = ', '.join(tokens_list) if tokens_list else 'Batch Analysis'

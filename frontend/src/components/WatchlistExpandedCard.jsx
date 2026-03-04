@@ -5,7 +5,7 @@ import {
   WifiOff, Lock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useDiary } from './useDiary';
+import { useDiary } from "./hooks/Usediary";
 import DiaryUnlock from './DiaryUnlock';
 
 // ─── Note type config ─────────────────────────────────────────────────────────
@@ -131,7 +131,15 @@ function WalletDiary({ userId, apiUrl, walletAddress }) {
   };
 
   // Show unlock screen if locked
-  if (diary.locked) {
+   if (diary.locked) {
+    if (diary.isNew === null) {
+      return (
+        <div className="flex items-center justify-center py-8">
+          <div className="w-6 h-6 border-2 border-white/20 border-t-purple-500 rounded-full animate-spin" />
+        </div>
+      );
+    }
+
     return (
       <DiaryUnlock
         userId={userId}
@@ -224,7 +232,9 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
 
   useEffect(() => {
     if (!userId || !apiUrl) return;
-    fetch(`${apiUrl}/api/diary/notes?user_id=${userId}&wallet_address=${wallet.wallet_address}`)
+    fetch(`${apiUrl}/api/diary/notes?user_id=${userId}&wallet_address=${wallet.wallet_address}`, {
+  headers: { 'Accept': 'application/json' },
+})
       .then(r => r.json())
       .then(d => { if (d.success) setNoteCount(d.count || 0); })
       .catch(() => {});
