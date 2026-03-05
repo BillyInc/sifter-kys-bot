@@ -40,5 +40,3 @@ dist/
 build/
 ngrok.zip
 
-Backend/simulation/
-Backend/routes/abm_state_route.py
