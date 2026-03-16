@@ -10,9 +10,10 @@ function SkeletonBox({ className = '' }) {
   );
 }
 
-export default function MyDashboardPanel({ userId, apiUrl }) {
+export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
   const [stats, setStats] = useState(statsCache[userId] || null);
   const [isLoading, setIsLoading] = useState(!statsCache[userId]);
+  
   // Dismissible welcome banner (per user)
   const storageKey = `dash_welcome_dismissed_${userId}`;
   const [showWelcome, setShowWelcome] = useState(() => {
@@ -24,6 +25,9 @@ export default function MyDashboardPanel({ userId, apiUrl }) {
     try { localStorage.setItem(storageKey, 'true'); } catch {}
   };
 
+  // Track if this is the first load to prevent double loading
+  const initialLoadDone = useRef(false);
+
   useEffect(() => {
     // If we already have cached data, show it immediately and refresh silently
     if (statsCache[userId]) {
@@ -33,10 +37,15 @@ export default function MyDashboardPanel({ userId, apiUrl }) {
     } else {
       loadStats(false);
     }
-  }, [userId]);
+  }, [userId, refreshKey]); // ← add refreshKey dependency
 
   const loadStats = async (silent = false) => {
-    if (!silent) setIsLoading(true);
+    // On explicit refresh (non-silent), bust the cache
+    if (!silent) {
+      delete statsCache[userId]; // bust on foreground load
+      setIsLoading(true);
+    }
+    
     try {
       const response = await fetch(`${apiUrl}/api/user/dashboard-stats?user_id=${userId}`);
       const data = await response.json();

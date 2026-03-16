@@ -2,262 +2,847 @@
 Celery Scheduled Tasks - Production Cron Jobs
 These run on Celery Beat scheduler (time-based, recurring)
 For on-demand analysis workers, see worker_tasks.py (RQ)
+
+Tasks:
+  daily_stats_refresh          — daily 3am UTC
+  weekly_rerank_all            — Sunday 4am UTC
+  four_week_degradation_check  — 1st & 29th of month 5am UTC
+  refresh_elite_100            — every hour (:00)
+  refresh_community_top_100    — every hour (:15)
+  flush_redis_to_duckdb        — every hour (:30)
+  invalidate_stale_ath_caches  — every hour (:45)  NEW
+  purge_stale_analysis_cache   — one-time / on-demand  NEW
+  send_telegram_alert_async    — on-demand (queued by wallet monitor)
 """
 from celery_app import celery
 from datetime import datetime
 import os
 
 
+# =============================================================================
+# DAILY STATS REFRESH
+# =============================================================================
+
 @celery.task(name='tasks.daily_stats_refresh')
 def daily_stats_refresh():
     """
-    Daily stats refresh at 3am UTC
-    Updates all watchlist wallet metrics
+    Daily stats refresh at 3am UTC.
+    Updates all watchlist wallet metrics.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Daily Stats Refresh - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
-    
+
     try:
         from services.watchlist_stats_updater import get_updater
         updater = get_updater()
-        
+
         result = updater.daily_stats_refresh()
-        
+
         print(f"\n[CELERY TASK] Daily refresh complete: {result}")
         return {
-            'status': 'success',
-            'result': result,
+            'status':    'success',
+            'result':    result,
             'timestamp': datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         print(f"\n[CELERY TASK] Daily refresh failed: {e}")
         import traceback
         traceback.print_exc()
         return {
-            'status': 'error',
-            'error': str(e),
+            'status':    'error',
+            'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
 
+
+# =============================================================================
+# WEEKLY RERANK
+# =============================================================================
 
 @celery.task(name='tasks.weekly_rerank_all')
 def weekly_rerank_all():
     """
-    Weekly rerank on Sunday at 4am UTC
-    Reranks all user watchlists
+    Weekly rerank on Sunday at 4am UTC.
+    Reranks all user watchlists.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Weekly Rerank - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
-    
+
     try:
         from services.watchlist_stats_updater import get_updater
         updater = get_updater()
-        
+
         result = updater.weekly_rerank_all()
-        
+
         print(f"\n[CELERY TASK] Weekly rerank complete: {result}")
         return {
-            'status': 'success',
-            'result': result,
+            'status':    'success',
+            'result':    result,
             'timestamp': datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         print(f"\n[CELERY TASK] Weekly rerank failed: {e}")
         import traceback
         traceback.print_exc()
         return {
-            'status': 'error',
-            'error': str(e),
+            'status':    'error',
+            'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
 
+
+# =============================================================================
+# 4-WEEK DEGRADATION CHECK
+# =============================================================================
 
 @celery.task(name='tasks.four_week_degradation_check')
 def four_week_degradation_check():
     """
-    4-week degradation check every 28 days at 5am UTC
-    Identifies wallets with declining performance over 4 weeks
+    4-week degradation check every 28 days at 5am UTC.
+    Identifies wallets with declining performance over 4 weeks.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] 4-Week Degradation Check - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
-    
+
     try:
         from services.watchlist_stats_updater import get_updater
         updater = get_updater()
-        
+
         result = updater.four_week_degradation_check()
-        
+
         print(f"\n[CELERY TASK] 4-week check complete: {result}")
         return {
-            'status': 'success',
-            'result': result,
+            'status':    'success',
+            'result':    result,
             'timestamp': datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         print(f"\n[CELERY TASK] 4-week check failed: {e}")
         import traceback
         traceback.print_exc()
         return {
-            'status': 'error',
-            'error': str(e),
+            'status':    'error',
+            'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
 
+
+# =============================================================================
+# ELITE 100 REFRESH
+# =============================================================================
 
 @celery.task(name='tasks.refresh_elite_100')
 def refresh_elite_100():
     """
-    Refresh Elite 100 rankings every hour
-    Generates top 100 performing wallets across all metrics
+    Refresh Elite 100 rankings every hour (top of hour).
+    Generates top 100 performing wallets across all metrics.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Elite 100 Refresh - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
-    
+
     try:
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
-        
-        # Generate all 3 variants
-        score_wallets = manager.generate_elite_100('score')
-        roi_wallets = manager.generate_elite_100('roi')
+
+        score_wallets   = manager.generate_elite_100('score')
+        roi_wallets     = manager.generate_elite_100('roi')
         runners_wallets = manager.generate_elite_100('runners')
-        
+
         print(f"\n[CELERY TASK] Elite 100 refresh complete")
-        print(f"  - By Score: {len(score_wallets)} wallets")
-        print(f"  - By ROI: {len(roi_wallets)} wallets")
+        print(f"  - By Score:   {len(score_wallets)} wallets")
+        print(f"  - By ROI:     {len(roi_wallets)} wallets")
         print(f"  - By Runners: {len(runners_wallets)} wallets")
-        
+
         return {
             'status': 'success',
             'counts': {
-                'score': len(score_wallets),
-                'roi': len(roi_wallets),
+                'score':   len(score_wallets),
+                'roi':     len(roi_wallets),
                 'runners': len(runners_wallets)
             },
             'timestamp': datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         print(f"\n[CELERY TASK] Elite 100 refresh failed: {e}")
         import traceback
         traceback.print_exc()
         return {
-            'status': 'error',
-            'error': str(e),
+            'status':    'error',
+            'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
 
+
+# =============================================================================
+# COMMUNITY TOP 100 REFRESH
+# =============================================================================
 
 @celery.task(name='tasks.refresh_community_top_100')
 def refresh_community_top_100():
     """
-    Refresh Community Top 100 every hour
-    Shows most-added wallets this week
+    Refresh Community Top 100 every hour (:15 past).
+    Shows most-added wallets this week.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Community Top 100 Refresh - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
-    
+
     try:
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
-        
+
         wallets = manager.generate_community_top_100()
-        
+
         print(f"\n[CELERY TASK] Community Top 100 refresh complete: {len(wallets)} wallets")
-        
         return {
-            'status': 'success',
-            'count': len(wallets),
+            'status':    'success',
+            'count':     len(wallets),
             'timestamp': datetime.utcnow().isoformat()
         }
-        
+
     except Exception as e:
         print(f"\n[CELERY TASK] Community Top 100 refresh failed: {e}")
         import traceback
         traceback.print_exc()
         return {
-            'status': 'error',
-            'error': str(e),
+            'status':    'error',
+            'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
 
 
+# =============================================================================
+# REDIS → DUCKDB FLUSH
+# =============================================================================
+
+@celery.task(name='tasks.flush_redis_to_duckdb')
+def flush_redis_to_duckdb():
+    """
+    Flush Redis hot cache → DuckDB cold storage (every hour, :30 past).
+
+    Strategy:
+    - Workers write to Redis only (read_only=True DuckDB)
+    - This task runs on Celery Beat every hour
+    - It uses the Flask-side analyzer (read_only=False) to read Redis
+      and write everything into DuckDB for persistence
+    - On Redis restart, DuckDB automatically refills Redis on cache misses
+
+    Cache tables flushed:
+      wallet_token_cache   (PnL + entry data)    [pnl:{wallet}:{token}]
+      wallet_runner_cache  (runner history)       [runners:{wallet}]
+      token_runner_cache   (is-runner check)      [token_runner:{token}]
+      token_ath_cache      (ATH data)             [token_ath:{token}]
+      token_info_cache     (token metadata)       [token_info:{token}]
+      token_security_cache (security checks)      [token_security:{token}]
+      token_launch_cache   (launch price)         [launch_price:{token}]
+    """
+    print(f"\n{'='*80}")
+    print(f"[FLUSH TASK] Redis → DuckDB flush starting - {datetime.utcnow().isoformat()}")
+    print(f"{'='*80}\n")
+
+    try:
+        import redis as redis_lib
+        import json
+        import duckdb
+        import time
+
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=10)
+
+        duckdb_path = 'wallet_analytics.duckdb'
+        con = duckdb.connect(duckdb_path)
+
+        stats = {
+            'pnl':            0,
+            'runners':        0,
+            'token_runner':   0,
+            'token_ath':      0,
+            'token_info':     0,
+            'token_security': 0,
+            'launch_price':   0,
+            'errors':         0
+        }
+
+        now = time.time()
+
+        # ----------------------------------------------------------------
+        # 1. Flush PnL cache: pnl:{wallet}:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning pnl:* keys...")
+        pnl_keys = list(r.scan_iter("pnl:*"))
+        print(f"[FLUSH] Found {len(pnl_keys)} PnL keys")
+
+        for key in pnl_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                parts = key.split(':', 2)
+                if len(parts) != 3:
+                    continue
+                _, wallet, token = parts
+
+                con.execute("""
+                    INSERT OR REPLACE INTO wallet_token_cache
+                    (wallet, token, realized, unrealized, total_invested,
+                     entry_price, first_buy_time, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    wallet, token,
+                    data.get('realized', 0),
+                    data.get('unrealized', 0),
+                    data.get('total_invested', 0),
+                    data.get('entry_price'),
+                    data.get('first_buy_time'),
+                    now
+                ])
+                stats['pnl'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] PnL error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 2. Flush runner history cache: runners:{wallet}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning runners:* keys...")
+        runner_keys = list(r.scan_iter("runners:*"))
+        print(f"[FLUSH] Found {len(runner_keys)} runner keys")
+
+        for key in runner_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                wallet = key.split(':', 1)[1]
+
+                con.execute("""
+                    INSERT OR REPLACE INTO wallet_runner_cache
+                    (wallet, other_runners, stats, last_updated)
+                    VALUES (?, ?, ?, ?)
+                """, [
+                    wallet,
+                    json.dumps(data.get('other_runners', [])),
+                    json.dumps(data.get('stats', {})),
+                    now
+                ])
+                stats['runners'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] Runner error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 3. Flush token runner check cache: token_runner:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning token_runner:* keys...")
+        token_runner_keys = list(r.scan_iter("token_runner:*"))
+        print(f"[FLUSH] Found {len(token_runner_keys)} token_runner keys")
+
+        for key in token_runner_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                token = key.split(':', 1)[1]
+
+                con.execute("""
+                    INSERT OR REPLACE INTO token_runner_cache
+                    (token, runner_info, last_updated)
+                    VALUES (?, ?, ?)
+                """, [token, json.dumps(data), now])
+                stats['token_runner'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] Token runner error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 4. Flush ATH cache: token_ath:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning token_ath:* keys...")
+        ath_keys = list(r.scan_iter("token_ath:*"))
+        print(f"[FLUSH] Found {len(ath_keys)} ATH keys")
+
+        for key in ath_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                token = key.split(':', 1)[1]
+
+                con.execute("""
+                    INSERT OR REPLACE INTO token_ath_cache
+                    (token, highest_price, timestamp, last_updated)
+                    VALUES (?, ?, ?, ?)
+                """, [
+                    token,
+                    data.get('highest_price', 0),
+                    data.get('timestamp', 0),
+                    now
+                ])
+                stats['token_ath'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] ATH error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 5. Flush token info cache: token_info:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning token_info:* keys...")
+        info_keys = list(r.scan_iter("token_info:*"))
+        print(f"[FLUSH] Found {len(info_keys)} token_info keys")
+
+        for key in info_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                token = key.split(':', 1)[1]
+
+                con.execute("""
+                    INSERT OR REPLACE INTO token_info_cache
+                    (token, symbol, name, liquidity, volume_24h,
+                     price, holders, age_days, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    token,
+                    data.get('symbol', 'UNKNOWN'),
+                    data.get('name', 'Unknown'),
+                    data.get('liquidity', 0),
+                    data.get('volume_24h', 0),
+                    data.get('price', 0),
+                    data.get('holders', 0),
+                    data.get('age_days', 0),
+                    now
+                ])
+                stats['token_info'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] Token info error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 6. Flush security cache: token_security:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning token_security:* keys...")
+        security_keys = list(r.scan_iter("token_security:*"))
+        print(f"[FLUSH] Found {len(security_keys)} security keys")
+
+        for key in security_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                token = key.split(':', 1)[1]
+
+                con.execute("""
+                    INSERT OR REPLACE INTO token_security_cache
+                    (token, security_data, last_updated)
+                    VALUES (?, ?, ?)
+                """, [token, json.dumps(data), now])
+                stats['token_security'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] Security error for {key}: {e}")
+
+        # ----------------------------------------------------------------
+        # 7. Flush launch price cache: launch_price:{token}
+        # ----------------------------------------------------------------
+        print(f"[FLUSH] Scanning launch_price:* keys...")
+        launch_keys = list(r.scan_iter("launch_price:*"))
+        print(f"[FLUSH] Found {len(launch_keys)} launch_price keys")
+
+        for key in launch_keys:
+            try:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+
+                token = key.split(':', 1)[1]
+                price = data.get('price')
+                if price is None:
+                    continue
+
+                con.execute("""
+                    INSERT OR REPLACE INTO token_launch_cache
+                    (token, launch_price, last_updated)
+                    VALUES (?, ?, ?)
+                """, [token, price, now])
+                stats['launch_price'] += 1
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"[FLUSH] Launch price error for {key}: {e}")
+
+        con.close()
+
+        total_flushed = sum(v for k, v in stats.items() if k != 'errors')
+
+        print(f"\n[FLUSH TASK] ✅ Complete - {datetime.utcnow().isoformat()}")
+        print(f"  PnL records:       {stats['pnl']}")
+        print(f"  Runner histories:  {stats['runners']}")
+        print(f"  Token runners:     {stats['token_runner']}")
+        print(f"  ATH records:       {stats['token_ath']}")
+        print(f"  Token info:        {stats['token_info']}")
+        print(f"  Security checks:   {stats['token_security']}")
+        print(f"  Launch prices:     {stats['launch_price']}")
+        print(f"  Total flushed:     {total_flushed}")
+        print(f"  Errors:            {stats['errors']}")
+
+        return {
+            'status':        'success',
+            'stats':         stats,
+            'total_flushed': total_flushed,
+            'timestamp':     datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        print(f"\n[FLUSH TASK] ❌ Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status':    'error',
+            'error':     str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+
+# =============================================================================
+# ATH CACHE INVALIDATION
+# =============================================================================
+
+@celery.task(name='tasks.invalidate_stale_ath_caches')
+def invalidate_stale_ath_caches():
+    """
+    Hourly ATH invalidation (:45 past every hour).
+
+    For every cached token result in Redis:
+      1. Pull the current ATH from token_ath:{address}
+      2. Pull the ATH baked into the cached result (stored per wallet as ath_price)
+      3. If current ATH > cached ATH * 1.10 (moved >10%):
+           - Delete the Redis cache:token:{address} key
+           - Mark the Supabase analysis_jobs row as 'stale'
+         so the next search triggers a fresh pipeline with correct scores.
+
+    Scores affected by a stale ATH:
+      distance_to_ath_pct, entry_to_ath_multiplier, professional_score
+    """
+    print(f"\n{'='*80}")
+    print(f"[ATH INVALIDATION] Starting - {datetime.utcnow().isoformat()}")
+    print(f"{'='*80}\n")
+
+    try:
+        import redis as redis_lib
+        import json
+
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=10)
+
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+
+        stats = {
+            'scanned':     0,
+            'invalidated': 0,
+            'no_ath_data': 0,
+            'up_to_date':  0,
+            'errors':      0,
+        }
+
+        cache_keys = list(r.scan_iter("cache:token:*"))
+        print(f"[ATH INVALIDATION] Found {len(cache_keys)} cached token results to check")
+
+        for key in cache_keys:
+            try:
+                stats['scanned'] += 1
+                token_address = key.split('cache:token:', 1)[1]
+
+                # Current ATH from Redis (written by pipeline / analyzer)
+                current_ath_raw = r.get(f"token_ath:{token_address}")
+                if not current_ath_raw:
+                    stats['no_ath_data'] += 1
+                    continue
+
+                current_ath_price = json.loads(current_ath_raw).get('highest_price', 0)
+                if not current_ath_price:
+                    stats['no_ath_data'] += 1
+                    continue
+
+                # ATH baked into the cached result
+                cached_raw = r.get(key)
+                if not cached_raw:
+                    continue
+
+                cached_result  = json.loads(cached_raw)
+                cached_wallets = cached_result.get('wallets', [])
+                cached_ath     = next(
+                    (w.get('ath_price', 0) for w in cached_wallets if w.get('ath_price')),
+                    0
+                )
+
+                if cached_ath <= 0:
+                    stats['no_ath_data'] += 1
+                    continue
+
+                ath_move_pct = ((current_ath_price / cached_ath) - 1) * 100
+
+                if current_ath_price > cached_ath * 1.10:
+                    # Delete stale Redis key
+                    r.delete(key)
+
+                    # Mark Supabase row stale so the fallback path doesn't serve it
+                    try:
+                        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                            'status': 'stale',
+                            'phase':  'ath_invalidated'
+                        }).eq('token_address', token_address).eq('status', 'completed').execute()
+                    except Exception as se:
+                        print(f"  ⚠️ Supabase update failed for {token_address[:8]}: {se}")
+
+                    stats['invalidated'] += 1
+                    print(f"  🗑️  Invalidated {token_address[:8]}... "
+                          f"ATH moved +{ath_move_pct:.1f}% "
+                          f"(${cached_ath:.8f} → ${current_ath_price:.8f})")
+                else:
+                    stats['up_to_date'] += 1
+
+            except Exception as e:
+                stats['errors'] += 1
+                print(f"  ⚠️ Error processing {key}: {e}")
+
+        print(f"\n[ATH INVALIDATION] ✅ Complete - {datetime.utcnow().isoformat()}")
+        print(f"  Scanned:     {stats['scanned']}")
+        print(f"  Invalidated: {stats['invalidated']}")
+        print(f"  Up to date:  {stats['up_to_date']}")
+        print(f"  No ATH data: {stats['no_ath_data']}")
+        print(f"  Errors:      {stats['errors']}")
+
+        return {
+            'status':    'success',
+            'stats':     stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        print(f"\n[ATH INVALIDATION] ❌ Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status':    'error',
+            'error':     str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+
+# =============================================================================
+# STALE CACHE PURGE (ONE-TIME / ON-DEMAND)
+# =============================================================================
+
+@celery.task(name='tasks.purge_stale_analysis_cache')
+def purge_stale_analysis_cache():
+    """
+    ONE-TIME TASK — run once after deploying the scoring model change
+    (realized ROI → total ROI as the 30% weight in calculate_wallet_relative_score).
+
+    What it does:
+      1. Deletes all cache:token:* keys from Redis — no stale results served
+      2. Marks all completed analysis_jobs rows in Supabase as 'stale' so the
+         Supabase fallback path re-runs the pipeline instead of returning
+         incorrectly-scored results
+      3. Leaves the rows themselves intact for audit/history
+
+    After this runs, every token search triggers a fresh pipeline that scores
+    wallets using the corrected weights (60% entry, 30% total ROI, 10% realized).
+    New results are cached normally and served on subsequent searches.
+
+    To trigger:
+        celery -A celery_app call tasks.purge_stale_analysis_cache
+
+    Or via Supabase SQL editor (equivalent manual version):
+        UPDATE sifter_dev.analysis_jobs
+        SET status = 'stale', phase = 'scoring_model_updated'
+        WHERE status = 'completed';
+    """
+    print(f"\n{'='*80}")
+    print(f"[CACHE PURGE] Starting stale cache purge - {datetime.utcnow().isoformat()}")
+    print(f"  Reason: scoring model changed (realized ROI → total ROI as 30% weight)")
+    print(f"{'='*80}\n")
+
+    try:
+        import redis as redis_lib
+
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=10)
+
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+
+        stats = {
+            'redis_keys_deleted':   0,
+            'supabase_rows_staled': 0,
+            'errors':               0,
+        }
+
+        # ----------------------------------------------------------------
+        # 1. Delete all cached token results from Redis
+        # ----------------------------------------------------------------
+        print(f"[CACHE PURGE] Scanning cache:token:* keys in Redis...")
+        cache_keys = list(r.scan_iter("cache:token:*"))
+        print(f"[CACHE PURGE] Found {len(cache_keys)} Redis cache keys to delete")
+
+        if cache_keys:
+            batch_size = 500
+            for i in range(0, len(cache_keys), batch_size):
+                batch = cache_keys[i:i + batch_size]
+                try:
+                    r.delete(*batch)
+                    stats['redis_keys_deleted'] += len(batch)
+                    print(f"  Deleted batch {i//batch_size + 1}: {len(batch)} keys")
+                except Exception as e:
+                    stats['errors'] += 1
+                    print(f"  ⚠️ Batch delete error: {e}")
+
+        print(f"\n[CACHE PURGE] ✓ Redis: deleted {stats['redis_keys_deleted']} cache keys")
+
+        # ----------------------------------------------------------------
+        # 2. Mark all completed analysis_jobs rows as 'stale' in Supabase
+        # ----------------------------------------------------------------
+        print(f"\n[CACHE PURGE] Marking completed Supabase cache rows as stale...")
+        try:
+            result = supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+                'status': 'stale',
+                'phase':  'scoring_model_updated'
+            }).eq('status', 'completed').execute()
+
+            affected = len(result.data) if result.data else 0
+            stats['supabase_rows_staled'] = affected
+            print(f"[CACHE PURGE] ✓ Supabase: marked {affected} rows as stale")
+
+        except Exception as e:
+            stats['errors'] += 1
+            print(f"[CACHE PURGE] ⚠️ Supabase update failed: {e}")
+            print(f"  Run manually in Supabase SQL editor:")
+            print(f"    UPDATE sifter_dev.analysis_jobs")
+            print(f"    SET status = 'stale', phase = 'scoring_model_updated'")
+            print(f"    WHERE status = 'completed';")
+
+        print(f"\n[CACHE PURGE] ✅ Complete - {datetime.utcnow().isoformat()}")
+        print(f"  Redis keys deleted:    {stats['redis_keys_deleted']}")
+        print(f"  Supabase rows staled:  {stats['supabase_rows_staled']}")
+        print(f"  Errors:                {stats['errors']}")
+        print(f"\n  Next search for any token will run a fresh pipeline")
+        print(f"  and cache results with the correct total-ROI scoring.")
+
+        return {
+            'status':    'success',
+            'stats':     stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        print(f"\n[CACHE PURGE] ❌ Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'status':    'error',
+            'error':     str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+
+# =============================================================================
+# TELEGRAM ALERT (ON-DEMAND, QUEUED BY WALLET MONITOR)
+# =============================================================================
+
 @celery.task(name='tasks.send_telegram_alert_async')
 def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
     """
-    Async Telegram alert sender
-    Called by wallet monitor for background alert delivery
+    Async Telegram alert sender.
+    Called by wallet monitor for background alert delivery.
     """
     try:
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
         if not bot_token:
             print(f"[TELEGRAM TASK] Notifier not configured")
             return {'status': 'skipped', 'reason': 'no_notifier'}
-        
+
         from services.telegram_notifier import TelegramNotifier
         telegram_notifier = TelegramNotifier(bot_token)
-        
+
         if alert_type == 'trade':
             from services.supabase_client import get_supabase_client, SCHEMA_NAME
             supabase = get_supabase_client()
-            
+
             wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
                 'tier, consistency_score'
-            ).eq('user_id', user_id).eq('wallet_address', alert_data.get('wallet_address')).limit(1).execute()
-            
-            wallet_info = wallet_result.data[0] if wallet_result.data else {'tier': 'C', 'consistency_score': 0}
-            
+            ).eq('user_id', user_id).eq(
+                'wallet_address', alert_data.get('wallet_address')
+            ).limit(1).execute()
+
+            wallet_info = wallet_result.data[0] if wallet_result.data else {
+                'tier': 'C', 'consistency_score': 0
+            }
+
             payload = {
                 'wallet': {
-                    'address': alert_data.get('wallet_address', ''),
-                    'tier': wallet_info.get('tier', 'C'),
+                    'address':           alert_data.get('wallet_address', ''),
+                    'tier':              wallet_info.get('tier', 'C'),
                     'consistency_score': wallet_info.get('consistency_score', 0)
                 },
                 'action': alert_data.get('side', 'buy'),
                 'token': {
                     'address': alert_data.get('token_address', ''),
-                    'symbol': alert_data.get('token_ticker', 'UNKNOWN'),
-                    'name': alert_data.get('token_name', 'Unknown')
+                    'symbol':  alert_data.get('token_ticker', 'UNKNOWN'),
+                    'name':    alert_data.get('token_name', 'Unknown')
                 },
                 'trade': {
                     'amount_tokens': alert_data.get('token_amount', 0),
-                    'amount_usd': alert_data.get('usd_value', 0),
-                    'price': alert_data.get('price', 0),
-                    'tx_hash': alert_data.get('tx_hash', ''),
-                    'dex': alert_data.get('dex', 'unknown'),
-                    'timestamp': alert_data.get('block_time', 0)
+                    'amount_usd':    alert_data.get('usd_value', 0),
+                    'price':         alert_data.get('price', 0),
+                    'tx_hash':       alert_data.get('tx_hash', ''),
+                    'dex':           alert_data.get('dex', 'unknown'),
+                    'timestamp':     alert_data.get('block_time', 0)
                 },
                 'links': {
-                    'solscan': f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
-                    'birdeye': f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
+                    'solscan':     f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
+                    'birdeye':     f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
                     'dexscreener': f"https://dexscreener.com/solana/{alert_data.get('token_address', '')}"
                 }
             }
-            
+
             telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
-            
+
         elif alert_type == 'multi_wallet':
             telegram_notifier.send_multi_wallet_signal_alert(user_id, alert_data)
-        
+
         return {
-            'status': 'sent',
-            'user_id': user_id,
+            'status':     'sent',
+            'user_id':    user_id,
             'alert_type': alert_type
         }
-        
+
     except Exception as e:
         print(f"[TELEGRAM TASK] Error: {e}")
         import traceback
         traceback.print_exc()
         return {
             'status': 'error',
-            'error': str(e)
+            'error':  str(e)
         }

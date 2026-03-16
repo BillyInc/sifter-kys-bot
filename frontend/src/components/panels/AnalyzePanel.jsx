@@ -1,7 +1,15 @@
+// components/panels/AnalyzePanel.jsx
 import React from 'react';
-import { Search, BarChart3, X } from 'lucide-react';
+import { Search, BarChart3, X, RefreshCw, Minimize2, Activity } from 'lucide-react';
 import AnalysisSettings from '../../Analysis_Setting';
 
+/**
+ * Props:
+ *  ...existing props...
+ *  onMinimize       — () => void  — closes panel and shows the active analyses box
+ *  activeAnalysis   — object      — current active analysis for this job (from global state)
+ *  isAnalyzing      — bool        — true when an analyze job is in flight
+ */
 export default function AnalyzePanel({
   searchQuery,
   setSearchQuery,
@@ -31,11 +39,84 @@ export default function AnalyzePanel({
   onClose,
   formatNumber,
   setSelectedTokens,
-  formatPrice
+  formatPrice,
+  onResultsReady,
+  onRefreshSearch,
+  activeAnalysis,
+  onMinimize,
 }) {
+  const handleRunAnalysis = async () => {
+    // Fire and forget — handleAnalysisStreaming queues the job and registers
+    // it with the global poll loop, then returns immediately.
+    await handleAnalysisStreaming();
+    // Close the panel so the user can keep working.
+    // The active analyses box in the navbar will show progress.
+    onClose();
+  };
+
+  const pct = activeAnalysis
+    ? Math.round(((activeAnalysis.progress?.current || 0) / (activeAnalysis.progress?.total || 1)) * 100)
+    : 0;
+
   return (
     <div className="space-y-4">
-      {/* Token Search */}
+
+      {/* ── In-flight banner — shown when a job is running ── */}
+      {isAnalyzing && activeAnalysis && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Activity size={16} className="text-green-400 animate-pulse shrink-0" />
+              <span className="text-sm font-semibold text-green-400">Analysis Running</span>
+            </div>
+            <button
+              onClick={onMinimize}
+              title="Minimize to background"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 hover:text-white transition shrink-0"
+            >
+              <Minimize2 size={12} /> Minimize
+            </button>
+          </div>
+
+          {/* Token chips */}
+          {activeAnalysis.tokens?.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-3">
+              {activeAnalysis.tokens.slice(0, 5).map((t, i) => (
+                <span key={i} className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">{t}</span>
+              ))}
+              {activeAnalysis.tokens.length > 5 && (
+                <span className="text-xs px-2 py-0.5 bg-white/10 text-gray-400 rounded-full">+{activeAnalysis.tokens.length - 5}</span>
+              )}
+            </div>
+          )}
+
+          {/* Progress bar */}
+          <div className="bg-white/10 rounded-full h-2 overflow-hidden mb-2">
+            <div
+              className="bg-gradient-to-r from-green-500 to-emerald-400 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>{activeAnalysis.progress?.phase || 'Processing…'}</span>
+            <span>{activeAnalysis.progress?.current}/{activeAnalysis.progress?.total} · {pct}%</span>
+          </div>
+
+          {activeAnalysis.in_queue && (
+            <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
+              Queue position #{activeAnalysis.queue_position || '?'}
+              {activeAnalysis.estimated_wait && ` · ~${activeAnalysis.estimated_wait}m wait`}
+            </div>
+          )}
+
+          <p className="mt-3 text-xs text-gray-600 text-center">
+            You can close this panel — analysis runs in the background
+          </p>
+        </div>
+      )}
+
+      {/* ── Token Search ── */}
       <div className="bg-white/5 border border-white/10 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-semibold">Token Search</h3>
@@ -49,21 +130,33 @@ export default function AnalyzePanel({
           </select>
         </div>
 
-        <div className="relative flex-1" ref={searchRef}>
-          <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by token name, ticker, or contract address..."
-            className="w-full bg-black/50 border border-white/10 rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500 transition"
-            autoComplete="off"
-          />
-          {isSearching && (
-            <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            </div>
-          )}
+        <div className="relative flex items-center gap-2" ref={searchRef}>
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && onRefreshSearch) onRefreshSearch(); }}
+              placeholder="Search by token name, ticker, or contract address..."
+              className="w-full bg-black/50 border border-white/10 rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500 transition"
+              autoComplete="off"
+            />
+            {isSearching && (
+              <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => onRefreshSearch && onRefreshSearch()}
+            disabled={isSearching}
+            title="Search"
+            className="flex-shrink-0 p-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 rounded-lg transition"
+          >
+            <RefreshCw size={16} className={isSearching ? 'animate-spin' : ''} />
+          </button>
 
           {/* Search Dropdown */}
           {showDropdown && searchResults.length > 0 && (
@@ -72,9 +165,8 @@ export default function AnalyzePanel({
                 const isSelected = selectedTokens.some(
                   t => t.address?.toLowerCase() === (token.address || token.mint)?.toLowerCase() && t.chain === token.chain
                 );
-                // Normalize token fields - SolanaTracker uses different field names
-                const address = token.address || token.mint || token.poolAddress;
-                const ticker = token.ticker || token.symbol;
+                const address   = token.address || token.mint || token.poolAddress;
+                const ticker    = token.ticker || token.symbol;
                 const liquidity = token.liquidity || token.liquidityUsd;
                 return (
                   <div
@@ -101,21 +193,31 @@ export default function AnalyzePanel({
             </div>
           )}
 
-          {/* No results state */}
+          {/* No results */}
           {showDropdown && !isSearching && searchResults.length === 0 && searchQuery.length >= 2 && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-white/20 rounded-xl shadow-2xl z-50 p-4 text-center text-sm text-gray-500">
-              No tokens found for "{searchQuery}"
+              <p>No tokens found for "{searchQuery}"</p>
+              {onRefreshSearch && (
+                <button
+                  onClick={onRefreshSearch}
+                  className="mt-2 px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/30 rounded-lg text-xs text-purple-400 font-semibold transition flex items-center gap-1 mx-auto"
+                >
+                  <RefreshCw size={12} /> Try again
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Selected Tokens */}
+      {/* ── Selected Tokens ── */}
       {selectedTokens.length > 0 && (
         <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-base font-semibold">Selected Tokens ({selectedTokens.length})</h3>
-            <button onClick={() => setSelectedTokens([])} className="text-xs text-gray-400 hover:text-white">Clear All</button>
+            <button onClick={() => setSelectedTokens([])} className="text-xs text-gray-400 hover:text-white">
+              Clear All
+            </button>
           </div>
 
           <div className="space-y-2 mb-4">
@@ -126,10 +228,7 @@ export default function AnalyzePanel({
                     <div className="font-semibold text-sm">{token.ticker || token.symbol}</div>
                     <div className="text-xs text-gray-400">{(token.chain || 'SOLANA').toUpperCase()}</div>
                   </div>
-                  <button
-                    onClick={() => removeToken(token.address, token.chain)}
-                    className="p-1 hover:bg-white/10 rounded transition"
-                  >
+                  <button onClick={() => removeToken(token.address, token.chain)} className="p-1 hover:bg-white/10 rounded transition">
                     <X size={14} />
                   </button>
                 </div>
@@ -146,24 +245,50 @@ export default function AnalyzePanel({
             updateTokenSetting={updateTokenSetting}
             globalSettings={{ daysBack, candleSize, tMinusWindow, tPlusWindow }}
             onGlobalSettingsChange={(settings) => {
-              if (settings.daysBack !== undefined) setDaysBack(settings.daysBack);
-              if (settings.candleSize !== undefined) setCandleSize(settings.candleSize);
+              if (settings.daysBack     !== undefined) setDaysBack(settings.daysBack);
+              if (settings.candleSize   !== undefined) setCandleSize(settings.candleSize);
               if (settings.tMinusWindow !== undefined) setTMinusWindow(settings.tMinusWindow);
-              if (settings.tPlusWindow !== undefined) setTPlusWindow(settings.tPlusWindow);
+              if (settings.tPlusWindow  !== undefined) setTPlusWindow(settings.tPlusWindow);
             }}
           />
 
-          <button
-            onClick={() => { handleAnalysisStreaming(); onClose(); }}
-            disabled={isAnalyzing}
-            className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30"
-          >
-            {isAnalyzing ? (
-              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Analyzing...</>
-            ) : (
-              <><BarChart3 size={18} /> Run Analysis (Streaming)</>
+          {/* ── Run / Minimize button row ── */}
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={handleRunAnalysis}
+              disabled={isAnalyzing}
+              className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 disabled:from-purple-600/30 disabled:to-purple-500/30 rounded-lg font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30"
+            >
+              {isAnalyzing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Running…
+                </>
+              ) : (
+                <>
+                  <BarChart3 size={18} />
+                  Run Analysis
+                </>
+              )}
+            </button>
+
+            {/* Minimize button — only shown while a job is in flight */}
+            {isAnalyzing && (
+              <button
+                onClick={onMinimize}
+                title="Minimize to background"
+                className="px-3 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition flex items-center gap-1.5 text-gray-400 hover:text-white text-sm"
+              >
+                <Minimize2 size={16} />
+              </button>
             )}
-          </button>
+          </div>
+
+          {isAnalyzing && (
+            <p className="mt-2 text-xs text-gray-600 text-center">
+              Analysis runs in the background — safe to close this panel
+            </p>
+          )}
         </div>
       )}
     </div>
