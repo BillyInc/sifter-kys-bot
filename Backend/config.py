@@ -30,6 +30,21 @@ class Config:
     SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
     SUPABASE_SERVICE_KEY = os.environ.get('SUPABASE_SERVICE_KEY', '')
 
+    # ClickHouse Analytics
+    CLICKHOUSE_HOST = os.environ.get('CLICKHOUSE_HOST', 'localhost')
+    CLICKHOUSE_PORT = int(os.environ.get('CLICKHOUSE_PORT', 8443))
+    CLICKHOUSE_USER = os.environ.get('CLICKHOUSE_USER', 'default')
+    CLICKHOUSE_PASSWORD = os.environ.get('CLICKHOUSE_PASSWORD', '')
+    CLICKHOUSE_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'kys')
+
+    # Worker mode flag — set to true on Celery worker processes
+    WORKER_MODE = os.environ.get('WORKER_MODE', 'false').lower() == 'true'
+
+    @classmethod
+    def is_clickhouse_configured(cls) -> bool:
+        """Check if ClickHouse is properly configured."""
+        return bool(cls.CLICKHOUSE_HOST and cls.CLICKHOUSE_PASSWORD)
+
     @classmethod
     def is_supabase_configured(cls) -> bool:
         """Check if Supabase is properly configured."""

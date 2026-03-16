@@ -27,34 +27,45 @@ celery.conf.update(
 
 # Beat schedule - Production cron jobs
 celery.conf.beat_schedule = {
+    # ── ClickHouse Pipeline ──────────────────────────────────
+
+    # Token discovery: poll just_graduated, newly_launched, trending_runners
+    'discover-new-tokens': {
+        'task': 'tasks.discover_new_tokens',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+        'options': {'expires': 240, 'queue': 'discovery'}
+    },
+
+    # ── Existing Jobs (now with ClickHouse integration) ──────
+
     # Daily stats refresh at 3am UTC
     'daily-stats-refresh': {
         'task': 'tasks.daily_stats_refresh',
         'schedule': crontab(hour=3, minute=0),
         'options': {'expires': 3600}
     },
-    
+
     # Weekly rerank on Sunday at 4am UTC
     'weekly-rerank': {
         'task': 'tasks.weekly_rerank_all',
         'schedule': crontab(day_of_week='sunday', hour=4, minute=0),
         'options': {'expires': 7200}
     },
-    
+
     # 4-week degradation check every 28 days at 5am UTC
     'four-week-degradation': {
         'task': 'tasks.four_week_degradation_check',
-        'schedule': crontab(day_of_month='1,29', hour=5, minute=0),  # Every 28 days (approx)
+        'schedule': crontab(day_of_month='1,29', hour=5, minute=0),
         'options': {'expires': 7200}
     },
-    
+
     # Elite 100 refresh every hour
     'elite-100-refresh': {
         'task': 'tasks.refresh_elite_100',
         'schedule': crontab(minute=0),  # Top of every hour
         'options': {'expires': 3600}
     },
-    
+
     # Community Top 100 refresh every hour
     'community-top-100-refresh': {
         'task': 'tasks.refresh_community_top_100',
@@ -65,6 +76,9 @@ celery.conf.beat_schedule = {
 
 # Task routes (optional - for multiple queues)
 celery.conf.task_routes = {
+    'tasks.discover_new_tokens': {'queue': 'discovery'},
+    'tasks.wallet_qualification_scan': {'queue': 'discovery'},
+    'tasks.second_pass_patch': {'queue': 'discovery'},
     'tasks.daily_stats_refresh': {'queue': 'stats'},
     'tasks.weekly_rerank_all': {'queue': 'stats'},
     'tasks.four_week_degradation_check': {'queue': 'stats'},
@@ -83,6 +97,6 @@ print("""
   👥 Community Top 100: Every hour (:15 past)
   
   Start with:
-    celery -A celery_app worker --loglevel=info
+    celery -A celery_app worker --loglevel=info -Q default,stats,rankings,discovery
     celery -A celery_app beat --loglevel=info
 """)

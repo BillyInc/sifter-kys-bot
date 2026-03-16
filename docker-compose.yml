@@ -1,0 +1,53 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Backend/Dockerfile
+    ports:
+      - "5000:5000"
+    env_file: Backend/.env
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: Backend/Dockerfile
+    command: celery -A celery_app worker --loglevel=info -Q default,stats,rankings,discovery --concurrency=4
+    env_file: Backend/.env
+    environment:
+      - WORKER_MODE=true
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: Backend/Dockerfile
+    command: celery -A celery_app beat --loglevel=info
+    env_file: Backend/.env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./Backend/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    restart: unless-stopped
+
+volumes:
+  redis_data:
