@@ -30,3 +30,6 @@ gevent==23.9.1
 celery[redis]==5.3.6
 redis==5.0.1
 apscheduler==3.10.4
+
+# ClickHouse analytics pipeline
+clickhouse-connect>=0.7.0
