@@ -166,7 +166,7 @@ def weekly_rerank_all():
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         from services.clickhouse_client import (
             get_clickhouse_client, insert_weekly_snapshots,
-            insert_leaderboard_results, query_elite_100,
+            insert_leaderboard_results,
         )
 
         supabase = get_supabase_client()
