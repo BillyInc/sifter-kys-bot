@@ -225,18 +225,20 @@ def weekly_rerank_all():
             addr = wallet['wallet_address']
             tier_map[addr] = tier
 
+            # Match wallet_weekly_snapshots schema columns exactly
+            week_start = today - timedelta(days=today.weekday())  # snap to Monday
             snapshot_rows.append({
                 'wallet_address':     addr,
-                'snapshot_date':      today,
-                'professional_score': float(wallet.get('professional_score', 0)),
-                'consistency_score':  float(wallet.get('consistency_score', 0)),
-                'win_rate':           float(wallet.get('win_rate', 0)),
-                'total_roi_pct':      float(wallet.get('total_roi_pct', 0)),
+                'week_start':         week_start,
                 'tokens_qualified':   int(wallet.get('tokens_qualified', 0)),
+                'wins':               0,  # not available in aggregate stats
+                'losses':             0,
+                'win_rate':           float(wallet.get('win_rate', 0)),
                 'avg_roi_mult':       float(wallet.get('avg_roi_mult', 0)),
-                'avg_entry_to_ath_mult': float(wallet.get('avg_entry_to_ath_mult', 0)),
+                'professional_score': float(wallet.get('professional_score', 0)),
                 'tier':               tier,
-                'elite_rank':         rank_idx + 1 if rank_idx < 100 else 0,
+                'consistency_score':  float(wallet.get('consistency_score', 0)),
+                'position_in_elite':  rank_idx + 1 if rank_idx < 100 else 0,
             })
 
         tier_counts = {}
@@ -253,21 +255,27 @@ def weekly_rerank_all():
         # ----------------------------------------------------------------
         # 4. Write Elite 100 to ClickHouse leaderboard_results
         # ----------------------------------------------------------------
+        # Match leaderboard_results schema columns exactly
         elite_100 = all_wallets[:100]
         leaderboard_rows = []
         for rank_idx, wallet in enumerate(elite_100):
+            addr = wallet['wallet_address']
             leaderboard_rows.append({
-                'wallet_address':     wallet['wallet_address'],
-                'snapshot_date':      today,
-                'rank':               rank_idx + 1,
-                'professional_score': float(wallet.get('professional_score', 0)),
-                'consistency_score':  float(wallet.get('consistency_score', 0)),
-                'win_rate':           float(wallet.get('win_rate', 0)),
-                'total_roi_pct':      float(wallet.get('total_roi_pct', 0)),
-                'tokens_qualified':   int(wallet.get('tokens_qualified', 0)),
-                'avg_roi_mult':       float(wallet.get('avg_roi_mult', 0)),
+                'result_key':           'elite100',
+                'leaderboard_type':     'elite100',
+                'user_id':              '',
+                'token_set':            '[]',
+                'rank':                 rank_idx + 1,
+                'wallet_address':       addr,
+                'professional_score':   float(wallet.get('professional_score', 0)),
+                'tier':                 tier_map[addr],
                 'avg_entry_to_ath_mult': float(wallet.get('avg_entry_to_ath_mult', 0)),
-                'tier':               tier_map[wallet['wallet_address']],
+                'avg_roi_mult':         float(wallet.get('avg_roi_mult', 0)),
+                'consistency_score':    float(wallet.get('consistency_score', 0)),
+                'tokens_qualified':     int(wallet.get('tokens_qualified', 0)),
+                'win_rate':             float(wallet.get('win_rate', 0)),
+                'total_pnl_usd':        float(wallet.get('total_pnl_usd', 0)),
+                'expires_at':           datetime.utcnow() + timedelta(days=7),
             })
         print(f"[RERANK] Writing {len(leaderboard_rows)} Elite 100 rows to ClickHouse...")
         insert_leaderboard_results(leaderboard_rows)
@@ -282,7 +290,9 @@ def weekly_rerank_all():
         elite_payload = []
         for row in leaderboard_rows:
             serializable = dict(row)
-            serializable['snapshot_date'] = str(serializable['snapshot_date'])
+            # Convert datetime to string for JSON serialization
+            if 'expires_at' in serializable:
+                serializable['expires_at'] = str(serializable['expires_at'])
             elite_payload.append(serializable)
 
         r.set('kys:elite100', json.dumps(elite_payload), ex=604800)
@@ -373,16 +383,16 @@ def four_week_degradation_check():
         result = ch.query(
             """SELECT
                 wallet_address,
-                groupArray(snapshot_date)      AS dates,
-                groupArray(total_roi_pct)      AS roi_arr,
+                groupArray(week_start)         AS dates,
+                groupArray(avg_roi_mult)       AS roi_arr,
                 groupArray(win_rate)           AS wr_arr,
-                groupArray(elite_rank)         AS rank_arr,
+                groupArray(position_in_elite)  AS rank_arr,
                 groupArray(consistency_score)  AS cs_arr
             FROM (
                 SELECT *
                 FROM kys.wallet_weekly_snapshots FINAL
-                WHERE snapshot_date >= {cutoff:Date}
-                ORDER BY wallet_address, snapshot_date ASC
+                WHERE week_start >= {cutoff:Date}
+                ORDER BY wallet_address, week_start ASC
             )
             GROUP BY wallet_address
             HAVING length(dates) >= 4""",
