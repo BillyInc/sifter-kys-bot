@@ -15,6 +15,7 @@ SolanaTracker endpoints:
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 
 import redis
@@ -275,21 +276,28 @@ def build_wallet_token_stats_row(
     return {
         "wallet_address": wallet_address,
         "token_address": token_address,
-        "pass_type": pass_type,
-        "source": wallet_data.get("source", "unknown"),
-        "total_invested_usd": round(total_invested, 2),
+        "scan_id": str(uuid.uuid4()),
+        "first_entry_price": entry_price,
+        "first_entry_usd": round(total_invested, 2),
+        "first_entry_timestamp": datetime.utcfromtimestamp(first_buy_time) if first_buy_time else now,
+        "entry_price_to_launch_mult": 0.0,  # computed downstream if launch price known
+        "avg_entry_price": entry_price,
+        "avg_entry_to_ath_mult": round(entry_to_ath_mult, 4),
+        "all_buys": "[]",
+        "all_sells": "[]",
+        "buy_count": 1,
+        "sell_count": 0,
+        "total_spent_usd": round(total_invested, 2),
         "realized_pnl_usd": round(realized, 2),
         "unrealized_pnl_usd": round(unrealized, 2),
-        "total_roi_mult": round(total_mult, 4),
+        "total_pnl_usd": round(realized + unrealized, 2),
         "realized_roi_mult": round(realized_mult, 4),
-        "entry_price": entry_price,
-        "entry_price_to_launch_mult": 0.0,  # computed downstream if launch price known
-        "avg_entry_to_ath_mult": round(entry_to_ath_mult, 4),
-        "first_buy_ts": first_buy_time,
-        "outcome": outcome,
+        "total_roi_mult": round(total_mult, 4),
         "qualifies": qualifies,
+        "outcome": outcome,
         "disqualify_reason": "",
-        "scanned_at": now,
+        "wallet_source": wallet_data.get("source", "unknown"),
+        "updated_at": now,
     }
 
 
@@ -340,24 +348,34 @@ def _disqualified_row(
         realized_mult = (realized + total_invested) / total_invested
         total_mult = (realized + unrealized + total_invested) / total_invested
 
+    entry_price = float(pnl.get("entry_price", 0) or 0)
+    first_buy_time = int(pnl.get("first_buy_time", 0) or 0)
+
     return {
         "wallet_address": wallet_address,
         "token_address": token_address,
-        "pass_type": pass_type,
-        "source": "disqualified",
-        "total_invested_usd": round(total_invested, 2),
+        "scan_id": str(uuid.uuid4()),
+        "first_entry_price": entry_price,
+        "first_entry_usd": round(total_invested, 2),
+        "first_entry_timestamp": datetime.utcfromtimestamp(first_buy_time) if first_buy_time else now,
+        "entry_price_to_launch_mult": 0.0,
+        "avg_entry_price": entry_price,
+        "avg_entry_to_ath_mult": 0.0,
+        "all_buys": "[]",
+        "all_sells": "[]",
+        "buy_count": 1,
+        "sell_count": 0,
+        "total_spent_usd": round(total_invested, 2),
         "realized_pnl_usd": round(realized, 2),
         "unrealized_pnl_usd": round(unrealized, 2),
-        "total_roi_mult": round(total_mult, 4),
+        "total_pnl_usd": round(realized + unrealized, 2),
         "realized_roi_mult": round(realized_mult, 4),
-        "entry_price": float(pnl.get("entry_price", 0) or 0),
-        "entry_price_to_launch_mult": 0.0,
-        "avg_entry_to_ath_mult": 0.0,
-        "first_buy_ts": int(pnl.get("first_buy_time", 0) or 0),
-        "outcome": "open" if pass_type == "first" else "loss",
+        "total_roi_mult": round(total_mult, 4),
         "qualifies": 0,
+        "outcome": "open" if pass_type == "first" else "loss",
         "disqualify_reason": reason,
-        "scanned_at": now,
+        "wallet_source": "disqualified",
+        "updated_at": now,
     }
 
 
@@ -419,11 +437,24 @@ def wallet_qualification_scan(self, token_address: str, pass_type: str = "first"
         now = datetime.now(timezone.utc)
         scan_row = {
             "token_address": token_address,
-            "scan_type": pass_type,
-            "wallets_scanned": len(wallet_list),
-            "wallets_qualified": sum(1 for r in rows if r.get("qualifies") == 1),
+            "scan_id": str(uuid.uuid4()),
+            "discovered_via": pass_type,
+            "scan_timestamp": now,
+            "launch_price": 0.0,
+            "current_price": 0.0,
+            "ath_price": 0.0,
+            "launch_to_ath_mult": 0.0,
+            "launch_to_current_mult": 0.0,
             "qualified_10x": 1 if pass_type == "second" else 0,
-            "scanned_at": now,
+            "qualified_30x": 0,
+            "market_cap_usd": 0.0,
+            "volume_24h_usd": 0.0,
+            "liquidity_usd": 0.0,
+            "holder_count": 0,
+            "scan_window_days": 30,
+            "token_symbol": "",
+            "token_name": "",
+            "updated_at": now,
         }
         insert_token_scans([scan_row])
 
@@ -512,11 +543,24 @@ def second_pass_patch(self, token_address: str, token_data: dict | None = None):
         now = datetime.now(timezone.utc)
         scan_row = {
             "token_address": token_address,
-            "scan_type": "second",
-            "wallets_scanned": len(wallet_list),
-            "wallets_qualified": qualified_count,
+            "scan_id": str(uuid.uuid4()),
+            "discovered_via": "second",
+            "scan_timestamp": now,
+            "launch_price": 0.0,
+            "current_price": 0.0,
+            "ath_price": 0.0,
+            "launch_to_ath_mult": round(token_ath_mult, 4),
+            "launch_to_current_mult": 0.0,
             "qualified_10x": 1,
-            "scanned_at": now,
+            "qualified_30x": 1 if token_ath_mult > WIN_TOKEN_MULT else 0,
+            "market_cap_usd": 0.0,
+            "volume_24h_usd": 0.0,
+            "liquidity_usd": 0.0,
+            "holder_count": 0,
+            "scan_window_days": 30,
+            "token_symbol": "",
+            "token_name": "",
+            "updated_at": now,
         }
         insert_token_scans([scan_row])
 
