@@ -187,7 +187,10 @@ def weekly_rerank_all():
                 avg_roi_mult,
                 avg_entry_to_ath_mult,
                 total_pnl_usd,
-                last_active_at
+                last_active_at,
+                wins,
+                draws,
+                losses
             FROM kys.wallet_aggregate_stats FINAL
             ORDER BY professional_score DESC"""
         )
@@ -231,8 +234,8 @@ def weekly_rerank_all():
                 'wallet_address':     addr,
                 'week_start':         week_start,
                 'tokens_qualified':   int(wallet.get('tokens_qualified', 0)),
-                'wins':               0,  # not available in aggregate stats
-                'losses':             0,
+                'wins':               int(wallet.get('wins', 0)),
+                'losses':             int(wallet.get('losses', 0)),
                 'win_rate':           float(wallet.get('win_rate', 0)),
                 'avg_roi_mult':       float(wallet.get('avg_roi_mult', 0)),
                 'professional_score': float(wallet.get('professional_score', 0)),
@@ -299,12 +302,23 @@ def weekly_rerank_all():
         print("[RERANK] Redis kys:elite100 cached with 7-day TTL")
 
         # ----------------------------------------------------------------
-        # 6. Sync tiers to Supabase wallet_watchlist
+        # 6. Sync tiers to Supabase wallet_watchlist (only watchlisted wallets)
         # ----------------------------------------------------------------
         print("[RERANK] Syncing tiers to Supabase wallet_watchlist...")
+        watchlist_resp = (
+            supabase.schema(SCHEMA_NAME)
+            .table('wallet_watchlist')
+            .select('wallet_address')
+            .execute()
+        )
+        watchlisted_addrs = {row['wallet_address'] for row in watchlist_resp.data} if watchlist_resp.data else set()
+
         synced = 0
         errors = 0
-        for addr, tier in tier_map.items():
+        for addr in watchlisted_addrs:
+            tier = tier_map.get(addr)
+            if not tier:
+                continue
             try:
                 supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
                     'tier':         tier,
