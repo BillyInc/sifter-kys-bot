@@ -140,7 +140,8 @@ class TelegramNotifier:
                 'telegram_chat_id'
             ).eq('user_id', user_id).eq('alerts_enabled', True).execute()
             return result.data[0]['telegram_chat_id'] if result.data else None
-        except:
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Failed to get chat_id for user {user_id}: {e}")
             return None
 
     def is_user_connected(self, user_id: str) -> bool:
@@ -152,7 +153,8 @@ class TelegramNotifier:
         try:
             result = self._table('telegram_users').delete().eq('user_id', user_id).execute()
             return len(result.data) > 0
-        except:
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Failed to disconnect user {user_id}: {e}")
             return False
 
     def toggle_alerts(self, user_id: str, enabled: bool) -> bool:
@@ -162,7 +164,8 @@ class TelegramNotifier:
                 'alerts_enabled': enabled
             }).eq('user_id', user_id).execute()
             return len(result.data) > 0
-        except:
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Failed to toggle alerts for user {user_id}: {e}")
             return False
 
     # =========================================================================
