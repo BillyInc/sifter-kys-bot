@@ -106,7 +106,7 @@ def create_app() -> Flask:
         default_limits=Config.RATELIMIT_DEFAULT,
         storage_uri=Config.RATELIMIT_STORAGE_URI,
         strategy=Config.RATELIMIT_STRATEGY,
-        enabled=False
+        enabled=True
     )
 
     from services.telegram_notifier import TelegramNotifier

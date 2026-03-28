@@ -23,7 +23,7 @@ def add_to_watchlist():
         return '', 204
     
     data = request.json
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
     account = data.get('account')
 
     if not user_id or not account:
@@ -43,7 +43,7 @@ def get_watchlist():
     if request.method == 'OPTIONS':
         return '', 204
     
-    user_id = _get_user_id() or request.args.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -60,7 +60,7 @@ def remove_from_watchlist():
         return '', 204
     
     data = request.json
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
     author_id = data.get('author_id')
 
     if not user_id or not author_id:
@@ -81,7 +81,7 @@ def update_watchlist_account():
         return '', 204
     
     data = request.json
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
     author_id = data.get('author_id')
     notes = data.get('notes')
     tags = data.get('tags')
@@ -103,7 +103,7 @@ def get_watchlist_groups():
     if request.method == 'OPTIONS':
         return '', 204
     
-    user_id = _get_user_id() or request.args.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -120,7 +120,7 @@ def create_watchlist_group():
         return '', 204
     
     data = request.json
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
     group_name = data.get('group_name')
     description = data.get('description', '')
 
@@ -145,7 +145,7 @@ def get_watchlist_stats():
     if request.method == 'OPTIONS':
         return '', 204
     
-    user_id = _get_user_id() or request.args.get('user_id')
+    user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400

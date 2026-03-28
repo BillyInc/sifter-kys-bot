@@ -31,28 +31,13 @@ def _table(name: str):
     return _supabase().schema(SCHEMA_NAME).table(name)
 
 def _get_user_id() -> str | None:
-    # 1. Auth middleware (JWT)
+    # Only trust the auth middleware (JWT) — never user-supplied input
     uid = getattr(request, 'user_id', None)
     if uid:
         return uid
 
-    # 2. Query string (GET requests)
-    uid = request.args.get('user_id')
-    if uid:
-        return uid
-
-    # 3. JSON body (POST/PUT/DELETE)
-    # MUST use get_json(silent=True) — request.json raises 400 on GET
-    # requests that have Content-Type: application/json but no body
-    try:
-        body = request.get_json(silent=True, force=False) or {}
-        uid = body.get('user_id')
-        if uid:
-            return uid
-    except Exception:
-        pass
-
-    return None
+    # Anonymous fallback for @optional_auth routes
+    return f"anon_{request.remote_addr}"
 
 
 def _cors_response(data=None, status=200):
