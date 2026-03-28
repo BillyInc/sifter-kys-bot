@@ -28,13 +28,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo -e "\n${GREEN}[1/2] Starting Backend...${NC}"
 cd "$SCRIPT_DIR/Backend"
 
-if [ ! -d ".venv" ]; then
-    echo -e "${RED}Error: Backend virtual environment not found.${NC}"
-    echo "Run 'make install' in the Backend directory first."
+if ! command -v uv &> /dev/null; then
+    echo -e "${RED}Error: uv not found. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
     exit 1
 fi
 
-.venv/bin/python app.py &
+uv run python app.py &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"
 

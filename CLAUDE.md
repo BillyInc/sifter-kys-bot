@@ -20,13 +20,19 @@ cd Backend && make run          # Flask dev server
 cd frontend && pnpm run dev     # Vite dev server
 ```
 
-### Backend (in Backend/)
+### Backend (in Backend/ — uses uv)
 ```bash
-make install          # Setup virtualenv and install dependencies
-make run              # Development server (port 5000)
-make run-prod         # Production with Gunicorn (port 8080)
-make lint             # Run flake8 + pyright
-make test             # Run pytest
+uv sync               # Install dependencies (creates .venv)
+uv run python app.py   # Development server (port 5000)
+uv run pytest          # Run tests
+
+# Or via Makefile:
+make install          # uv sync
+make run              # Dev server (port 5000)
+make run-prod         # Production with Gunicorn
+make lint             # flake8 + pyright
+make test             # pytest
+make format           # black
 ```
 
 ### Frontend (in frontend/)
