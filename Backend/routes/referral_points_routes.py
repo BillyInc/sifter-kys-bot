@@ -44,7 +44,7 @@ def get_my_referral_code():
         return jsonify({
             'success': True,
             'code': code,
-            'referral_link': f"https://your-app.com/signup?ref={code}",
+            'referral_link': f"https://sifter-kys-web.duckdns.org?ref={code}",
             'stats': {
                 'clicks': code_stats.get('clicks', 0),
                 'signups': code_stats.get('signups', 0),
