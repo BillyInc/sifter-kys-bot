@@ -843,7 +843,7 @@ export default function SifterKYS() {
 
       <footer className="fixed bottom-0 w-full bg-black/80 border-t border-white/10 py-2 z-30">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-500">
-          © 2026 Sifter.io • support@sifter.io • @SifterIO • Terms • Privacy
+          © 2026 Sifter KYS • @SifterKYS • Terms • Privacy
         </div>
       </footer>
     </div>

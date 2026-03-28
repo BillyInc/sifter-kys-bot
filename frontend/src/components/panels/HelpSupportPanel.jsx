@@ -177,10 +177,10 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         
         <div className="space-y-3 mb-4">
           <a
-            href="mailto:support@sifter.io"
+            href="mailto:support@sifterkys.com"
             className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
           >
-            📧 support@sifter.io
+            📧 support@sifterkys.com
           </a>
           <a
             href="https://twitter.com/SifterIO"

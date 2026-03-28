@@ -37,9 +37,6 @@ def submit_ticket():
             'status': 'open',
             'created_at': datetime.utcnow().isoformat()
         }).execute()
-        
-        # TODO: Send email notification to support@sifter.io
-        
         return jsonify({
             'success': True,
             'message': 'Ticket submitted successfully. We\'ll respond within 24 hours.'
