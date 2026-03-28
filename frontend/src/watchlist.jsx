@@ -465,8 +465,8 @@ export default function Watchlist({ userId, apiUrl }) {
                         <div className="flex items-center gap-2 flex-wrap">
                           <Tag size={14} className="text-gray-400" />
                           {account.tags && account.tags.length > 0 ? (
-                            account.tags.map((tag, idx) => (
-                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
+                            account.tags.map((tag) => (
+                              <span key={tag} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
                             ))
                           ) : (
                             <span className="text-xs text-gray-500">No tags</span>
@@ -662,8 +662,8 @@ export default function Watchlist({ userId, apiUrl }) {
                         <div className="flex items-center gap-2 flex-wrap">
                           <Tag size={14} className="text-gray-400" />
                           {wallet.tags && wallet.tags.length > 0 ? (
-                            wallet.tags.map((tag, idx) => (
-                              <span key={idx} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
+                            wallet.tags.map((tag) => (
+                              <span key={tag} className="px-2 py-0.5 bg-purple-600/20 border border-purple-500/30 rounded text-xs">{tag}</span>
                             ))
                           ) : (
                             <span className="text-xs text-gray-500">No tags</span>

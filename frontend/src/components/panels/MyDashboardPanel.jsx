@@ -65,7 +65,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
       <div className="space-y-4">
         <SkeletonBox className="h-24 w-full" />
         <div className="grid grid-cols-2 gap-4">
-          {[...Array(4)].map((_, i) => <SkeletonBox key={i} className="h-20" />)}
+          {[...Array(4)].map((_, i) => <SkeletonBox key={`skeleton-${i}`} className="h-20" />)}
         </div>
         <SkeletonBox className="h-40 w-full" />
         <SkeletonBox className="h-32 w-full" />
@@ -134,7 +134,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
         </h3>
         <div className="space-y-2">
           {(stats?.recent_activity || []).map((activity, idx) => (
-            <div key={idx} className="flex items-center justify-between p-2 bg-black/30 rounded">
+            <div key={`${activity.type}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 bg-black/30 rounded">
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${
                   activity.type === 'analysis' ? 'bg-purple-500' :
@@ -159,7 +159,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
         </h3>
         <div className="space-y-2">
           {(stats?.top_performers || []).slice(0, 3).map((wallet, idx) => (
-            <div key={idx} className="flex items-center justify-between p-2 bg-black/30 rounded">
+            <div key={wallet.address} className="flex items-center justify-between p-2 bg-black/30 rounded">
               <div className="flex items-center gap-2">
                 <span className="text-lg">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
                 <code className="text-sm font-mono text-gray-300">{wallet.address?.slice(0, 8)}…</code>

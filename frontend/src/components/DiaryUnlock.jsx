@@ -43,15 +43,6 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
   const inputRef = useRef(null);
 
   useEffect(() => {
-    console.log('🔍 [DiaryUnlock] Props:', {
-      userId,
-      isNew,
-      saltB64: saltB64 ? '✅ present' : '❌ null',
-      verificationToken: verificationToken ? '✅ present' : '❌ null',
-    });
-  }, [userId, isNew, saltB64, verificationToken]);
-
-  useEffect(() => {
     // Only focus when we know which mode we're in
     if (isNew !== null) {
       inputRef.current?.focus();
@@ -89,7 +80,6 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
 
   // ── Setup (first time) ─────────────────────────────────────────────────────
   const handleSetup = async () => {
-    console.log('🔍 [DiaryUnlock] Starting setup for new user');
     setError(null);
     const validationError = passphraseRequirements.validate(passphrase);
     if (validationError) { setError(validationError); return; }
@@ -98,8 +88,6 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
     setLoading(true);
     try {
       const { saltB64: newSalt, verificationToken: newToken } = await setupDiaryEncryption(userId, passphrase);
-      console.log('🔍 [DiaryUnlock] Encryption setup complete, saving to server...');
-
       const res  = await fetch(`${apiUrl}/api/diary/salt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -110,15 +98,11 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
         }),
       });
       const data = await res.json();
-      console.log('🔍 [DiaryUnlock] Server response:', data);
-      
       if (!data.success) throw new Error(data.error || 'Failed to save passphrase.');
-
-      console.log('🔍 [DiaryUnlock] Setup successful, calling onUnlocked with salt data');
       // FIX: pass the new salt data back so useDiary can update state in place
       onUnlocked({ saltB64: newSalt, verificationToken: newToken });
     } catch (err) {
-      console.error('🔍 [DiaryUnlock] Setup error:', err);
+      console.error('[DiaryUnlock] Setup error:', err);
       setError(err.message || 'Setup failed. Please try again.');
     } finally {
       setLoading(false);
@@ -127,15 +111,12 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
 
   // ── Unlock (returning user) ────────────────────────────────────────────────
   const handleUnlock = async () => {
-    console.log('🔍 [DiaryUnlock] Starting unlock for existing user');
     setError(null);
     if (!passphrase) { setError('Please enter your passphrase.'); return; }
 
     setLoading(true);
     try {
       const ok = await unlockDiary(userId, passphrase, saltB64, verificationToken);
-      console.log('🔍 [DiaryUnlock] Verification result:', ok);
-      
       if (!ok) {
         setError('Incorrect passphrase. Please try again.');
         setPassphrase('');
@@ -143,10 +124,9 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
         return;
       }
       
-      console.log('🔍 [DiaryUnlock] Unlock successful, calling onUnlocked');
       onUnlocked(); // no args for existing users
     } catch (err) {
-      console.error('🔍 [DiaryUnlock] Unlock error:', err);
+      console.error('[DiaryUnlock] Unlock error:', err);
       setError(err.message || 'Unlock failed.');
     } finally {
       setLoading(false);
@@ -214,7 +194,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
             <div className="space-y-1">
               <div className="flex gap-1">
                 {[1, 2, 3, 4].map(i => (
-                  <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i <= strength ? strengthBg : 'bg-white/10'}`} />
+                  <div key={`strength-${i}`} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i <= strength ? strengthBg : 'bg-white/10'}`} />
                 ))}
               </div>
               <p className={`text-[10px] font-semibold ${strengthColor}`}>{strengthLabel}</p>

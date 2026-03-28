@@ -106,7 +106,6 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
       if (optimistic) {
         // Fast path: session key found synchronously.
         // Fire salt + notes fetches IN PARALLEL — don't wait for salt before notes.
-        console.log('[useDiary] fast path: optimistic unlock');
         try {
           const [saltData, notesData] = await Promise.all([
             api.getSalt(userId),
@@ -155,7 +154,6 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
 
       } else {
         // Slow path: no session key — need to check properly
-        console.log('[useDiary] slow path: no session key');
         safe(() => {
           setLoading(true);
           setError(null);
@@ -245,7 +243,6 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
 
   // ── onUnlocked ─────────────────────────────────────────────────────────────
   const onUnlocked = useCallback((newSaltData = null) => {
-    console.log('[useDiary] onUnlocked');
     if (newSaltData) {
       safe(() => {
         setSaltB64(newSaltData.saltB64);

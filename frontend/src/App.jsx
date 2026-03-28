@@ -603,7 +603,7 @@ export default function SifterKYS() {
                           {type === 'analyze' && analysis.tokens?.length > 0 && (
                             <div className="flex flex-wrap gap-1 mb-2">
                               {analysis.tokens.slice(0, 4).map((t, i) => (
-                                <span key={i} className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">{t}</span>
+                                <span key={t} className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">{t}</span>
                               ))}
                               {analysis.tokens.length > 4 && (
                                 <span className="text-xs px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">+{analysis.tokens.length - 4}</span>

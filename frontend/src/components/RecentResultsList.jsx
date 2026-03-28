@@ -50,7 +50,7 @@ export default function RecentResultsList({
         </div>
         {[...Array(4)].map((_, i) => (
           <div
-            key={i}
+            key={`skeleton-${i}`}
             className="animate-pulse bg-white/5 border border-white/10 rounded-xl h-[62px]"
           />
         ))}
