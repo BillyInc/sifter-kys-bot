@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { Search, Book, Video, MessageSquare, Mail, Send, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function HelpSupportPanel({ userId, apiUrl }) {
@@ -46,7 +47,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
 
   const handleSubmitTicket = async () => {
     if (!ticketForm.subject || !ticketForm.message) {
-      alert('Please fill in all fields');
+      toast.warning('Please fill in all fields');
       return;
     }
 
@@ -65,14 +66,14 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
       const data = await response.json();
 
       if (data.success) {
-        alert('✅ Ticket submitted! We\'ll respond within 24 hours.');
+        toast.success('Ticket submitted! We\'ll respond within 24 hours.');
         setTicketForm({ subject: '', message: '' });
       } else {
-        alert('Failed to submit ticket');
+        toast.error('Failed to submit ticket');
       }
     } catch (error) {
       console.error('Ticket error:', error);
-      alert('Error submitting ticket');
+      toast.error('Error submitting ticket');
     }
     setIsSubmitting(false);
   };

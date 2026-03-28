@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { User, Bell, BarChart3, Palette, Save } from 'lucide-react';
 
 export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
@@ -37,7 +38,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       
       const data = await response.json();
       if (data.success) {
-        alert('✅ Settings saved!');
+        toast.success('Settings saved!');
       }
     } catch (error) {
       console.error('Save error:', error);

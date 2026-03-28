@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  ArrowRight, 
-  TrendingUp, 
-  Target, 
+import { toast } from 'sonner';
+import {
+  X,
+  ArrowRight,
+  TrendingUp,
+  Target,
   Activity,
   CheckCircle,
   AlertCircle,
@@ -36,7 +37,7 @@ export default function WalletReplacementModal({
       // Modal will close from parent
     } catch (error) {
       console.error('Replace error:', error);
-      alert('Failed to replace wallet');
+      toast.error('Failed to replace wallet');
     } finally {
       setIsReplacing(false);
     }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Send, Check, X, RefreshCw, Bell, BellOff, ExternalLink } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
@@ -89,7 +90,7 @@ export default function TelegramSettings({ userId, apiUrl }) {
           setAlertsEnabled(true);
           setError(null);
           // Show success message
-          alert('✅ Telegram connected successfully!');
+          toast.success('Telegram connected successfully!');
         }
       } catch (err) {
         console.error('Error checking status:', err);
@@ -121,7 +122,7 @@ export default function TelegramSettings({ userId, apiUrl }) {
       }
     } catch (error) {
       console.error('Disconnect error:', error);
-      alert('Failed to disconnect');
+      toast.error('Failed to disconnect');
     } finally {
       setIsLoading(false);
     }

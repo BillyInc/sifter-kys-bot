@@ -22,6 +22,7 @@ import WalletActivityMonitor  from './WalletActivityMonitor';
 import WalletAlertSettings    from './WalletAlertSettings';
 import WalletReplacementModal from './WalletReplacementModal';
 import Auth from './components/Auth';
+import { Toaster, toast } from 'sonner';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const POLL_INTERVAL_MS  = 3_000;
@@ -435,7 +436,7 @@ export default function SifterKYS() {
 
   // ── Analysis submit — fire-and-forget, routes to global poll ─────────────
   const handleAnalysisPolling = async () => {
-    if (selectedTokens.length === 0) { alert('Please select at least one token'); return null; }
+    if (selectedTokens.length === 0) { toast.warning('Please select at least one token'); return null; }
 
     try {
       const authToken  = getAccessToken();
@@ -470,7 +471,7 @@ export default function SifterKYS() {
 
     } catch (error) {
       console.error('Analysis error:', error);
-      alert(`Analysis failed: ${error.message}`);
+      toast.error(`Analysis failed: ${error.message}`);
       return null;
     }
   };
@@ -510,9 +511,9 @@ export default function SifterKYS() {
         }),
       });
       const data = await res.json();
-      if (data.success) { alert('✅ Wallet added to watchlist!'); await awardPoints('add_watchlist'); }
-      else alert(`Failed: ${data.error}`);
-    } catch (e) { console.error('Add to watchlist error:', e); alert('Failed to add wallet to watchlist'); }
+      if (data.success) { toast.success('Wallet added to watchlist!'); await awardPoints('add_watchlist'); }
+      else toast.error(`Failed: ${data.error}`);
+    } catch (e) { console.error('Add to watchlist error:', e); toast.error('Failed to add wallet to watchlist'); }
   };
 
   // ── Auth guard ────────────────────────────────────────────────────────────
@@ -531,6 +532,7 @@ export default function SifterKYS() {
 
   return (
     <div className="min-h-screen bg-black text-gray-100">
+      <Toaster position="top-right" theme="dark" richColors />
 
       {/* ── Navbar ── */}
       <nav className="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-xl border-b border-white/5">
@@ -833,9 +835,9 @@ export default function SifterKYS() {
                 body: JSON.stringify({ user_id: userId, old_wallet: replacementData.wallet.wallet_address, new_wallet: newWallet.wallet })
               });
               const data = await res.json();
-              if (data.success) { alert('✅ Wallet replaced successfully!'); setReplacementData(null); }
-              else alert(`Failed: ${data.error}`);
-            } catch (e) { alert('Failed to replace wallet'); }
+              if (data.success) { toast.success('Wallet replaced successfully!'); setReplacementData(null); }
+              else toast.error(`Failed: ${data.error}`);
+            } catch (e) { toast.error('Failed to replace wallet'); }
           }}
           onDismiss={() => setReplacementData(null)}
         />
