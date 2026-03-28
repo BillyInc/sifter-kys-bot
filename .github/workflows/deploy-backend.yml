@@ -169,9 +169,11 @@ jobs:
         continue-on-error: true
         env:
           SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
         run: |
           sleep 10
-          curl -f --max-time 30 "http://$SERVER:5000/health" && echo "Health check passed!" || echo "::warning::Health check failed"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "$USER@$SERVER" 'curl -sf http://localhost:5000/health' && echo "Health check passed!" || echo "::warning::Health check failed"
 
       - name: Cleanup sensitive files
         if: always()
