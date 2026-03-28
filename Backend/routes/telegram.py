@@ -7,6 +7,7 @@ import time
 import requests
 import secrets
 from datetime import datetime, timedelta, timezone
+from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def get_telegram_status():
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
     
-    user_id = _get_user_id() or f"anon_{request.remote_addr}"
+    user_id = _get_user_id() or anon_user_id()
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -56,7 +57,7 @@ def generate_connection_link():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or f"anon_{request.remote_addr}"
+    user_id = _get_user_id() or anon_user_id()
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -112,7 +113,7 @@ def disconnect_telegram():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or f"anon_{request.remote_addr}"
+    user_id = _get_user_id() or anon_user_id()
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -140,7 +141,7 @@ def toggle_telegram_alerts():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or f"anon_{request.remote_addr}"
+    user_id = _get_user_id() or anon_user_id()
     enabled = data.get('enabled', True)
     
     if not user_id:
@@ -168,7 +169,7 @@ def send_test_alert():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or f"anon_{request.remote_addr}"
+    user_id = _get_user_id() or anon_user_id()
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400

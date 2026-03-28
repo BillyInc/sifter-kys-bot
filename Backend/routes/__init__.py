@@ -1,4 +1,11 @@
 """Routes module for Flask blueprints."""
+import uuid as _uuid
+from flask import request as _request
+
+
+def anon_user_id() -> str:
+    """Generate a deterministic UUID for unauthenticated users based on IP."""
+    return str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"anon:{_request.remote_addr}"))
 from .analyze import analyze_bp
 from .watchlist import watchlist_bp
 from .health import health_bp

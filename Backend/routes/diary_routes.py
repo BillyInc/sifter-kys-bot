@@ -15,6 +15,7 @@ import logging
 from flask import Blueprint, request, jsonify, make_response
 from datetime import datetime
 import traceback
+from routes import anon_user_id
 
 from auth import optional_auth
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -37,7 +38,7 @@ def _get_user_id() -> str | None:
         return uid
 
     # Anonymous fallback for @optional_auth routes
-    return f"anon_{request.remote_addr}"
+    return anon_user_id()
 
 
 def _cors_response(data=None, status=200):

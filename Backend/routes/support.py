@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify
 from auth import optional_auth
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 from datetime import datetime
+from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def submit_ticket():
         data = request.json
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         subject = data.get('subject')
         message = data.get('message')
         

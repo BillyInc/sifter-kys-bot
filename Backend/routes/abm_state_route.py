@@ -19,6 +19,7 @@ from auth import optional_auth
 import json
 import os
 from redis import Redis
+from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def get_watchlist_abm_state():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()

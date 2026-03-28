@@ -28,6 +28,7 @@ from auth import optional_auth
 from redis import Redis
 import json
 import os
+from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ def get_recents():
 
     user_id = getattr(request, 'user_id', None)
     if not user_id:
-        user_id = f"anon_{request.remote_addr}"
+        user_id = anon_user_id()
 
     try:
         r       = _get_redis()
@@ -106,7 +107,7 @@ def add_recent():
     data    = request.json or {}
     user_id = getattr(request, 'user_id', None)
     if not user_id:
-        user_id = f"anon_{request.remote_addr}"
+        user_id = anon_user_id()
     entry   = data.get('entry')
     if not entry or not isinstance(entry, dict):
         return jsonify({'error': 'entry object required'}), 400
@@ -147,7 +148,7 @@ def remove_recent(entry_id):
     data    = request.json or {}
     user_id = getattr(request, 'user_id', None)
     if not user_id:
-        user_id = f"anon_{request.remote_addr}"
+        user_id = anon_user_id()
 
     try:
         r       = _get_redis()
@@ -181,7 +182,7 @@ def clear_recents():
     data    = request.json or {}
     user_id = getattr(request, 'user_id', None)
     if not user_id:
-        user_id = f"anon_{request.remote_addr}"
+        user_id = anon_user_id()
 
     try:
         r = _get_redis()

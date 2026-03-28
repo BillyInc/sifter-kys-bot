@@ -2,6 +2,7 @@
 import logging
 from flask import Blueprint, request, jsonify, Response
 import json
+from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ def analyze_wallets():
         tokens  = data['tokens']
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         q_high, q_batch, q_compute = get_queues()
@@ -291,7 +292,7 @@ def get_analysis_history():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         limit   = int(request.args.get('limit', 50))
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -333,7 +334,7 @@ def save_analysis_history():
         body    = request.json
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         entry   = body.get('entry', {})
 
         if not entry:
@@ -367,7 +368,7 @@ def delete_history_entry(entry_id):
         body    = request.json or {}
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -393,7 +394,7 @@ def clear_history():
         body    = request.json or {}
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -425,7 +426,7 @@ def analyze_stream():
     tokens  = data.get('tokens', [])
     user_id = getattr(request, 'user_id', None)
     if not user_id:
-        user_id = f"anon_{request.remote_addr}"
+        user_id = anon_user_id()
     min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
     def generate():
@@ -476,7 +477,7 @@ def analyze_single_token():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id            = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_analyzer    = get_wallet_analyzer()
 
         wallets = wallet_analyzer.analyze_token_professional(
@@ -564,7 +565,7 @@ def analyze_trending_runner():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id            = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         q_high, _, _ = get_queues()
@@ -606,7 +607,7 @@ def analyze_trending_runners_batch():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
         user_id            = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         _, q_batch, _ = get_queues()
@@ -645,7 +646,7 @@ def auto_discover_wallets():
         data               = request.json or {}
         user_id            = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         min_runner_hits    = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
@@ -703,7 +704,7 @@ def add_wallet_to_watchlist():
         data        = request.json
         user_id     = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_data = data.get('wallet', {})
 
         if not user_id or not wallet_data.get('wallet'):
@@ -785,7 +786,7 @@ def get_wallet_watchlist():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         tier    = request.args.get('tier')
 
         if not user_id:
@@ -828,7 +829,7 @@ def remove_wallet_from_watchlist():
         data           = request.json
         user_id        = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_address = data.get('wallet_address')
 
         if not wallet_address:
@@ -866,7 +867,7 @@ def update_wallet_watchlist():
         data    = request.json
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         if not data.get('wallet_address'):
             return jsonify({'error': 'wallet_address required'}), 400
@@ -892,7 +893,7 @@ def get_wallet_watchlist_stats():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         db    = get_watchlist_db()
         stats = db.get_wallet_watchlist_stats(user_id)
@@ -913,7 +914,7 @@ def update_wallet_alert_settings():
         data           = request.json
         user_id        = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_address = data.get('wallet_address')
 
         if not wallet_address:
@@ -966,7 +967,7 @@ def get_wallet_stats(wallet_address):
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.watchlist_manager import WatchlistLeagueManager
         manager = WatchlistLeagueManager()
@@ -1001,7 +1002,7 @@ def refresh_wallet_stats(wallet_address):
         data    = request.json or {}
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.watchlist_manager import WatchlistLeagueManager
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -1053,7 +1054,7 @@ def add_wallet_quick():
         data           = request.json
         user_id        = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_address = data.get('wallet_address')
 
         if not wallet_address:
@@ -1118,7 +1119,7 @@ def suggest_replacement():
         data           = request.json
         user_id        = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         wallet_address = data.get('wallet_address')
         min_score      = data.get('min_professional_score', 85)
 
@@ -1148,7 +1149,7 @@ def replace_wallet():
         data            = request.json
         user_id         = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         old_wallet      = data.get('old_wallet')
         new_wallet_data = data.get('new_wallet')
 
@@ -1186,7 +1187,7 @@ def get_watchlist_table():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from db.watchlist_db import WatchlistDatabase
         db         = WatchlistDatabase()
@@ -1238,7 +1239,7 @@ def get_notifications():
         from services.wallet_monitor import get_user_notifications
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         notifications = get_user_notifications(
             user_id=user_id,
@@ -1265,7 +1266,7 @@ def mark_notifications_read():
         data    = request.json
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         if data.get('mark_all'):
             count = mark_all_notifications_read(user_id)
@@ -1293,7 +1294,7 @@ def update_wallet_alerts():
         data    = request.json
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         if not data.get('wallet_address') or not data.get('settings'):
             return jsonify({'error': 'wallet_address and settings required'}), 400
 
@@ -1357,7 +1358,7 @@ def get_premium_elite_100():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         sort_by = request.args.get('sort_by', 'score')
 
         from services.elite_100_manager import get_elite_manager
@@ -1380,7 +1381,7 @@ def export_elite_100():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.elite_100_manager import get_elite_manager
         import csv, time
@@ -1414,7 +1415,7 @@ def get_top_100_community():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
@@ -1441,7 +1442,7 @@ def save_active_analysis():
         data          = request.json
         user_id       = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
         analysis_type = data.get('type')
         analysis_data = data.get('analysis')
 
@@ -1470,7 +1471,7 @@ def delete_active_analysis(analysis_type):
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from redis import Redis
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
@@ -1493,7 +1494,7 @@ def get_active_analyses():
     try:
         user_id = getattr(request, 'user_id', None)
         if not user_id:
-            user_id = f"anon_{request.remote_addr}"
+            user_id = anon_user_id()
 
         from redis import Redis
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
