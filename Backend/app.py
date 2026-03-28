@@ -32,7 +32,10 @@ telegram_polling_started = False
 
 
 def get_rate_limit_key():
-    """Get rate limit key - prefer user ID from auth, fallback to IP."""
+    """Get rate limit key - prefer user ID from auth, fallback to IP.
+    Exempt OPTIONS preflight requests from rate limiting."""
+    if request.method == 'OPTIONS':
+        return None  # Exempt preflight from rate limiting
     user_id = getattr(request, 'user_id', None)
     if user_id:
         return f"user:{user_id}"
@@ -213,7 +216,7 @@ def _apply_rate_limits(limiter: Limiter):
     limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(analyze_bp)
     limiter.limit(Config.ANALYZE_RATE_LIMIT_DAY)(analyze_bp)
     limiter.limit(Config.WATCHLIST_WRITE_LIMIT)(watchlist_bp)
-    limiter.limit(Config.ANALYZE_RATE_LIMIT_HOUR)(wallets_bp)
+    # wallets_bp uses the default limit (1000/hour) — analysis has its own per-route limits
     limiter.exempt(health_bp)
     limiter.exempt(telegram_bp)
 
