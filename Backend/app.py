@@ -1,6 +1,8 @@
 """Flask application factory and entry point."""
 import os
 import threading
+from services.log import setup_logging
+setup_logging()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
