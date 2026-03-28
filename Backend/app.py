@@ -32,10 +32,7 @@ telegram_polling_started = False
 
 
 def get_rate_limit_key():
-    """Get rate limit key - prefer user ID from auth, fallback to IP.
-    Exempt OPTIONS preflight requests from rate limiting."""
-    if request.method == 'OPTIONS':
-        return None  # Exempt preflight from rate limiting
+    """Get rate limit key - prefer user ID from auth, fallback to IP."""
     user_id = getattr(request, 'user_id', None)
     if user_id:
         return f"user:{user_id}"
@@ -121,6 +118,13 @@ def create_app() -> Flask:
         strategy=Config.RATELIMIT_STRATEGY,
         enabled=True
     )
+
+    @app.before_request
+    def handle_preflight():
+        """Let CORS preflight through without rate limiting."""
+        if request.method == 'OPTIONS':
+            response = app.make_default_options_response()
+            return response
 
     from services.telegram_notifier import TelegramNotifier
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
