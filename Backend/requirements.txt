@@ -33,3 +33,6 @@ apscheduler==3.10.4
 
 # ClickHouse analytics pipeline
 clickhouse-connect>=0.7.0
+
+# Structured logging
+structlog>=25.0.0
