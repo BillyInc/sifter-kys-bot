@@ -36,26 +36,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-          cache-dependency-path: Backend/requirements.txt
-
       - name: Install uv
-        run: pip install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: |
-          uv pip install --system -r requirements.txt
-          uv pip install --system flake8 pyright
+        run: uv sync --extra dev
 
       - name: Run flake8
-        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run pyright
-        run: pyright --warnings
+        run: uv run pyright --warnings
         continue-on-error: true
 
   # ==================
@@ -73,24 +67,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-          cache-dependency-path: Backend/requirements.txt
-
       - name: Install uv
-        run: pip install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: |
-          uv pip install --system -r requirements.txt
-          uv pip install --system pytest pytest-cov
+        run: uv sync --extra dev
 
       - name: Run tests
-        run: pytest --tb=short -q || echo "No tests found or tests skipped"
-        continue-on-error: true
+        run: uv run pytest --tb=short -q
 
   # ==================
   # Deploy (main only)
@@ -106,34 +93,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate secrets
-        run: |
-          if [ -z "${{ secrets.SERVER_HOST }}" ]; then
-            echo "::error::SERVER_HOST secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SERVER_USER }}" ]; then
-            echo "::error::SERVER_USER secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "::error::SSH_PRIVATE_KEY secret is not set"
-            exit 1
-          fi
-
       - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER: ${{ secrets.SERVER_HOST }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$SERVER" >> ~/.ssh/known_hosts
 
       - name: Create .env file
+        env:
+          ENV_CONTENT: ${{ secrets.ENV_FILE }}
         run: |
-          echo "${{ secrets.ENV_FILE }}" > Backend/.env
+          echo "$ENV_CONTENT" > Backend/.env
           chmod 600 Backend/.env
 
       - name: Deploy with rsync
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
         run: |
           rsync -avz --delete \
             --exclude '.venv' \
@@ -144,26 +124,28 @@ jobs:
             --exclude '.git' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             Backend/ \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ env.DEPLOY_PATH }}/
+            "$USER@$SERVER:~/sifter-backend/"
 
       - name: Install dependencies and restart
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
-            cd ${{ env.DEPLOY_PATH }}
+            "$USER@$SERVER" << 'ENDSSH'
+            cd ~/sifter-backend
 
             # Secure .env file permissions
             chmod 600 .env
 
-            # Create venv if not exists
-            if [ ! -d ".venv" ]; then
-              python3 -m venv .venv
+            # Install uv if not present
+            if ! command -v uv &> /dev/null; then
+              curl -LsSf https://astral.sh/uv/install.sh | sh
             fi
+            export PATH="$HOME/.local/bin:$PATH"
 
-            # Install/update dependencies
-            source .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
+            # Install dependencies with uv
+            uv sync
 
             # Create logs directory
             mkdir -p logs
@@ -175,19 +157,21 @@ jobs:
             # Enable services on first deploy
             sudo systemctl enable sifter-backend rq-worker@{1..5} wallet-monitor 2>/dev/null || true
 
-            # Restart services (graceful reload for gunicorn)
+            # Restart services
             sudo systemctl reload-or-restart sifter-backend
             sudo systemctl restart rq-worker@{1..5}
             sudo systemctl restart wallet-monitor
 
-            echo "Deployment complete!"
+            echo "Backend deployment complete!"
           ENDSSH
 
       - name: Health check
         continue-on-error: true
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
         run: |
           sleep 10
-          curl -f --max-time 30 http://${{ secrets.SERVER_HOST }}:5000/health && echo "Health check passed!" || echo "::warning::Health check failed - server may need manual verification"
+          curl -f --max-time 30 "http://$SERVER:5000/health" && echo "Health check passed!" || echo "::warning::Health check failed"
 
       - name: Cleanup sensitive files
         if: always()

@@ -96,7 +96,12 @@ def create_app() -> Flask:
 
     CORS(app, resources={
         r"/*": {
-        "origins": ["http://localhost:5173", "http://localhost:3000", "https://sifter-kys-bot.onrender.com", "http://localhost:8080"],
+        "origins": [
+                "http://localhost:5173",
+                "http://localhost:3000",
+                "https://sifter-kys-web.duckdns.org",
+                "https://sifter-kys-bot.onrender.com",
+            ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         "allow_headers": ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
         "expose_headers": ["Content-Type", "Authorization"],
