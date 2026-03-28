@@ -1,7 +1,10 @@
 """Flask application factory and entry point."""
 import os
 import threading
+import logging
 from services.log import setup_logging
+
+logger = logging.getLogger(__name__)
 setup_logging()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -112,7 +115,7 @@ def create_app() -> Flask:
     )
 
     from services.telegram_notifier import TelegramNotifier
-    TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', "8338094173:AAEv_xAXoCi0RFNT6eVYIfejIPTnHOsI_sk")
+    TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     telegram_notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
     app.config['TELEGRAM_NOTIFIER'] = telegram_notifier
 
@@ -217,7 +220,8 @@ def _register_error_handlers(app: Flask):
 
     @app.errorhandler(500)
     def internal_error(e):
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        logger.exception("Unhandled server error")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def print_startup_banner():

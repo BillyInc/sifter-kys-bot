@@ -448,8 +448,8 @@ def analyze_stream():
                     wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
                 all_wallets.extend(wallets[:20])
             except Exception as e:
-                error_msg = f'Error on {ticker}: {str(e)}'
-                yield f"data: {json.dumps({'type': 'progress', 'message': error_msg})}\n\n"
+                logger.exception("Error analyzing token %s", ticker)
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Error on {ticker}'})}\n\n"
 
         yield f"data: {json.dumps({'type': 'complete', 'data': {'wallets': all_wallets, 'total': len(all_wallets)}})}\n\n"
 
