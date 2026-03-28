@@ -83,7 +83,7 @@ export default function DashboardHome({
           <h3 className="text-lg font-semibold mb-3">Recent Activity</h3>
           <div className="space-y-2">
             {recentActivity.slice(0, 5).map((activity, idx) => (
-              <div key={idx} className="flex items-center justify-between p-2 bg-black/30 rounded">
+              <div key={`${activity.description}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 bg-black/30 rounded">
                 <span className="text-sm">{activity.description}</span>
                 <span className="text-xs text-gray-400">{activity.time}</span>
               </div>

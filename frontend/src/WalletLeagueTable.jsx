@@ -78,10 +78,10 @@ export default function WalletLeagueTable({
           if (action.type === 'win' || action.result === 'win') color = 'bg-green-500';
           else if (action.type === 'draw' || action.result === 'draw') color = 'bg-gray-400';
           else if (action.type === 'loss' || action.result === 'loss') color = 'bg-red-500';
-          
+
           return (
-            <div 
-              key={idx} 
+            <div
+              key={`${action.token || action.result || 'action'}-${idx}`}
               className={`w-2.5 h-2.5 rounded-full ${color}`}
               title={action.token || action.description || `Action ${idx + 1}`}
             />
@@ -326,7 +326,7 @@ export default function WalletLeagueTable({
                         const isDraw = action.type === 'draw' || action.result === 'draw';
                         
                         return (
-                          <div key={idx} className="flex items-center gap-2 text-xs">
+                          <div key={`${action.token || action.description || 'form'}-${idx}`} className="flex items-center gap-2 text-xs">
                             <span className={`w-3 h-3 rounded-full ${
                               isWin ? 'bg-green-500' : 
                               isDraw ? 'bg-gray-400' : 
@@ -354,7 +354,7 @@ export default function WalletLeagueTable({
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {wallet.other_runners.slice(0, 5).map((runner, idx) => (
-                        <div key={idx} className="bg-white/5 rounded p-2">
+                        <div key={`${runner.symbol}-${idx}`} className="bg-white/5 rounded p-2">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-sm font-semibold text-yellow-400">
                               ${runner.symbol}
@@ -419,7 +419,7 @@ export default function WalletLeagueTable({
                       ⚠️ Performance Alerts:
                     </div>
                     {wallet.degradation_alerts.map((alert, idx) => (
-                      <div key={idx} className="text-xs text-yellow-300 mb-1">
+                      <div key={`alert-${idx}`} className="text-xs text-yellow-300 mb-1">
                         • {alert.message || alert}
                       </div>
                     ))}

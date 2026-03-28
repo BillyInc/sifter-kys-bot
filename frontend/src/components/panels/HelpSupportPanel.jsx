@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { Search, Book, Video, MessageSquare, Mail, Send, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function HelpSupportPanel({ userId, apiUrl }) {
@@ -46,7 +47,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
 
   const handleSubmitTicket = async () => {
     if (!ticketForm.subject || !ticketForm.message) {
-      alert('Please fill in all fields');
+      toast.warning('Please fill in all fields');
       return;
     }
 
@@ -65,14 +66,14 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
       const data = await response.json();
 
       if (data.success) {
-        alert('✅ Ticket submitted! We\'ll respond within 24 hours.');
+        toast.success('Ticket submitted! We\'ll respond within 24 hours.');
         setTicketForm({ subject: '', message: '' });
       } else {
-        alert('Failed to submit ticket');
+        toast.error('Failed to submit ticket');
       }
     } catch (error) {
       console.error('Ticket error:', error);
-      alert('Error submitting ticket');
+      toast.error('Error submitting ticket');
     }
     setIsSubmitting(false);
   };
@@ -98,9 +99,9 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           Quick Start
         </h3>
         <div className="grid grid-cols-2 gap-2">
-          {quickStartGuides.map((guide, idx) => (
+          {quickStartGuides.map((guide) => (
             <button
-              key={idx}
+              key={guide.title}
               className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left transition"
             >
               <div className="flex items-center gap-2 mb-1">
@@ -119,9 +120,9 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           💡 Feature Guides
         </h3>
         <div className="space-y-2">
-          {featureGuides.map((guide, idx) => (
+          {featureGuides.map((guide) => (
             <button
-              key={idx}
+              key={guide.title}
               className="w-full p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left text-sm transition flex items-center gap-2"
             >
               <span>{guide.icon}</span>
@@ -150,7 +151,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         </h3>
         <div className="space-y-2">
           {faqs.map((faq, idx) => (
-            <div key={idx} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+            <div key={faq.q} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
               <button
                 onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}
                 className="w-full p-3 text-left flex items-center justify-between hover:bg-white/5 transition"
@@ -177,10 +178,10 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         
         <div className="space-y-3 mb-4">
           <a
-            href="mailto:support@sifter.io"
+            href="mailto:support@sifterkys.com"
             className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
           >
-            📧 support@sifter.io
+            📧 support@sifterkys.com
           </a>
           <a
             href="https://twitter.com/SifterIO"

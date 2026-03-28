@@ -1,9 +1,12 @@
 """Watchlist database using Supabase - FIXED VERSION."""
 from datetime import datetime, timedelta
 import json
+import logging
 from typing import List, Dict, Optional
 
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+logger = logging.getLogger(__name__)
 
 
 class WatchlistDatabase:
@@ -535,8 +538,8 @@ class WatchlistDatabase:
                         'severity': 'critical',
                         'message': f'No activity for {days_inactive} days'
                     })
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"[WATCHLIST DB] Failed to parse last_updated timestamp: {e}")
         
         return alerts
 

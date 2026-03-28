@@ -125,7 +125,7 @@ export default function QuickAddWalletPanel({
         <div className="space-y-2">
           {presets.map((preset, idx) => (
             <button
-              key={idx}
+              key={preset.address}
               onClick={() => applyPreset(preset)}
               className="w-full px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left text-sm transition group"
             >

@@ -39,7 +39,7 @@ function DiaryEntry({ entry, onEdit, onDelete }) {
           <p className="text-xs text-gray-200 leading-relaxed whitespace-pre-wrap break-words">{entry.text}</p>
           {entry.tags?.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
-              {entry.tags.map((t, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">{t}</span>)}
+              {entry.tags.map((t) => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">{t}</span>)}
             </div>
           )}
           <div className="flex items-center gap-1 mt-1.5">
@@ -199,7 +199,7 @@ function WalletDiary({ userId, apiUrl, walletAddress }) {
         </div>
       )}
 
-      {diary.loading && [...Array(2)].map((_, i) => <div key={i} className="animate-pulse bg-white/5 rounded-lg h-14 border border-white/10" />)}
+      {diary.loading && [...Array(2)].map((_, i) => <div key={`skeleton-${i}`} className="animate-pulse bg-white/5 rounded-lg h-14 border border-white/10" />)}
 
       {!diary.loading && filtered.length === 0 && !composing && (
         <div className="text-center py-6 text-gray-700">
@@ -312,7 +312,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
         <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#f5c842', textAlign: 'right', fontWeight: 600 }}>{runners30d}</div>
         <div style={{ display: 'flex', gap: 3, justifyContent: 'center' }}>
           {form.slice(0, 5).map((f, i) => (
-            <div key={i} style={{ width: 6, height: 6, borderRadius: 1, background: f.result === 'win' ? '#22c55e' : f.result === 'loss' ? '#ef4444' : '#334155' }} />
+            <div key={`form-${f.result || 'draw'}-${i}`} style={{ width: 6, height: 6, borderRadius: 1, background: f.result === 'win' ? '#22c55e' : f.result === 'loss' ? '#ef4444' : '#334155' }} />
           ))}
         </div>
         <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -367,7 +367,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                           const sym  = runner.symbol || runner.token || runner;
                           const mult = runner.entry_to_ath_multiplier || 0;
                           return (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, padding: '4px 8px', borderRadius: 4, background: 'rgba(245,200,66,0.06)', border: '1px solid rgba(245,200,66,0.15)' }}>
+                            <div key={`runner-${runner.symbol || runner.token || runner}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, padding: '4px 8px', borderRadius: 4, background: 'rgba(245,200,66,0.06)', border: '1px solid rgba(245,200,66,0.15)' }}>
                               <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#f5c842', fontWeight: 700 }}>${sym}</span>
                               <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#64748b', marginLeft: 'auto' }}>{mult.toFixed(1)}x</span>
                             </div>
@@ -378,7 +378,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                       <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: '#3a5a8a', marginBottom: 8 }}>● Recent Form</div>
                       <div style={{ display: 'flex', gap: 3 }}>
                         {form.slice(0, 10).map((f, i) => (
-                          <span key={i} style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: f.result === 'win' ? '#22c55e' : f.result === 'loss' ? '#ef4444' : '#475569' }}>
+                          <span key={`form-letter-${f.result || 'draw'}-${i}`} style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: f.result === 'win' ? '#22c55e' : f.result === 'loss' ? '#ef4444' : '#475569' }}>
                             {f.result === 'win' ? 'W' : f.result === 'loss' ? 'L' : 'D'}
                           </span>
                         ))}
@@ -397,7 +397,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                           };
                           const ac = aColors[alert.severity] || aColors.yellow;
                           return (
-                            <div key={i} style={{ display: 'flex', gap: 6, padding: '6px 8px', marginBottom: 6, borderRadius: 4, background: ac.bg, border: `1px solid ${ac.border}`, fontSize: 11, color: ac.text, fontFamily: 'monospace' }}>
+                            <div key={`alert-${alert.severity}-${i}`} style={{ display: 'flex', gap: 6, padding: '6px 8px', marginBottom: 6, borderRadius: 4, background: ac.bg, border: `1px solid ${ac.border}`, fontSize: 11, color: ac.text, fontFamily: 'monospace' }}>
                               <span>{ac.icon}</span> {alert.message}
                             </div>
                           );

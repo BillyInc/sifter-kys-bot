@@ -5,6 +5,7 @@ import {
   RotateCcw, Activity, Minimize2, Zap, Clock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 
 const LIVE_INTERVAL_MS  = 60_000;
 const POLL_INTERVAL_MS  = 3_000;
@@ -401,7 +402,7 @@ function TrendingPanelCore({
             onClose();
           } else if (data.status === 'failed') {
             clearInterval(pollIntervalRef.current);
-            alert('❌ Analysis failed');
+            toast.error('Analysis failed');
             cancelAnalysis();
           }
         }
@@ -424,12 +425,12 @@ function TrendingPanelCore({
         setCurrentJobId(data.job_id);
         onAnalysisStart({ jobId: data.job_id, total: 1, analysisType: 'trending-single', token: token.symbol });
         startPolling(data.job_id, 'trending-single', 1);
-      } else { alert('Failed to start analysis'); cancelAnalysis(); }
+      } else { toast.error('Failed to start analysis'); cancelAnalysis(); }
     } catch (err) { console.error('Single analysis error:', err); cancelAnalysis(); }
   };
 
   const handleBatchAnalyze = async () => {
-    if (!selectedRunners.length) { alert('Select at least one token'); return; }
+    if (!selectedRunners.length) { toast.warning('Select at least one token'); return; }
     cancelAnalysis();
     setIsBatchAnalyzing(true);
     setAnalysisProgress({ current: 0, total: selectedRunners.length, phase: 'Starting…' });
@@ -446,7 +447,7 @@ function TrendingPanelCore({
         setCurrentJobId(data.job_id);
         onAnalysisStart({ jobId: data.job_id, total: selectedRunners.length, analysisType: 'trending-batch', runners: selectedRunners.map(r => r.symbol) });
         startPolling(data.job_id, 'trending-batch', selectedRunners.length);
-      } else { alert('Failed to start batch analysis'); cancelAnalysis(); }
+      } else { toast.error('Failed to start batch analysis'); cancelAnalysis(); }
     } catch (err) { console.error('Batch error:', err); cancelAnalysis(); }
   };
 
@@ -890,7 +891,7 @@ function TrendingPanelCore({
         {isLoading ? (
           <div style={{ padding: '16px' }}>
             {[...Array(5)].map((_, i) => (
-              <div key={i} style={{ height: 84, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 6, animation: 'pulse 1.5s ease-in-out infinite' }} />
+              <div key={`skeleton-${i}`} style={{ height: 84, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 6, animation: 'pulse 1.5s ease-in-out infinite' }} />
             ))}
           </div>
         ) : runners.length === 0 ? (

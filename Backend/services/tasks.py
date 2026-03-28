@@ -15,8 +15,12 @@ Tasks:
   send_telegram_alert_async    — on-demand (queued by wallet monitor)
 """
 from celery_app import celery
-from datetime import datetime
+from datetime import datetime, date, timedelta
+import json
 import os
+import traceback
+
+import redis as redis_lib
 
 
 # =============================================================================
@@ -27,28 +31,110 @@ import os
 def daily_stats_refresh():
     """
     Daily stats refresh at 3am UTC.
-    Updates all watchlist wallet metrics.
+    Reads aggregate stats from ClickHouse and syncs them to Supabase wallet_watchlist.
+
+    Fields synced (per architecture doc section 10):
+        professional_score, consistency_score, win_rate, roi_30d,
+        runners_30d, avg_roi_mult, avg_entry_to_ath, tokens_qualified,
+        last_updated
+    Note: `tier` is only written by weekly_rerank_all — not touched here.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Daily Stats Refresh - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.watchlist_stats_updater import get_updater
-        updater = get_updater()
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.clickhouse_client import get_clickhouse_client
 
-        result = updater.daily_stats_refresh()
+        supabase = get_supabase_client()
+        ch = get_clickhouse_client()
 
-        print(f"\n[CELERY TASK] Daily refresh complete: {result}")
+        # 1. Get all watchlisted wallet addresses from Supabase
+        print("[DAILY] Fetching watchlisted wallets from Supabase...")
+        watchlist_resp = (
+            supabase.schema(SCHEMA_NAME)
+            .table('wallet_watchlist')
+            .select('wallet_address')
+            .execute()
+        )
+        if not watchlist_resp.data:
+            print("[DAILY] No wallets in watchlist — nothing to refresh.")
+            return {
+                'status':    'success',
+                'wallets':   0,
+                'synced':    0,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+        addresses = list({row['wallet_address'] for row in watchlist_resp.data})
+        print(f"[DAILY] Found {len(addresses)} unique wallet addresses")
+
+        # 2. Bulk read latest aggregate stats from ClickHouse
+        print("[DAILY] Querying ClickHouse wallet_aggregate_stats FINAL...")
+        result = ch.query(
+            """SELECT
+                wallet_address,
+                professional_score,
+                consistency_score,
+                win_rate,
+                total_roi_pct,
+                tokens_qualified,
+                avg_roi_mult,
+                avg_entry_to_ath_mult
+            FROM kys.wallet_aggregate_stats FINAL
+            WHERE wallet_address IN {addrs:Array(String)}""",
+            parameters={'addrs': addresses}
+        )
+        ch_rows = result.named_results()
+        stats_by_wallet = {r['wallet_address']: r for r in ch_rows}
+        print(f"[DAILY] Got stats for {len(stats_by_wallet)} wallets from ClickHouse")
+
+        # 3. Batch upsert computed fields back to Supabase
+        synced = 0
+        errors = 0
+        now_iso = datetime.utcnow().isoformat()
+
+        BATCH_SIZE = 50
+        for i in range(0, len(addresses), BATCH_SIZE):
+            batch = addresses[i:i + BATCH_SIZE]
+            for addr in batch:
+                stats = stats_by_wallet.get(addr)
+                if not stats:
+                    continue
+                try:
+                    supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
+                        'professional_score': float(stats.get('professional_score', 0)),
+                        'consistency_score':  float(stats.get('consistency_score', 0)),
+                        'win_rate':           float(stats.get('win_rate', 0)),
+                        'roi_30d':            float(stats.get('total_roi_pct', 0)),
+                        'runners_30d':        int(stats.get('tokens_qualified', 0)),
+                        'avg_roi_mult':       float(stats.get('avg_roi_mult', 0)),
+                        'avg_entry_to_ath':   float(stats.get('avg_entry_to_ath_mult', 0)),
+                        'tokens_qualified':   int(stats.get('tokens_qualified', 0)),
+                        'last_updated':       now_iso,
+                    }).eq('wallet_address', addr).execute()
+                    synced += 1
+                except Exception as e:
+                    errors += 1
+                    print(f"[DAILY] Error updating {addr[:12]}...: {e}")
+
+        print(f"\n[CELERY TASK] Daily refresh complete")
+        print(f"  Wallets found:   {len(addresses)}")
+        print(f"  CH stats loaded: {len(stats_by_wallet)}")
+        print(f"  Synced:          {synced}")
+        print(f"  Errors:          {errors}")
         return {
             'status':    'success',
-            'result':    result,
-            'timestamp': datetime.utcnow().isoformat()
+            'wallets':   len(addresses),
+            'ch_loaded': len(stats_by_wallet),
+            'synced':    synced,
+            'errors':    errors,
+            'timestamp': now_iso
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] Daily refresh failed: {e}")
-        import traceback
         traceback.print_exc()
         return {
             'status':    'error',
@@ -65,28 +151,204 @@ def daily_stats_refresh():
 def weekly_rerank_all():
     """
     Weekly rerank on Sunday at 4am UTC.
-    Reranks all user watchlists.
+    1. Reads ALL wallets from ClickHouse ordered by professional_score DESC
+    2. Assigns tiers: S (top 5%), A (6-20%), B (21-50%), C (bottom 50%)
+    3. Writes weekly snapshot to ClickHouse wallet_weekly_snapshots
+    4. Writes Elite 100 to ClickHouse leaderboard_results
+    5. Caches Elite 100 in Redis (7-day TTL)
+    6. Syncs tiers back to Supabase wallet_watchlist
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Weekly Rerank - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.watchlist_stats_updater import get_updater
-        updater = get_updater()
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.clickhouse_client import (
+            get_clickhouse_client, insert_weekly_snapshots,
+            insert_leaderboard_results,
+        )
 
-        result = updater.weekly_rerank_all()
+        supabase = get_supabase_client()
+        ch = get_clickhouse_client()
 
-        print(f"\n[CELERY TASK] Weekly rerank complete: {result}")
+        # ----------------------------------------------------------------
+        # 1. Read ALL wallets ordered by professional_score DESC
+        # ----------------------------------------------------------------
+        print("[RERANK] Querying all wallets from ClickHouse...")
+        result = ch.query(
+            """SELECT
+                wallet_address,
+                professional_score,
+                consistency_score,
+                win_rate,
+                total_roi_pct,
+                tokens_qualified,
+                avg_roi_mult,
+                avg_entry_to_ath_mult,
+                total_pnl_usd,
+                last_active_at,
+                wins,
+                draws,
+                losses
+            FROM kys.wallet_aggregate_stats FINAL
+            ORDER BY professional_score DESC"""
+        )
+        all_wallets = result.named_results()
+        total = len(all_wallets)
+        print(f"[RERANK] Loaded {total} wallets from ClickHouse")
+
+        if total == 0:
+            print("[RERANK] No wallets found — nothing to rank.")
+            return {
+                'status':    'success',
+                'wallets':   0,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+        # ----------------------------------------------------------------
+        # 2. Assign tiers by percentile position
+        # ----------------------------------------------------------------
+        print("[RERANK] Assigning tiers...")
+        today = date.today()
+        snapshot_rows = []
+        tier_map = {}  # wallet_address -> tier
+
+        for rank_idx, wallet in enumerate(all_wallets):
+            pct = (rank_idx + 1) / total  # percentile position (1-based)
+            if pct <= 0.05:
+                tier = 'S'
+            elif pct <= 0.20:
+                tier = 'A'
+            elif pct <= 0.50:
+                tier = 'B'
+            else:
+                tier = 'C'
+
+            addr = wallet['wallet_address']
+            tier_map[addr] = tier
+
+            # Match wallet_weekly_snapshots schema columns exactly
+            week_start = today - timedelta(days=today.weekday())  # snap to Monday
+            snapshot_rows.append({
+                'wallet_address':     addr,
+                'week_start':         week_start,
+                'tokens_qualified':   int(wallet.get('tokens_qualified', 0)),
+                'wins':               int(wallet.get('wins', 0)),
+                'losses':             int(wallet.get('losses', 0)),
+                'win_rate':           float(wallet.get('win_rate', 0)),
+                'avg_roi_mult':       float(wallet.get('avg_roi_mult', 0)),
+                'professional_score': float(wallet.get('professional_score', 0)),
+                'tier':               tier,
+                'consistency_score':  float(wallet.get('consistency_score', 0)),
+                'position_in_elite':  rank_idx + 1 if rank_idx < 100 else 0,
+            })
+
+        tier_counts = {}
+        for t in tier_map.values():
+            tier_counts[t] = tier_counts.get(t, 0) + 1
+        print(f"[RERANK] Tier distribution: {tier_counts}")
+
+        # ----------------------------------------------------------------
+        # 3. Write weekly snapshots to ClickHouse
+        # ----------------------------------------------------------------
+        print(f"[RERANK] Writing {len(snapshot_rows)} weekly snapshots to ClickHouse...")
+        insert_weekly_snapshots(snapshot_rows)
+
+        # ----------------------------------------------------------------
+        # 4. Write Elite 100 to ClickHouse leaderboard_results
+        # ----------------------------------------------------------------
+        # Match leaderboard_results schema columns exactly
+        elite_100 = all_wallets[:100]
+        leaderboard_rows = []
+        for rank_idx, wallet in enumerate(elite_100):
+            addr = wallet['wallet_address']
+            leaderboard_rows.append({
+                'result_key':           'elite100',
+                'leaderboard_type':     'elite100',
+                'user_id':              '',
+                'token_set':            '[]',
+                'rank':                 rank_idx + 1,
+                'wallet_address':       addr,
+                'professional_score':   float(wallet.get('professional_score', 0)),
+                'tier':                 tier_map[addr],
+                'avg_entry_to_ath_mult': float(wallet.get('avg_entry_to_ath_mult', 0)),
+                'avg_roi_mult':         float(wallet.get('avg_roi_mult', 0)),
+                'consistency_score':    float(wallet.get('consistency_score', 0)),
+                'tokens_qualified':     int(wallet.get('tokens_qualified', 0)),
+                'win_rate':             float(wallet.get('win_rate', 0)),
+                'total_pnl_usd':        float(wallet.get('total_pnl_usd', 0)),
+                'expires_at':           datetime.utcnow() + timedelta(days=7),
+            })
+        print(f"[RERANK] Writing {len(leaderboard_rows)} Elite 100 rows to ClickHouse...")
+        insert_leaderboard_results(leaderboard_rows)
+
+        # ----------------------------------------------------------------
+        # 5. Cache Elite 100 in Redis (7-day TTL)
+        # ----------------------------------------------------------------
+        print("[RERANK] Caching Elite 100 in Redis...")
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+        r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=10)
+
+        elite_payload = []
+        for row in leaderboard_rows:
+            serializable = dict(row)
+            # Convert datetime to string for JSON serialization
+            if 'expires_at' in serializable:
+                serializable['expires_at'] = str(serializable['expires_at'])
+            elite_payload.append(serializable)
+
+        r.set('kys:elite100', json.dumps(elite_payload), ex=604800)
+        print("[RERANK] Redis kys:elite100 cached with 7-day TTL")
+
+        # ----------------------------------------------------------------
+        # 6. Sync tiers to Supabase wallet_watchlist (only watchlisted wallets)
+        # ----------------------------------------------------------------
+        print("[RERANK] Syncing tiers to Supabase wallet_watchlist...")
+        watchlist_resp = (
+            supabase.schema(SCHEMA_NAME)
+            .table('wallet_watchlist')
+            .select('wallet_address')
+            .execute()
+        )
+        watchlisted_addrs = {row['wallet_address'] for row in watchlist_resp.data} if watchlist_resp.data else set()
+
+        synced = 0
+        errors = 0
+        for addr in watchlisted_addrs:
+            tier = tier_map.get(addr)
+            if not tier:
+                continue
+            try:
+                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
+                    'tier':         tier,
+                    'last_updated': datetime.utcnow().isoformat(),
+                }).eq('wallet_address', addr).execute()
+                synced += 1
+            except Exception as e:
+                errors += 1
+                if errors <= 5:
+                    print(f"[RERANK] Error syncing tier for {addr[:12]}...: {e}")
+
+        print(f"\n[CELERY TASK] Weekly rerank complete")
+        print(f"  Total wallets:    {total}")
+        print(f"  Snapshots:        {len(snapshot_rows)}")
+        print(f"  Elite 100:        {len(leaderboard_rows)}")
+        print(f"  Tiers synced:     {synced}")
+        print(f"  Errors:           {errors}")
         return {
-            'status':    'success',
-            'result':    result,
-            'timestamp': datetime.utcnow().isoformat()
+            'status':      'success',
+            'total':       total,
+            'snapshots':   len(snapshot_rows),
+            'elite_100':   len(leaderboard_rows),
+            'tiers':       tier_counts,
+            'synced':      synced,
+            'errors':      errors,
+            'timestamp':   datetime.utcnow().isoformat()
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] Weekly rerank failed: {e}")
-        import traceback
         traceback.print_exc()
         return {
             'status':    'error',
@@ -102,29 +364,143 @@ def weekly_rerank_all():
 @celery.task(name='tasks.four_week_degradation_check')
 def four_week_degradation_check():
     """
-    4-week degradation check every 28 days at 5am UTC.
-    Identifies wallets with declining performance over 4 weeks.
+    4-week degradation check (1st & 29th of month at 5am UTC).
+    Queries wallet_weekly_snapshots for wallets with 4+ weeks of data
+    in the last 28 days, compares first vs last snapshot, and flags
+    degraded wallets with status='critical' in Supabase.
+
+    Degradation thresholds (architecture doc section 11):
+        - ROI drop > 200% (half of 400% floor equivalent)
+        - Win rate drop >= 20 percentage points
+        - Elite position drop >= 5 positions
+        - Consistency drop >= 20 points
+        - Win rate dropped to 0
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] 4-Week Degradation Check - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.watchlist_stats_updater import get_updater
-        updater = get_updater()
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.clickhouse_client import get_clickhouse_client
 
-        result = updater.four_week_degradation_check()
+        supabase = get_supabase_client()
+        ch = get_clickhouse_client()
 
-        print(f"\n[CELERY TASK] 4-week check complete: {result}")
+        cutoff_date = date.today() - timedelta(days=28)
+
+        # ----------------------------------------------------------------
+        # 1. Query wallets with 4+ snapshots in the last 28 days
+        #    Use groupArray() to get ordered arrays per wallet
+        # ----------------------------------------------------------------
+        print(f"[DEGRADATION] Querying snapshots since {cutoff_date}...")
+        result = ch.query(
+            """SELECT
+                wallet_address,
+                groupArray(week_start)         AS dates,
+                groupArray(avg_roi_mult)       AS roi_arr,
+                groupArray(win_rate)           AS wr_arr,
+                groupArray(position_in_elite)  AS rank_arr,
+                groupArray(consistency_score)  AS cs_arr
+            FROM (
+                SELECT *
+                FROM kys.wallet_weekly_snapshots FINAL
+                WHERE week_start >= {cutoff:Date}
+                ORDER BY wallet_address, week_start ASC
+            )
+            GROUP BY wallet_address
+            HAVING length(dates) >= 4""",
+            parameters={'cutoff': cutoff_date}
+        )
+        wallets = result.named_results()
+        print(f"[DEGRADATION] Found {len(wallets)} wallets with 4+ weeks of data")
+
+        # ----------------------------------------------------------------
+        # 2. Compare first vs last snapshot and flag degraded wallets
+        # ----------------------------------------------------------------
+        degraded = []
+        for w in wallets:
+            addr = w['wallet_address']
+            reasons = []
+
+            roi_first = float(w['roi_arr'][0])
+            roi_last  = float(w['roi_arr'][-1])
+            wr_first  = float(w['wr_arr'][0])
+            wr_last   = float(w['wr_arr'][-1])
+            rank_first = int(w['rank_arr'][0])
+            rank_last  = int(w['rank_arr'][-1])
+            cs_first  = float(w['cs_arr'][0])
+            cs_last   = float(w['cs_arr'][-1])
+
+            roi_drop = roi_first - roi_last
+            wr_drop  = wr_first - wr_last
+            cs_drop  = cs_first - cs_last
+
+            # ROI drop > 200%
+            if roi_drop > 200:
+                reasons.append(f"ROI dropped {roi_drop:.1f}% (>{200}% threshold)")
+
+            # Win rate drop >= 20 percentage points
+            if wr_drop >= 20:
+                reasons.append(f"Win rate dropped {wr_drop:.1f}pp (>={20}pp threshold)")
+
+            # Win rate dropped to 0
+            if wr_last == 0 and wr_first > 0:
+                reasons.append("Win rate dropped to 0%")
+
+            # Elite position drop >= 5 (only if both are ranked)
+            if rank_first > 0 and rank_last > 0:
+                rank_drop = rank_last - rank_first  # higher rank number = worse
+                if rank_drop >= 5:
+                    reasons.append(f"Elite rank dropped {rank_drop} positions")
+
+            # Consistency drop >= 20 points
+            if cs_drop >= 20:
+                reasons.append(f"Consistency dropped {cs_drop:.1f}pts (>={20}pt threshold)")
+
+            if reasons:
+                degraded.append({
+                    'wallet_address': addr,
+                    'reasons':        reasons,
+                })
+
+        print(f"[DEGRADATION] {len(degraded)} wallets flagged as degraded")
+
+        # ----------------------------------------------------------------
+        # 3. Flag degraded wallets in Supabase
+        # ----------------------------------------------------------------
+        flagged = 0
+        errors = 0
+        for entry in degraded:
+            try:
+                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
+                    'status':       'critical',
+                    'last_updated': datetime.utcnow().isoformat(),
+                }).eq('wallet_address', entry['wallet_address']).execute()
+                flagged += 1
+                if flagged <= 10:
+                    print(f"  Flagged {entry['wallet_address'][:12]}...: "
+                          f"{'; '.join(entry['reasons'])}")
+            except Exception as e:
+                errors += 1
+                print(f"[DEGRADATION] Error flagging {entry['wallet_address'][:12]}...: {e}")
+
+        print(f"\n[CELERY TASK] 4-week degradation check complete")
+        print(f"  Wallets checked: {len(wallets)}")
+        print(f"  Degraded:        {len(degraded)}")
+        print(f"  Flagged:         {flagged}")
+        print(f"  Errors:          {errors}")
         return {
             'status':    'success',
-            'result':    result,
+            'checked':   len(wallets),
+            'degraded':  len(degraded),
+            'flagged':   flagged,
+            'errors':    errors,
             'timestamp': datetime.utcnow().isoformat()
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] 4-week check failed: {e}")
-        import traceback
         traceback.print_exc()
         return {
             'status':    'error',

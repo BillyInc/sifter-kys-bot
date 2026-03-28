@@ -360,7 +360,7 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
                 <Label>Entry Delay</Label>
                 {DELAY_OPTIONS.map((opt, i) => (
                   <RadioOption
-                    key={i}
+                    key={opt.label}
                     label={opt.label}
                     sub={opt.sub}
                     selected={delayIdx === i}
@@ -819,7 +819,7 @@ function SkillResults({ results }) {
           <Divider />
           <Label>● What This Means</Label>
           {results.implications.map((imp, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <div key={`implication-${i}`} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
               <CheckCircle size={12} color={verdictColor} style={{ flexShrink: 0, marginTop: 2 }} />
               <Mono style={{ fontSize: 10, color: C.grayL, lineHeight: 1.5 }}>{imp}</Mono>
             </div>

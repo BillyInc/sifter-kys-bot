@@ -1,7 +1,10 @@
+import logging
 from flask import Blueprint, request, jsonify
 from auth import optional_auth
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 support_bp = Blueprint('support', __name__, url_prefix='/api/support')
 
@@ -15,7 +18,9 @@ def submit_ticket():
     
     try:
         data = request.json
-        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         subject = data.get('subject')
         message = data.get('message')
         
@@ -32,9 +37,6 @@ def submit_ticket():
             'status': 'open',
             'created_at': datetime.utcnow().isoformat()
         }).execute()
-        
-        # TODO: Send email notification to support@sifter.io
-        
         return jsonify({
             'success': True,
             'message': 'Ticket submitted successfully. We\'ll respond within 24 hours.'
@@ -43,4 +45,5 @@ def submit_ticket():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500

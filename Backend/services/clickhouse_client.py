@@ -28,17 +28,20 @@ def get_clickhouse_client():
     return _client
 
 
+def _dicts_to_rows(rows: list[dict]) -> tuple[list[list], list[str]]:
+    """Convert list of dicts to (data, column_names) for clickhouse-connect insert()."""
+    columns = list(rows[0].keys())
+    data = [[row[col] for col in columns] for row in rows]
+    return data, columns
+
+
 def insert_token_scans(rows: list[dict]):
     """Bulk insert token scan records."""
     if not rows:
         return
     ch = get_clickhouse_client()
-    ch.insert(
-        table='token_scans',
-        data=rows,
-        database='kys',
-        column_names=list(rows[0].keys()),
-    )
+    data, columns = _dicts_to_rows(rows)
+    ch.insert(table='token_scans', data=data, database='kys', column_names=columns)
 
 
 def insert_wallet_token_stats(rows: list[dict]):
@@ -46,12 +49,8 @@ def insert_wallet_token_stats(rows: list[dict]):
     if not rows:
         return
     ch = get_clickhouse_client()
-    ch.insert(
-        table='wallet_token_stats',
-        data=rows,
-        database='kys',
-        column_names=list(rows[0].keys()),
-    )
+    data, columns = _dicts_to_rows(rows)
+    ch.insert(table='wallet_token_stats', data=data, database='kys', column_names=columns)
 
 
 def insert_weekly_snapshots(rows: list[dict]):
@@ -59,12 +58,8 @@ def insert_weekly_snapshots(rows: list[dict]):
     if not rows:
         return
     ch = get_clickhouse_client()
-    ch.insert(
-        table='wallet_weekly_snapshots',
-        data=rows,
-        database='kys',
-        column_names=list(rows[0].keys()),
-    )
+    data, columns = _dicts_to_rows(rows)
+    ch.insert(table='wallet_weekly_snapshots', data=data, database='kys', column_names=columns)
 
 
 def insert_leaderboard_results(rows: list[dict]):
@@ -72,12 +67,8 @@ def insert_leaderboard_results(rows: list[dict]):
     if not rows:
         return
     ch = get_clickhouse_client()
-    ch.insert(
-        table='leaderboard_results',
-        data=rows,
-        database='kys',
-        column_names=list(rows[0].keys()),
-    )
+    data, columns = _dicts_to_rows(rows)
+    ch.insert(table='leaderboard_results', data=data, database='kys', column_names=columns)
 
 
 def get_wallet_stats(wallet_address: str) -> dict | None:

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  ArrowRight, 
-  TrendingUp, 
-  Target, 
+import { toast } from 'sonner';
+import {
+  X,
+  ArrowRight,
+  TrendingUp,
+  Target,
   Activity,
   CheckCircle,
   AlertCircle,
@@ -36,7 +37,7 @@ export default function WalletReplacementModal({
       // Modal will close from parent
     } catch (error) {
       console.error('Replace error:', error);
-      alert('Failed to replace wallet');
+      toast.error('Failed to replace wallet');
     } finally {
       setIsReplacing(false);
     }
@@ -140,7 +141,7 @@ export default function WalletReplacementModal({
               <div className="mt-3 pt-3 border-t border-red-500/30">
                 <div className="text-xs font-semibold text-red-400 mb-2">Issues:</div>
                 {currentWallet.degradation_alerts.map((alert, idx) => (
-                  <div key={idx} className="text-xs text-red-300 mb-1">
+                  <div key={`alert-${idx}`} className="text-xs text-red-300 mb-1">
                     ❌ {alert.message || alert}
                   </div>
                 ))}

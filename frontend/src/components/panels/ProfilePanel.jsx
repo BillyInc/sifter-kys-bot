@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { User, Settings, Bell, Key, CreditCard, HelpCircle, LogOut, BarChart3, Share2 } from 'lucide-react';
 import SettingsSubPanel from './SettingsSubPanel';
 import TelegramSettings from '../../TelegramSettings';
@@ -65,7 +66,7 @@ export default function ProfilePanel({
     { id: 'referrals', icon: Share2,   label: 'Referrals & Points', color: 'text-green-400',  action: () => setSubPanel('referrals') },
     { id: 'settings',  icon: Settings, label: 'Settings',           color: 'text-gray-400',   action: () => setSubPanel('settings')  },
     { id: 'telegram',  icon: Bell,     label: 'Telegram Setup',     color: 'text-blue-400',   action: () => setSubPanel('telegram')  },
-    { id: 'api',       icon: Key,      label: 'API Keys',           color: 'text-yellow-400', action: () => alert('API Keys coming soon') },
+    { id: 'api',       icon: Key,      label: 'API Keys',           color: 'text-yellow-400', action: () => toast.info('API Keys coming soon') },
     { id: 'billing',   icon: CreditCard, label: 'Billing',          color: 'text-green-400',  action: () => window.open('https://whop.com/sifter', '_blank') },
   ];
 

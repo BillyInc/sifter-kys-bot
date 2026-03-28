@@ -37,14 +37,14 @@ class PrecisionRallyDetector:
         url = f"{self.dex_screener_url}/search/?q={token_address}"
         
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
-            
+
             if not data.get('pairs'):
                 print("❌ No pairs found for this token")
                 return None
-            
+
             pairs = data['pairs']
             main_pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
             
@@ -69,10 +69,10 @@ class PrecisionRallyDetector:
         url = f"{self.dex_screener_url}/search/?q={query}"
         
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
-            
+
             if not data.get('pairs'):
                 return []
             
@@ -157,7 +157,7 @@ class PrecisionRallyDetector:
         }
         
         try:
-            response = requests.get(self.birdeye_url, params=params, headers=headers)
+            response = requests.get(self.birdeye_url, params=params, headers=headers, timeout=15)
             
             # Better error handling
             if response.status_code == 400:

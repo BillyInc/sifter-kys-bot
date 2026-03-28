@@ -11,12 +11,15 @@ Supabase tables required:
 ──────────────────────────────────────────────────────────────────────────────
 """
 
+import logging
 from flask import Blueprint, request, jsonify, make_response
 from datetime import datetime
 import traceback
 
 from auth import optional_auth
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+logger = logging.getLogger(__name__)
 
 diary_bp = Blueprint('diary', __name__, url_prefix='/api/diary')
 
@@ -28,28 +31,13 @@ def _table(name: str):
     return _supabase().schema(SCHEMA_NAME).table(name)
 
 def _get_user_id() -> str | None:
-    # 1. Auth middleware (JWT)
+    # Only trust the auth middleware (JWT) — never user-supplied input
     uid = getattr(request, 'user_id', None)
     if uid:
         return uid
 
-    # 2. Query string (GET requests)
-    uid = request.args.get('user_id')
-    if uid:
-        return uid
-
-    # 3. JSON body (POST/PUT/DELETE)
-    # MUST use get_json(silent=True) — request.json raises 400 on GET
-    # requests that have Content-Type: application/json but no body
-    try:
-        body = request.get_json(silent=True, force=False) or {}
-        uid = body.get('user_id')
-        if uid:
-            return uid
-    except Exception:
-        pass
-
-    return None
+    # Anonymous fallback for @optional_auth routes
+    return f"anon_{request.remote_addr}"
 
 
 def _cors_response(data=None, status=200):
@@ -109,7 +97,8 @@ def get_salt():
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 @diary_bp.route('/salt', methods=['POST', 'OPTIONS'])
@@ -153,7 +142,8 @@ def save_salt():
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 # ─── Note CRUD ────────────────────────────────────────────────────────────────
@@ -193,7 +183,8 @@ def list_notes():
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 @diary_bp.route('/notes', methods=['POST', 'OPTIONS'])
@@ -233,7 +224,8 @@ def create_note():
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 @diary_bp.route('/notes/<note_id>', methods=['PUT', 'OPTIONS'])
@@ -271,7 +263,8 @@ def update_note(note_id):
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 @diary_bp.route('/notes/<note_id>', methods=['DELETE', 'OPTIONS'])
@@ -294,7 +287,8 @@ def delete_note(note_id):
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)
 
 
 @diary_bp.route('/notes', methods=['DELETE', 'OPTIONS'])
@@ -318,4 +312,5 @@ def clear_all_notes():
 
     except Exception as e:
         traceback.print_exc()
-        return _cors_response({'error': str(e)}, 500)
+        logger.exception("Request failed")
+        return _cors_response({'error': 'Internal server error'}, 500)

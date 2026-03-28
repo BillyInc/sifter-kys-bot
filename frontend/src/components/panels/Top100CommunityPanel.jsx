@@ -122,7 +122,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
           <h4 className="text-sm font-semibold text-green-400 mb-2">📈 Trending Up This Week</h4>
           <div className="space-y-1 text-xs text-gray-300">
             {leaderboard.slice(0, 3).map((wallet, idx) => (
-              <div key={idx}>
+              <div key={wallet.wallet_address}>
                 • {wallet.wallet_address?.slice(0, 8)}... (+{wallet.rank_change || 0} positions)
               </div>
             ))}

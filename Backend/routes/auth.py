@@ -1,8 +1,11 @@
 """
 Auth API Routes
 """
+import logging
 from flask import Blueprint, request, jsonify
 from services.referral_points_manager import get_referral_manager
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -36,4 +39,5 @@ def handle_signup():
         print(f"[AUTH] Signup error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500

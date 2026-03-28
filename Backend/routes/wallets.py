@@ -1,6 +1,9 @@
 """Wallet analysis routes - CORRECTLY FIXED for TOKEN OVERLAP ranking."""
+import logging
 from flask import Blueprint, request, jsonify, Response
 import json
+
+logger = logging.getLogger(__name__)
 
 from config import Config
 from auth import require_auth, optional_auth
@@ -122,7 +125,9 @@ def analyze_wallets():
             return jsonify({'error': 'tokens array required'}), 400
 
         tokens  = data['tokens']
-        user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         q_high, q_batch, q_compute = get_queues()
@@ -157,7 +162,8 @@ def analyze_wallets():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/jobs/<job_id>', methods=['GET'])
@@ -226,7 +232,8 @@ def cancel_job(job_id):
         return jsonify({'success': True, 'message': 'Job cancelled'}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/jobs/<job_id>/recover', methods=['POST', 'OPTIONS'])
@@ -269,7 +276,8 @@ def recover_job(job_id):
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -281,11 +289,10 @@ def recover_job(job_id):
 def get_analysis_history():
     """Load permanent analysis history for a user from Supabase."""
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
-        limit   = int(request.args.get('limit', 50))
-
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
+        limit   = int(request.args.get('limit', 50))
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -314,7 +321,8 @@ def get_analysis_history():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/history', methods=['POST'])
@@ -323,10 +331,12 @@ def save_analysis_history():
     """Save a completed analysis result permanently to Supabase."""
     try:
         body    = request.json
-        user_id = getattr(request, 'user_id', None) or body.get('user_id')
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         entry   = body.get('entry', {})
 
-        if not user_id or not entry:
+        if not entry:
             return jsonify({'error': 'user_id and entry required'}), 400
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -345,7 +355,8 @@ def save_analysis_history():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/history/<entry_id>', methods=['DELETE'])
@@ -354,10 +365,9 @@ def delete_history_entry(entry_id):
     """Remove a single history entry by UUID."""
     try:
         body    = request.json or {}
-        user_id = getattr(request, 'user_id', None) or body.get('user_id')
-
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -371,7 +381,8 @@ def delete_history_entry(entry_id):
         return jsonify({'success': True}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/history/all', methods=['DELETE'])
@@ -380,10 +391,9 @@ def clear_history():
     """Clear all history entries for a user."""
     try:
         body    = request.json or {}
-        user_id = getattr(request, 'user_id', None) or body.get('user_id')
-
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -397,7 +407,8 @@ def clear_history():
         return jsonify({'success': True}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -412,7 +423,9 @@ def analyze_stream():
 
     data    = request.json
     tokens  = data.get('tokens', [])
-    user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+    user_id = getattr(request, 'user_id', None)
+    if not user_id:
+        user_id = f"anon_{request.remote_addr}"
     min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
     def generate():
@@ -435,8 +448,8 @@ def analyze_stream():
                     wallet['analyzed_tokens'] = [token.get('ticker', 'UNKNOWN')]
                 all_wallets.extend(wallets[:20])
             except Exception as e:
-                error_msg = f'Error on {ticker}: {str(e)}'
-                yield f"data: {json.dumps({'type': 'progress', 'message': error_msg})}\n\n"
+                logger.exception("Error analyzing token %s", ticker)
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Error on {ticker}'})}\n\n"
 
         yield f"data: {json.dumps({'type': 'complete', 'data': {'wallets': all_wallets, 'total': len(all_wallets)}})}\n\n"
 
@@ -461,7 +474,9 @@ def analyze_single_token():
 
         token              = data['token']
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
-        user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        user_id            = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_analyzer    = get_wallet_analyzer()
 
         wallets = wallet_analyzer.analyze_token_professional(
@@ -491,7 +506,8 @@ def analyze_single_token():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -529,7 +545,8 @@ def get_trending_runners():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/trending/analyze', methods=['POST', 'OPTIONS'])
@@ -545,7 +562,9 @@ def analyze_trending_runner():
 
         runner             = data['runner']
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
-        user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        user_id            = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         q_high, _, _ = get_queues()
@@ -567,7 +586,8 @@ def analyze_trending_runner():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/trending/analyze-batch', methods=['POST', 'OPTIONS'])
@@ -584,7 +604,9 @@ def analyze_trending_runners_batch():
         runners            = data['runners']
         min_runner_hits    = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
-        user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        user_id            = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         _, q_batch, _ = get_queues()
@@ -605,7 +627,8 @@ def analyze_trending_runners_batch():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -620,7 +643,9 @@ def auto_discover_wallets():
 
     try:
         data               = request.json or {}
-        user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
+        user_id            = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         min_runner_hits    = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
@@ -650,7 +675,8 @@ def auto_discover_wallets():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -675,7 +701,9 @@ def add_wallet_to_watchlist():
 
     try:
         data        = request.json
-        user_id     = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id     = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_data = data.get('wallet', {})
 
         if not user_id or not wallet_data.get('wallet'):
@@ -744,7 +772,8 @@ def add_wallet_to_watchlist():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/get', methods=['GET', 'OPTIONS'])
@@ -754,7 +783,9 @@ def get_wallet_watchlist():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         tier    = request.args.get('tier')
 
         if not user_id:
@@ -783,7 +814,8 @@ def get_wallet_watchlist():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/remove', methods=['POST', 'OPTIONS'])
@@ -794,11 +826,13 @@ def remove_wallet_from_watchlist():
 
     try:
         data           = request.json
-        user_id        = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id        = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_address = data.get('wallet_address')
 
-        if not user_id or not wallet_address:
-            return jsonify({'success': False, 'error': 'user_id and wallet_address required'}), 400
+        if not wallet_address:
+            return jsonify({'success': False, 'error': 'wallet_address required'}), 400
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -830,10 +864,12 @@ def update_wallet_watchlist():
 
     try:
         data    = request.json
-        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
 
-        if not user_id or not data.get('wallet_address'):
-            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        if not data.get('wallet_address'):
+            return jsonify({'error': 'wallet_address required'}), 400
 
         db      = get_watchlist_db()
         success = db.update_wallet_notes(user_id, data['wallet_address'], data.get('notes'), data.get('tags'))
@@ -843,7 +879,8 @@ def update_wallet_watchlist():
         return jsonify({'success': False, 'error': 'Failed to update'}), 500
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/stats', methods=['GET', 'OPTIONS'])
@@ -853,16 +890,17 @@ def get_wallet_watchlist_stats():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         db    = get_watchlist_db()
         stats = db.get_wallet_watchlist_stats(user_id)
         return jsonify({'success': True, 'stats': stats}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/alerts/update', methods=['POST', 'OPTIONS'])
@@ -873,11 +911,13 @@ def update_wallet_alert_settings():
 
     try:
         data           = request.json
-        user_id        = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id        = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_address = data.get('wallet_address')
 
-        if not user_id or not wallet_address:
-            return jsonify({'success': False, 'error': 'user_id and wallet_address required'}), 400
+        if not wallet_address:
+            return jsonify({'success': False, 'error': 'wallet_address required'}), 400
 
         update_data = {'last_updated': datetime.utcnow().isoformat()}
         for field in ['alert_enabled', 'alert_threshold_usd', 'alert_on_buy', 'alert_on_sell', 'min_trade_usd']:
@@ -904,9 +944,7 @@ def rerank_watchlist():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.json.get('user_id')
-        if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+        user_id = request.user_id  # Auth decorator guarantees this exists
 
         from services.watchlist_manager import WatchlistLeagueManager
         manager   = WatchlistLeagueManager()
@@ -915,7 +953,8 @@ def rerank_watchlist():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/<wallet_address>/stats', methods=['GET', 'OPTIONS'])
@@ -925,9 +964,9 @@ def get_wallet_stats(wallet_address):
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.watchlist_manager import WatchlistLeagueManager
         manager = WatchlistLeagueManager()
@@ -939,7 +978,8 @@ def get_wallet_stats(wallet_address):
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/<wallet_address>/refresh', methods=['POST', 'OPTIONS'])
@@ -959,10 +999,9 @@ def refresh_wallet_stats(wallet_address):
 
     try:
         data    = request.json or {}
-        user_id = getattr(request, 'user_id', None) or data.get('user_id')
-
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.watchlist_manager import WatchlistLeagueManager
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
@@ -1000,7 +1039,8 @@ def refresh_wallet_stats(wallet_address):
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/add-quick', methods=['POST', 'OPTIONS'])
@@ -1011,11 +1051,13 @@ def add_wallet_quick():
 
     try:
         data           = request.json
-        user_id        = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id        = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_address = data.get('wallet_address')
 
-        if not user_id or not wallet_address:
-            return jsonify({'error': 'user_id and wallet_address required'}), 400
+        if not wallet_address:
+            return jsonify({'error': 'wallet_address required'}), 400
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -1062,7 +1104,8 @@ def add_wallet_quick():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/suggest-replacement', methods=['POST', 'OPTIONS'])
@@ -1073,11 +1116,13 @@ def suggest_replacement():
 
     try:
         data           = request.json
-        user_id        = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id        = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         wallet_address = data.get('wallet_address')
         min_score      = data.get('min_professional_score', 85)
 
-        if not user_id or not wallet_address:
+        if not wallet_address:
             return jsonify({'error': 'user_id and wallet_address required'}), 400
 
         wallet_analyzer = get_wallet_analyzer()
@@ -1089,7 +1134,8 @@ def suggest_replacement():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/replace', methods=['POST', 'OPTIONS'])
@@ -1100,11 +1146,13 @@ def replace_wallet():
 
     try:
         data            = request.json
-        user_id         = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id         = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         old_wallet      = data.get('old_wallet')
         new_wallet_data = data.get('new_wallet')
 
-        if not all([user_id, old_wallet, new_wallet_data]):
+        if not all([old_wallet, new_wallet_data]):
             return jsonify({'error': 'Missing required fields'}), 400
 
         from db.watchlist_db import WatchlistDatabase
@@ -1125,7 +1173,8 @@ def replace_wallet():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/watchlist/table', methods=['GET', 'OPTIONS'])
@@ -1135,9 +1184,9 @@ def get_watchlist_table():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from db.watchlist_db import WatchlistDatabase
         db         = WatchlistDatabase()
@@ -1152,7 +1201,8 @@ def get_watchlist_table():
         }), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -1174,7 +1224,8 @@ def get_wallet_activity():
         return jsonify({'success': True, 'activities': activities, 'count': len(activities)}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/notifications', methods=['GET', 'OPTIONS'])
@@ -1185,9 +1236,9 @@ def get_notifications():
 
     try:
         from services.wallet_monitor import get_user_notifications
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         notifications = get_user_notifications(
             user_id=user_id,
@@ -1199,7 +1250,8 @@ def get_notifications():
                         'count': len(notifications), 'unread_count': unread_count}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/notifications/mark-read', methods=['POST', 'OPTIONS'])
@@ -1211,9 +1263,9 @@ def mark_notifications_read():
     try:
         from services.wallet_monitor import mark_notification_read, mark_all_notifications_read
         data    = request.json
-        user_id = getattr(request, 'user_id', None) or data.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         if data.get('mark_all'):
             count = mark_all_notifications_read(user_id)
@@ -1226,7 +1278,8 @@ def mark_notifications_read():
         return jsonify({'error': 'Either notification_id or mark_all required'}), 400
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/alerts/update', methods=['POST', 'OPTIONS'])
@@ -1238,9 +1291,11 @@ def update_wallet_alerts():
     try:
         from services.wallet_monitor import update_alert_settings
         data    = request.json
-        user_id = getattr(request, 'user_id', None) or data.get('user_id')
-        if not user_id or not data.get('wallet_address') or not data.get('settings'):
-            return jsonify({'error': 'user_id, wallet_address, and settings required'}), 400
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
+        if not data.get('wallet_address') or not data.get('settings'):
+            return jsonify({'error': 'wallet_address and settings required'}), 400
 
         success = update_alert_settings(user_id, data['wallet_address'], data['settings'])
         if success:
@@ -1248,7 +1303,8 @@ def update_wallet_alerts():
         return jsonify({'success': False, 'error': 'Wallet not found in watchlist'}), 404
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/monitor/status', methods=['GET', 'OPTIONS'])
@@ -1263,7 +1319,8 @@ def get_monitor_status():
         return jsonify({'success': True, 'status': stats}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/monitor/force-check', methods=['POST', 'OPTIONS'])
@@ -1283,7 +1340,8 @@ def force_check_wallet():
         return jsonify({'success': True, 'message': f'Force check completed for {wallet_address[:8]}...'}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -1297,10 +1355,10 @@ def get_premium_elite_100():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
-        sort_by = request.args.get('sort_by', 'score')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
+        sort_by = request.args.get('sort_by', 'score')
 
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
@@ -1309,7 +1367,8 @@ def get_premium_elite_100():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/premium-elite-100/export', methods=['GET', 'OPTIONS'])
@@ -1319,9 +1378,9 @@ def export_elite_100():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.elite_100_manager import get_elite_manager
         import csv, time
@@ -1342,7 +1401,8 @@ def export_elite_100():
                         headers={'Content-Disposition': f'attachment; filename=elite-100-{int(time.time())}.csv'})
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/top-100-community', methods=['GET', 'OPTIONS'])
@@ -1352,9 +1412,9 @@ def get_top_100_community():
         return '', 204
 
     try:
-        user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.elite_100_manager import get_elite_manager
         manager = get_elite_manager()
@@ -1363,7 +1423,8 @@ def get_top_100_community():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -1378,11 +1439,13 @@ def save_active_analysis():
 
     try:
         data          = request.json
-        user_id       = data.get('user_id')
+        user_id       = getattr(request, 'user_id', None)
+        if not user_id:
+            user_id = f"anon_{request.remote_addr}"
         analysis_type = data.get('type')
         analysis_data = data.get('analysis')
 
-        if not all([user_id, analysis_type, analysis_data]):
+        if not all([analysis_type, analysis_data]):
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
 
         from redis import Redis
@@ -1394,7 +1457,8 @@ def save_active_analysis():
 
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/user/active-analysis/<analysis_type>', methods=['DELETE', 'OPTIONS'])
@@ -1404,9 +1468,9 @@ def delete_active_analysis(analysis_type):
         return '', 204
 
     try:
-        user_id = request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'success': False, 'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from redis import Redis
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
@@ -1416,7 +1480,8 @@ def delete_active_analysis(analysis_type):
         return jsonify({'success': True}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @wallets_bp.route('/user/active-analyses', methods=['GET', 'OPTIONS'])
@@ -1426,9 +1491,9 @@ def get_active_analyses():
         return '', 204
 
     try:
-        user_id = request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'success': False, 'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from redis import Redis
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
@@ -1445,4 +1510,5 @@ def get_active_analyses():
         return jsonify({'success': True, 'analyses': analyses}), 200
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500

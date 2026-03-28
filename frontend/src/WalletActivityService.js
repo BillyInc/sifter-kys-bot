@@ -30,7 +30,6 @@ class WalletActivityService {
     if (!this.isPolling) {
       this.isPolling = true;
       this.pollInterval = setInterval(() => this.fetchNotifications(), 30000); // 30 seconds
-      console.log('[WalletActivity] Started polling (30s interval) for:', userId);
     }
   }
 
@@ -39,7 +38,6 @@ class WalletActivityService {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
       this.isPolling = false;
-      console.log('[WalletActivity] Stopped polling');
     }
   }
 
@@ -153,7 +151,6 @@ class WalletActivityService {
 
   // Manual refresh method
   async refresh() {
-    console.log('[WalletActivity] Manual refresh triggered');
     await this.fetchNotifications();
   }
 }

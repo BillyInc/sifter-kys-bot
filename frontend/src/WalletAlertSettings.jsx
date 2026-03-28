@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Settings, Bell, BellOff, DollarSign, TrendingUp, TrendingDown, Save, X } from 'lucide-react';
 import walletActivityService from './WalletActivityService';
 
@@ -62,11 +63,11 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
           if (onClose) onClose();
         }, 1000);
       } else {
-        alert('Failed to save alert settings');
+        toast.error('Failed to save alert settings');
       }
     } catch (error) {
       console.error('Error saving settings:', error);
-      alert('Error saving settings');
+      toast.error('Error saving settings');
     }
 
     setIsSaving(false);

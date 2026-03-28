@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Zap, Search, Sparkles, CheckCircle, AlertCircle, Shield, XCircle, AlertTriangle, RotateCcw, Minimize2, Activity } from 'lucide-react';
 
 const POLL_INTERVAL_MS  = 3_000;
@@ -109,7 +110,7 @@ export default function DiscoveryPanel({
           } else if (data.status === 'failed') {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
-            alert('❌ Discovery failed');
+            toast.error('Discovery failed');
             setIsDiscovering(false);
             setCurrentJobId(null);
           }
@@ -141,12 +142,12 @@ export default function DiscoveryPanel({
         pollJobProgress(data.job_id);
         // Auto-minimize so user can keep working — panel stays open but hint is shown
       } else {
-        alert(`Discovery failed: ${data.error || 'Unknown error'}`);
+        toast.error(`Discovery failed: ${data.error || 'Unknown error'}`);
         setIsDiscovering(false);
       }
     } catch (error) {
       console.error('Auto discovery error:', error);
-      alert('Discovery failed due to network error');
+      toast.error('Discovery failed due to network error');
       setIsDiscovering(false);
     }
   };
@@ -171,9 +172,9 @@ export default function DiscoveryPanel({
         })
       });
       const data = await response.json();
-      if (data.success) alert(`✅ Added ${wallet.wallet.slice(0, 8)}… to watchlist`);
-      else alert(`Failed: ${data.error}`);
-    } catch (error) { console.error('Add to watchlist error:', error); alert('Failed to add wallet to watchlist'); }
+      if (data.success) toast.success(`Added ${wallet.wallet.slice(0, 8)}… to watchlist`);
+      else toast.error(`Failed: ${data.error}`);
+    } catch (error) { console.error('Add to watchlist error:', error); toast.error('Failed to add wallet to watchlist'); }
   };
 
   const handleAddAll = async () => {
@@ -183,7 +184,7 @@ export default function DiscoveryPanel({
     for (const wallet of discoveryResults) {
       try { await handleAddWallet(wallet); successCount++; } catch { /* ignore */ }
     }
-    alert(`✅ Added ${successCount}/${discoveryResults.length} wallets to your watchlist!`);
+    toast.success(`Added ${successCount}/${discoveryResults.length} wallets to your watchlist!`);
   };
 
   // Progress to show — prefer local (more granular) over parent summary

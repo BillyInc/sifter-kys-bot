@@ -13,10 +13,14 @@ Redis keys used:
   abm:mode               → "simulation" or "watchlist"
 """
 
+import logging
 from flask import Blueprint, jsonify, request, current_app
+from auth import optional_auth
 import json
 import os
 from redis import Redis
+
+logger = logging.getLogger(__name__)
 
 abm_state_bp = Blueprint('abm_state', __name__)
 
@@ -54,7 +58,8 @@ def get_abm_state():
         return jsonify(state)
 
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
 
 
 # ── POST to push a state update (called by simulation_harness.py) ─────────────
@@ -77,21 +82,23 @@ def push_abm_state():
         return jsonify({'success': True})
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # ── GET watchlist state (live data mode) ──────────────────────────────────────
 
 @abm_state_bp.route('/api/abm/watchlist-state', methods=['GET'])
+@optional_auth
 def get_watchlist_abm_state():
     """
     Converts your real Supabase watchlist into the same JSON shape
     that Three.js expects — so the same visualiser works for both modes.
     """
     try:
-        user_id = request.args.get('user_id')
+        user_id = getattr(request, 'user_id', None)
         if not user_id:
-            return jsonify({'error': 'user_id required'}), 400
+            user_id = f"anon_{request.remote_addr}"
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -150,7 +157,8 @@ def get_watchlist_abm_state():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # ── Reset endpoint ────────────────────────────────────────────────────────────
@@ -163,4 +171,5 @@ def reset_abm_state():
         r.delete('abm:mode')
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500

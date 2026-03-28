@@ -4,9 +4,13 @@ Processes payment events from Whop for subscription management and referral trac
 """
 import hmac
 import hashlib
+import logging
+import os
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from services.referral_points_manager import get_referral_manager
+
+logger = logging.getLogger(__name__)
 
 whop_bp = Blueprint('whop', __name__, url_prefix='/api/whop')
 
@@ -39,11 +43,13 @@ def whop_webhook():
         signature = request.headers.get('X-Whop-Signature', '')
         
         # Verify signature (get secret from env)
-        import os
-        whop_secret = os.environ.get('WHOP_WEBHOOK_SECRET', '')
-        
-        if whop_secret and not verify_whop_signature(payload, signature, whop_secret):
-            print("[WHOP] Invalid signature")
+        whop_secret = os.environ.get('WHOP_WEBHOOK_SECRET')
+        if not whop_secret:
+            logger.error("[WHOP] WHOP_WEBHOOK_SECRET not configured")
+            return jsonify({'error': 'Webhook not configured'}), 503
+
+        if not verify_whop_signature(payload, signature, whop_secret):
+            logger.warning("[WHOP] Invalid signature")
             return jsonify({'error': 'Invalid signature'}), 401
         
         # Parse event
@@ -68,10 +74,8 @@ def whop_webhook():
             return jsonify({'status': 'ignored'}), 200
         
     except Exception as e:
-        print(f"[WHOP] Webhook error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def handle_payment_succeeded(data: dict):
@@ -152,10 +156,8 @@ def handle_payment_succeeded(data: dict):
         return jsonify({'status': 'success'}), 200
         
     except Exception as e:
-        print(f"[WHOP] Error handling payment: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def handle_subscription_cancelled(data: dict):
@@ -201,8 +203,8 @@ def handle_subscription_cancelled(data: dict):
         return jsonify({'status': 'success'}), 200
         
     except Exception as e:
-        print(f"[WHOP] Error handling cancellation: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def handle_subscription_expired(data: dict):
@@ -224,8 +226,8 @@ def handle_payment_failed(data: dict):
         return jsonify({'status': 'acknowledged'}), 200
         
     except Exception as e:
-        print(f"[WHOP] Error handling failed payment: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def determine_tier_from_plan(plan_id: str, amount: float) -> str:

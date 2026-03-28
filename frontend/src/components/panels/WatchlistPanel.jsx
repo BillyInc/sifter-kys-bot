@@ -118,7 +118,7 @@ function GlobalDiaryEntry({ entry, onEdit, onDelete }) {
           <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">{entry.text}</p>
           {entry.tags?.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-              {entry.tags.map((t, i) => <span key={i} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">{t}</span>)}
+              {entry.tags.map((t) => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">{t}</span>)}
             </div>
           )}
           <div className="flex items-center gap-2 mt-2">
@@ -260,7 +260,7 @@ function GlobalDiary({ userId, apiUrl }) {
         </div>
       )}
 
-      {diary.loading && [...Array(3)].map((_, i) => <div key={i} className="animate-pulse bg-white/5 rounded-xl h-20 border border-white/10" />)}
+      {diary.loading && [...Array(3)].map((_, i) => <div key={`skeleton-${i}`} className="animate-pulse bg-white/5 rounded-xl h-20 border border-white/10" />)}
 
       {!diary.loading && visible.length === 0 && (
         <div className="text-center py-14 text-gray-700">

@@ -1,10 +1,7 @@
-.PHONY: help venv install install-dev run run-prod clean lint test \
+.PHONY: help install install-dev run run-prod clean lint test format \
         docker-build docker-run docker-stop docker-logs docker-shell docker-restart \
         systemd-install systemd-start systemd-stop systemd-restart systemd-logs systemd-status
 
-PYTHON := python3
-VENV := .venv
-BIN := $(VENV)/bin
 IMAGE_NAME := sifter-backend
 CONTAINER_NAME := sifter-backend
 PORT := 8080
@@ -15,55 +12,43 @@ help: ## Show this help message
 	@echo "Targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
-venv: ## Create virtual environment
-	@echo "Creating virtual environment..."
-	$(PYTHON) -m venv $(VENV)
+install: ## Install dependencies (creates .venv via uv)
+	@echo "Installing dependencies with uv..."
+	uv sync
 	@echo ""
-	@echo "Virtual environment created. Activate with:"
-	@echo "  source $(VENV)/bin/activate"
+	@echo "Dependencies installed. Run commands with 'uv run <cmd>'."
 
-install: venv ## Install dependencies
-	@echo "Installing dependencies..."
-	$(BIN)/pip install --upgrade pip
-	$(BIN)/pip install -r requirements.txt
-	@echo ""
-	@echo "Dependencies installed successfully."
-
-install-dev: install ## Install dev dependencies
-	@echo "Installing dev dependencies..."
-	$(BIN)/pip install pytest black flake8 pyright
+install-dev: ## Install with dev dependencies
+	@echo "Installing with dev dependencies..."
+	uv sync --extra dev
 	@echo ""
 	@echo "Dev dependencies installed."
 
 run: ## Run development server
-	@if [ ! -d "$(VENV)" ]; then \
-		echo "Error: Virtual environment not found. Run 'make install' first."; \
-		exit 1; \
-	fi
 	@echo "Starting development server..."
-	$(BIN)/python app.py
+	uv run python app.py
 
 run-prod: ## Run production server with gunicorn
-	@if [ ! -d "$(VENV)" ]; then \
-		echo "Error: Virtual environment not found. Run 'make install' first."; \
-		exit 1; \
-	fi
 	@echo "Starting production server..."
-	$(BIN)/gunicorn --bind 0.0.0.0:5000 --workers 4 app:app
+	uv run gunicorn --bind 0.0.0.0:5000 --workers 4 app:app
 
 lint: ## Run linters
 	@echo "Running flake8..."
-	$(BIN)/flake8 --max-line-length=100 --exclude=$(VENV) .
+	uv run flake8 --max-line-length=100 --exclude=.venv .
 	@echo "Running pyright..."
-	$(BIN)/pyright .
+	uv run pyright .
 
 test: ## Run tests
 	@echo "Running tests..."
-	$(BIN)/pytest -v
+	uv run pytest -v
+
+format: ## Format code with black
+	@echo "Formatting with black..."
+	uv run black .
 
 clean: ## Remove virtual environment and cache files
 	@echo "Cleaning up..."
-	rm -rf $(VENV)
+	rm -rf .venv
 	rm -rf __pycache__ */__pycache__ */*/__pycache__
 	rm -rf .pytest_cache
 	rm -rf *.egg-info
