@@ -5,6 +5,7 @@ Sends wallet activity alerts to users via Telegram bot.
 Handles bot commands, user linking, and message formatting.
 """
 
+import html
 import requests
 import time
 import secrets
@@ -180,26 +181,27 @@ class TelegramNotifier:
         
         is_multi = len(trades) > 1
         t = trades[0]['trade']
-        ca = t.get('token_address')
+        ca = html.escape(t.get('token_address', ''))
+        symbol = html.escape(t.get('symbol', ''))
         total_usd = sum(item['trade']['amount_usd'] for item in trades)
-        
+
         # UI Layout with Single Wallet Fallback
         header = "🚨 <b>MULTI-WALLET SIGNAL</b>" if is_multi else "🔥 <b>Tier S Wallet Activity</b>"
-        
+
         msg = (
             f"{header}\n\n"
-            f"<b>Token:</b> ${t.get('symbol')}\n"
+            f"<b>Token:</b> ${symbol}\n"
             f"<b>Total Buy:</b> ${total_usd:,.2f}\n"
             f"<b>CA:</b> <code>{ca}</code>\n\n"
         )
-        
+
         if is_multi:
             msg += "<b>Wallets:</b>\n" + "\n".join([
-                f"• {x['wallet']['address'][:6]}... (Tier {x['wallet']['tier']})" 
+                f"• {html.escape(x['wallet']['address'][:6])}... (Tier {html.escape(str(x['wallet']['tier']))})"
                 for x in trades
             ])
         else:
-            msg += f"<b>Wallet:</b> <code>{trades[0]['wallet']['address']}</code>"
+            msg += f"<b>Wallet:</b> <code>{html.escape(trades[0]['wallet']['address'])}</code>"
         
         buttons = {
             'inline_keyboard': [
@@ -334,7 +336,7 @@ class TelegramNotifier:
         
         # Handle trade copy buttons (Photon/Bonkbot)
         if data.startswith('cp_p:') or data.startswith('cp_b:'):
-            ca = data.split(':', 1)[1]
+            ca = html.escape(data.split(':', 1)[1])
             bot_type = "Photon" if "cp_p:" in data else "Bonkbot"
             cmd = f"/buy {ca}" if bot_type == "Photon" else f"{ca}"
             

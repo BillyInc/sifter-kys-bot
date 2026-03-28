@@ -1,9 +1,12 @@
 """
 Referral & Points API Routes
 """
+import logging
 from flask import Blueprint, request, jsonify
 from auth import require_auth, optional_auth
 from services.referral_points_manager import get_referral_manager
+
+logger = logging.getLogger(__name__)
 
 referral_points_bp = Blueprint('referral_points', __name__, url_prefix='/api/referral-points')
 
@@ -51,7 +54,8 @@ def get_my_referral_code():
         
     except Exception as e:
         print(f"[API] Error getting referral code: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/referral-stats', methods=['GET'])
@@ -119,7 +123,8 @@ def get_referral_stats():
         
     except Exception as e:
         print(f"[API] Error getting referral stats: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/track-click/<code>', methods=['POST'])
@@ -132,7 +137,8 @@ def track_referral_click(code):
         return jsonify({'success': True}), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/validate-code/<code>', methods=['GET'])
@@ -158,7 +164,8 @@ def validate_referral_code(code):
             }), 404
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -185,7 +192,8 @@ def get_my_points():
         
     except Exception as e:
         print(f"[API] Error getting points: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/points/award', methods=['POST'])
@@ -222,7 +230,8 @@ def award_points_manual():
         
     except Exception as e:
         print(f"[API] Error awarding points: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/points/leaderboard', methods=['GET'])
@@ -255,7 +264,8 @@ def get_points_leaderboard():
         
     except Exception as e:
         print(f"[API] Error getting leaderboard: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @referral_points_bp.route('/points/history', methods=['GET'])
@@ -283,7 +293,8 @@ def get_points_history():
         
     except Exception as e:
         print(f"[API] Error getting history: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -350,4 +361,5 @@ def get_dashboard():
         
     except Exception as e:
         print(f"[API] Error getting dashboard: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500

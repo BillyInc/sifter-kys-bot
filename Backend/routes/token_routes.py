@@ -2,9 +2,12 @@
 Token search and info routes.
 FILE LOCATION: routes/token_routes.py
 """
+import logging
 from flask import Blueprint, request, jsonify
 import requests
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 tokens_bp = Blueprint('tokens', __name__, url_prefix='/api/tokens')
 
@@ -76,7 +79,8 @@ def search_tokens():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
 @tokens_bp.route('/info/<token_address>', methods=['GET', 'OPTIONS'])
@@ -133,4 +137,5 @@ def get_token_info(token_address):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500

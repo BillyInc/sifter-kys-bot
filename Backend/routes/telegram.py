@@ -1,4 +1,5 @@
 """Telegram integration routes."""
+import logging
 from flask import Blueprint, request, jsonify
 import os
 import threading
@@ -6,6 +7,8 @@ import time
 import requests
 import secrets
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 from auth import require_auth, optional_auth
 from services.telegram_notifier import TelegramNotifier
@@ -30,7 +33,7 @@ def get_telegram_status():
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
     
-    user_id = _get_user_id() or request.args.get('user_id')
+    user_id = _get_user_id() or f"anon_{request.remote_addr}"
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -53,7 +56,7 @@ def generate_connection_link():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = _get_user_id() or f"anon_{request.remote_addr}"
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -97,7 +100,8 @@ def generate_connection_link():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @telegram_bp.route('/disconnect', methods=['POST', 'OPTIONS'])
@@ -108,7 +112,7 @@ def disconnect_telegram():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = _get_user_id() or f"anon_{request.remote_addr}"
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
@@ -136,7 +140,7 @@ def toggle_telegram_alerts():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = _get_user_id() or f"anon_{request.remote_addr}"
     enabled = data.get('enabled', True)
     
     if not user_id:
@@ -164,7 +168,7 @@ def send_test_alert():
         return jsonify({'error': 'Telegram not configured'}), 503
     
     data = request.json or {}
-    user_id = _get_user_id() or data.get('user_id')
+    user_id = _get_user_id() or f"anon_{request.remote_addr}"
     
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400

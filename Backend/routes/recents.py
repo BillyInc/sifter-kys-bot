@@ -22,11 +22,14 @@ Storage note:
   re-fetch the full result on demand via GET /api/wallets/jobs/<job_id>.
 """
 
+import logging
 from flask import Blueprint, request, jsonify
 from auth import optional_auth
 from redis import Redis
 import json
 import os
+
+logger = logging.getLogger(__name__)
 
 recents_bp = Blueprint('recents', __name__, url_prefix='/api/user/recents')
 
@@ -74,9 +77,9 @@ def get_recents():
     if request.method == 'OPTIONS':
         return '', 204
 
-    user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+    user_id = getattr(request, 'user_id', None)
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        user_id = f"anon_{request.remote_addr}"
 
     try:
         r       = _get_redis()
@@ -84,7 +87,8 @@ def get_recents():
         return jsonify({'success': True, 'recents': recents, 'count': len(recents)}), 200
     except Exception as e:
         print(f"[RECENTS GET] Error for {str(user_id)[:8]}: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -100,11 +104,10 @@ def add_recent():
         return '', 204
 
     data    = request.json or {}
-    user_id = getattr(request, 'user_id', None) or data.get('user_id')
-    entry   = data.get('entry')
-
+    user_id = getattr(request, 'user_id', None)
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        user_id = f"anon_{request.remote_addr}"
+    entry   = data.get('entry')
     if not entry or not isinstance(entry, dict):
         return jsonify({'error': 'entry object required'}), 400
     if not entry.get('id') or not entry.get('resultType'):
@@ -126,7 +129,8 @@ def add_recent():
 
     except Exception as e:
         print(f"[RECENTS ADD] Error for {str(user_id)[:8]}: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -141,10 +145,9 @@ def remove_recent(entry_id):
         return '', 204
 
     data    = request.json or {}
-    user_id = getattr(request, 'user_id', None) or data.get('user_id') or request.args.get('user_id')
-
+    user_id = getattr(request, 'user_id', None)
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        user_id = f"anon_{request.remote_addr}"
 
     try:
         r       = _get_redis()
@@ -160,7 +163,8 @@ def remove_recent(entry_id):
 
     except Exception as e:
         print(f"[RECENTS REMOVE] Error for {str(user_id)[:8]}: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # =============================================================================
@@ -175,10 +179,9 @@ def clear_recents():
         return '', 204
 
     data    = request.json or {}
-    user_id = getattr(request, 'user_id', None) or data.get('user_id') or request.args.get('user_id')
-
+    user_id = getattr(request, 'user_id', None)
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        user_id = f"anon_{request.remote_addr}"
 
     try:
         r = _get_redis()
@@ -187,4 +190,5 @@ def clear_recents():
 
     except Exception as e:
         print(f"[RECENTS CLEAR] Error for {str(user_id)[:8]}: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Request failed")
+        return jsonify({'error': 'Internal server error'}), 500
