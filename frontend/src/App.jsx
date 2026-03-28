@@ -157,7 +157,7 @@ export default function SifterKYS() {
     if (!userId || !isAuthenticated) return;
     try {
       const authToken = getAccessToken();
-      await fetch(`${API_URL}/api/user/active-analysis`, {
+      await fetch(`${API_URL}/api/wallets/user/active-analysis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
         body: JSON.stringify({ user_id: userId, type, analysis: { ...analysis, timestamp: Date.now() } })
@@ -169,7 +169,7 @@ export default function SifterKYS() {
     if (!userId || !isAuthenticated) return;
     try {
       const authToken = getAccessToken();
-      await fetch(`${API_URL}/api/user/active-analysis/${type}?user_id=${userId}`, {
+      await fetch(`${API_URL}/api/wallets/user/active-analysis/${type}?user_id=${userId}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${authToken}` }
       });
     } catch (e) { console.error('Failed to delete active analysis from Redis:', e); }
