@@ -99,9 +99,9 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           Quick Start
         </h3>
         <div className="grid grid-cols-2 gap-2">
-          {quickStartGuides.map((guide, idx) => (
+          {quickStartGuides.map((guide) => (
             <button
-              key={idx}
+              key={guide.title}
               className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left transition"
             >
               <div className="flex items-center gap-2 mb-1">
@@ -120,9 +120,9 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           💡 Feature Guides
         </h3>
         <div className="space-y-2">
-          {featureGuides.map((guide, idx) => (
+          {featureGuides.map((guide) => (
             <button
-              key={idx}
+              key={guide.title}
               className="w-full p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left text-sm transition flex items-center gap-2"
             >
               <span>{guide.icon}</span>
@@ -151,7 +151,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         </h3>
         <div className="space-y-2">
           {faqs.map((faq, idx) => (
-            <div key={idx} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+            <div key={faq.q} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
               <button
                 onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}
                 className="w-full p-3 text-left flex items-center justify-between hover:bg-white/5 transition"

@@ -891,7 +891,7 @@ function TrendingPanelCore({
         {isLoading ? (
           <div style={{ padding: '16px' }}>
             {[...Array(5)].map((_, i) => (
-              <div key={i} style={{ height: 84, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 6, animation: 'pulse 1.5s ease-in-out infinite' }} />
+              <div key={`skeleton-${i}`} style={{ height: 84, borderRadius: 6, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 6, animation: 'pulse 1.5s ease-in-out infinite' }} />
             ))}
           </div>
         ) : runners.length === 0 ? (

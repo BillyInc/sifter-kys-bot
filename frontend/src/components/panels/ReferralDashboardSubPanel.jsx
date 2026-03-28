@@ -83,7 +83,7 @@ export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getA
         </button>
         <SkeletonBox className="h-36 w-full" />
         <div className="grid grid-cols-2 gap-4">
-          {[...Array(4)].map((_, i) => <SkeletonBox key={i} className="h-20" />)}
+          {[...Array(4)].map((_, i) => <SkeletonBox key={`skeleton-${i}`} className="h-20" />)}
         </div>
         <SkeletonBox className="h-32 w-full" />
         <SkeletonBox className="h-28 w-full" />

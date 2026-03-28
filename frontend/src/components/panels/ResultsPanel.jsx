@@ -103,7 +103,7 @@ const PerTokenTable = ({ roiDetails, copyToClipboard, copiedRunnerAddress }) => 
         const roi       = row.roi_multiplier || row.total_multiplier;
         const isWin     = (entryATH || 0) >= 10;
         return (
-          <div key={i} style={{
+          <div key={`${row.runner_address || row.runner || ''}-${i}`} style={{
             padding: '8px 10px', borderRadius: 4,
             background: isWin ? 'rgba(34,197,94,0.05)' : '#1a2232',
             border: `1px solid ${isWin ? 'rgba(34,197,94,0.2)' : '#28303f'}`,
