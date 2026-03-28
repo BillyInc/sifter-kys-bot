@@ -1,26 +1,28 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { lazy, Suspense, useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { User, ChevronDown, Settings, HelpCircle, LogOut, BarChart3, Award, Clock, Activity } from 'lucide-react';
 
 import DashboardHome      from './components/dashboard/DashboardHome';
 import SlideOutPanel      from './components/panels/SlideOutPanel';
-import AnalyzePanel       from './components/panels/AnalyzePanel';
-import TrendingPanel      from './components/panels/TrendingPanel';
-import DiscoveryPanel     from './components/panels/DiscoveryPanel';
-import WatchlistPanel     from './components/panels/WatchlistPanel';
-import Top100CommunityPanel  from './components/panels/Top100CommunityPanel';
-import PremiumElite100Panel  from './components/panels/PremiumElite100Panel';
-import QuickAddWalletPanel   from './components/panels/QuickAddWalletPanel';
-import ProfilePanel       from './components/panels/ProfilePanel';
-import HelpSupportPanel   from './components/panels/HelpSupportPanel';
-import ResultsPanel       from './components/panels/ResultsPanel';
-import SimulatorModal     from './components/panels/SimulatorModal';
+
+// Lazy-loaded panel components for code splitting
+const AnalyzePanel        = lazy(() => import('./components/panels/AnalyzePanel'));
+const TrendingPanel       = lazy(() => import('./components/panels/TrendingPanel'));
+const DiscoveryPanel      = lazy(() => import('./components/panels/DiscoveryPanel'));
+const WatchlistPanel      = lazy(() => import('./components/panels/WatchlistPanel'));
+const Top100CommunityPanel  = lazy(() => import('./components/panels/Top100CommunityPanel'));
+const PremiumElite100Panel  = lazy(() => import('./components/panels/PremiumElite100Panel'));
+const QuickAddWalletPanel   = lazy(() => import('./components/panels/QuickAddWalletPanel'));
+const ProfilePanel        = lazy(() => import('./components/panels/ProfilePanel'));
+const HelpSupportPanel    = lazy(() => import('./components/panels/HelpSupportPanel'));
+const ResultsPanel        = lazy(() => import('./components/panels/ResultsPanel'));
+const SimulatorModal      = lazy(() => import('./components/panels/SimulatorModal'));
 import RecentResultsList  from './components/RecentResultsList';
 import { useRecents }     from './components/hooks/useRecentResults';
 
 import WalletActivityMonitor  from './WalletActivityMonitor';
 import WalletAlertSettings    from './WalletAlertSettings';
-import WalletReplacementModal from './WalletReplacementModal';
+const WalletReplacementModal = lazy(() => import('./WalletReplacementModal'));
 import Auth from './components/Auth';
 import { Toaster, toast } from 'sonner';
 
@@ -704,6 +706,7 @@ export default function SifterKYS() {
         width={config.width}
         title={config.title}
       >
+        <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400"></div></div>}>
         {openPanel === 'analyze' && (
           <AnalyzePanel
             searchQuery={searchQuery}
@@ -800,9 +803,11 @@ export default function SifterKYS() {
             onRemove={removeRecent} onClear={clearRecents} onRefresh={refreshRecents}
           />
         )}
+        </Suspense>
       </SlideOutPanel>
 
       {/* ── Results overlay ── */}
+      <Suspense fallback={null}>
       {resultsPanel.isOpen && (
         <ResultsPanel
           data={resultsPanel.data} resultType={resultsPanel.type}
@@ -842,6 +847,7 @@ export default function SifterKYS() {
           onDismiss={() => setReplacementData(null)}
         />
       )}
+      </Suspense>
 
       <footer className="fixed bottom-0 w-full bg-black/80 border-t border-white/10 py-2 z-30">
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-500">
