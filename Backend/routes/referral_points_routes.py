@@ -2,6 +2,7 @@
 Referral & Points API Routes
 """
 import logging
+import os
 from flask import Blueprint, request, jsonify
 from auth import require_auth, optional_auth
 from services.referral_points_manager import get_referral_manager
@@ -44,7 +45,7 @@ def get_my_referral_code():
         return jsonify({
             'success': True,
             'code': code,
-            'referral_link': f"https://sifter-kys-web.duckdns.org?ref={code}",
+            'referral_link': f"{os.environ.get('FRONTEND_URL', 'https://sifter-kys-web.duckdns.org')}?ref={code}",
             'stats': {
                 'clicks': code_stats.get('clicks', 0),
                 'signups': code_stats.get('signups', 0),
