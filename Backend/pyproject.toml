@@ -52,6 +52,11 @@ dev = [
     "black>=24.0.0",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
 [tool.uv]
 # Application mode — no build system needed, just dependency management
 package = false
