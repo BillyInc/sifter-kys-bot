@@ -14,6 +14,7 @@ Flow:
 """
 import json
 import os
+import time
 import uuid
 from datetime import datetime
 
@@ -114,11 +115,12 @@ def discover_new_tokens(self):
 
     # -- First-pass: just_graduated + newly_launched --
     first_pass_endpoints = [
-        ('tokens/graduated', 'just_graduated'),
+        ('tokens/multi/graduated', 'just_graduated'),
         ('tokens/latest', 'newly_launched'),
     ]
     for api_endpoint, discovered_via in first_pass_endpoints:
         tokens = fetch_solanatracker(api_endpoint)
+        time.sleep(1)  # Rate limit padding between endpoints
         for token in tokens:
             token_info = token.get('token', token)
             addr = token_info.get('mint', token_info.get('address', token.get('address', '')))
@@ -148,6 +150,7 @@ def discover_new_tokens(self):
                 wallet_qualification_scan.delay(addr, 'first_pass')
 
     # -- Second-pass: trending_runners --
+    time.sleep(2)  # Rate limit padding
     runners = fetch_solanatracker('tokens/trending')
     for token in runners:
         token_info = token.get('token', token)
