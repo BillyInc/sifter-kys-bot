@@ -91,6 +91,37 @@ def get_queues():
     )
 
 
+def _get_job_queue(user_id, job_type='default'):
+    """Select queue and priority based on user subscription tier."""
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+    tier = 'free'
+    if user_id:
+        try:
+            supabase = get_supabase_client()
+            result = supabase.schema(SCHEMA_NAME).table('users').select(
+                'subscription_tier'
+            ).eq('user_id', user_id).limit(1).execute()
+            if result.data:
+                tier = result.data[0].get('subscription_tier', 'free')
+        except Exception:
+            pass
+
+    q_high, q_batch, q_compute = get_queues()
+
+    if tier in ('pro', 'elite'):
+        return q_high, True, 120  # high queue, at_front, 2min timeout
+
+    if job_type == 'single':
+        return q_high, False, 120
+    elif job_type == 'batch':
+        return q_batch, False, 600
+    elif job_type == 'discovery':
+        return q_compute, False, 600
+
+    return q_high, False, 300
+
+
 def compute_consistency(other_runners: list) -> int:
     """
     FIX 2 helper: derive consistency score from 30-day runner history variance.
@@ -131,7 +162,6 @@ def analyze_wallets():
             user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
         job_id   = str(uuid.uuid4())
 
@@ -146,18 +176,18 @@ def analyze_wallets():
             'token_address':    tokens[0]['address'] if len(tokens) == 1 else None,
         }).execute()
 
-        if len(tokens) == 1:
-            q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
+        job_type = 'single' if len(tokens) == 1 else 'batch'
+        queue, at_front, timeout = _get_job_queue(user_id, job_type)
+        queue.enqueue(
+            'services.worker_tasks.perform_wallet_analysis',
+            {
                 'tokens': tokens, 'user_id': user_id,
                 'global_settings': data.get('global_settings', {}), 'job_id': job_id,
-            })
-            print(f"[ANALYZE] Queued single token job {job_id[:8]} to HIGH queue")
-        else:
-            q_batch.enqueue('services.worker_tasks.perform_wallet_analysis', {
-                'tokens': tokens, 'user_id': user_id,
-                'global_settings': data.get('global_settings', {}), 'job_id': job_id,
-            })
-            print(f"[ANALYZE] Queued batch job {job_id[:8]} ({len(tokens)} tokens) to BATCH queue")
+            },
+            job_timeout=timeout,
+            at_front=at_front,
+        )
+        print(f"[ANALYZE] Queued {job_type} job {job_id[:8]} to {queue.name} queue (at_front={at_front}, timeout={timeout}s)")
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -202,6 +232,52 @@ def get_job_progress(job_id):
         'tokens_total':     job.get('tokens_total', 0),
         'tokens_completed': job.get('tokens_completed', 0),
     })
+
+
+@wallets_bp.route('/jobs/<job_id>/stream', methods=['GET', 'OPTIONS'])
+@optional_auth
+def stream_job_progress(job_id):
+    """SSE endpoint for real-time job progress updates."""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    import time as _time
+
+    def generate():
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        attempts = 0
+        max_attempts = 200
+
+        while attempts < max_attempts:
+            try:
+                result = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
+                    'status, progress, phase, results, tokens_completed, tokens_total'
+                ).eq('job_id', job_id).limit(1).execute()
+
+                if result.data:
+                    job = result.data[0]
+                    yield f"data: {json.dumps(job)}\n\n"
+
+                    if job.get('status') in ('completed', 'failed', 'error'):
+                        yield f"data: {json.dumps({'done': True})}\n\n"
+                        return
+            except Exception:
+                pass
+
+            attempts += 1
+            _time.sleep(3 if attempts < 10 else 5 if attempts < 30 else 10)
+
+        yield f"data: {json.dumps({'done': True, 'timeout': True})}\n\n"
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        }
+    )
 
 
 @wallets_bp.route('/jobs/<job_id>/cancel', methods=['POST', 'OPTIONS'])

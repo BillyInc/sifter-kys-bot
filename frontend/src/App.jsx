@@ -281,48 +281,36 @@ export default function SifterKYS() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, userId]);
 
-  // ── Global poll — ALL types including analyze (with exponential backoff) ──
-  useEffect(() => {
-    if (!isAuthenticated) return;
+  // ── SSE streaming for job progress (with polling fallback) ───────────────
+  const sseCleanupRef = useRef({});
 
-    let cancelled = false;
-    let attempt = 0;
-    let timeoutId;
+  const startSSEStream = useCallback((type, analysis) => {
+    if (!analysis?.jobId) return;
+    if (completedJobsRef.current.has(analysis.jobId)) return;
 
-    const poll = async () => {
-      if (cancelled) return;
+    const url = `${API_URL}/api/wallets/jobs/${analysis.jobId}/stream`;
+    const eventSource = new EventSource(url);
 
-      const authToken = getAccessToken();
-      if (!authToken) { scheduleNext(); return; }
+    eventSource.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
 
-      const currentAnalyses = activeAnalysesRef.current;
-      const hasActive = Object.values(currentAnalyses).some(Boolean);
-      if (!hasActive) { attempt = 0; scheduleNext(); return; }
-
-      attempt++;
-
-      for (const [type, analysis] of Object.entries(currentAnalyses)) {
-        if (!analysis?.jobId) continue;
-        if (completedJobsRef.current.has(analysis.jobId)) continue;
-
-        try {
-          const res  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/progress`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          });
-          const data = await res.json();
-          if (!data.success) continue;
-
-          // Queue position update
-          if (data.queue_position) {
-            setActiveAnalyses(prev => {
-              if (!prev[type]) return prev;
-              return { ...prev, [type]: { ...prev[type], in_queue: true, queue_position: data.queue_position, estimated_wait: data.estimated_wait } };
-            });
+        if (data.done) {
+          eventSource.close();
+          delete sseCleanupRef.current[type];
+          if (data.timeout) {
+            console.warn(`SSE stream timed out for ${type}`);
           }
+          return;
+        }
 
-          if (data.status === 'completed') {
-            completedJobsRef.current.add(analysis.jobId);
-            const resultRes  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
+        if (data.status === 'completed') {
+          completedJobsRef.current.add(analysis.jobId);
+          eventSource.close();
+          delete sseCleanupRef.current[type];
+          try {
+            const authToken = getAccessToken();
+            const resultRes = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
               headers: { Authorization: `Bearer ${authToken}` }
             });
             const resultData = await resultRes.json();
@@ -333,47 +321,163 @@ export default function SifterKYS() {
                 : type;
             await completeAnalysis(type, { ...resultData, result_type: resultType });
             setDashboardRefreshKey(k => k + 1);
+          } catch (e) { console.error(`Result fetch error for ${type}:`, e); }
 
-          } else if (data.status === 'failed') {
-            setActiveAnalyses(prev => ({ ...prev, [type]: null }));
-            deleteActiveAnalysisFromRedis(type);
+        } else if (data.status === 'failed') {
+          eventSource.close();
+          delete sseCleanupRef.current[type];
+          setActiveAnalyses(prev => ({ ...prev, [type]: null }));
+          deleteActiveAnalysisFromRedis(type);
 
-          } else {
-            setActiveAnalyses(prev => {
-              if (!prev[type]) return prev;
-              return {
-                ...prev,
-                [type]: {
-                  ...prev[type],
-                  progress: {
-                    current: data.tokens_completed || 0,
-                    total:   data.tokens_total || 1,
-                    phase:   data.phase || '',
-                  },
-                  in_queue:       data.queue_position ? true : false,
-                  queue_position: data.queue_position,
-                  estimated_wait: data.estimated_wait,
-                }
-              };
-            });
-          }
-        } catch (e) { console.error(`Poll error for ${type}:`, e); }
-      }
+        } else {
+          setActiveAnalyses(prev => {
+            if (!prev[type]) return prev;
+            return {
+              ...prev,
+              [type]: {
+                ...prev[type],
+                progress: {
+                  current: data.tokens_completed || 0,
+                  total:   data.tokens_total || 1,
+                  phase:   data.phase || '',
+                },
+              }
+            };
+          });
+        }
+      } catch (e) { console.error(`SSE parse error for ${type}:`, e); }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      delete sseCleanupRef.current[type];
+      console.warn(`SSE failed for ${type}, falling back to polling`);
+      startPollingFallback(type, analysis);
+    };
+
+    sseCleanupRef.current[type] = () => eventSource.close();
+  }, [API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis]);
+
+  // ── Polling fallback (used if SSE connection fails) ─────────────────────
+  const startPollingFallback = useCallback((type, analysis) => {
+    if (!analysis?.jobId) return;
+    if (completedJobsRef.current.has(analysis.jobId)) return;
+
+    let cancelled = false;
+    let attempt = 0;
+
+    const poll = async () => {
+      if (cancelled) return;
+
+      const authToken = getAccessToken();
+      if (!authToken) { scheduleNext(); return; }
+
+      attempt++;
+
+      try {
+        const res  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}/progress`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        const data = await res.json();
+        if (!data.success) { scheduleNext(); return; }
+
+        if (data.queue_position) {
+          setActiveAnalyses(prev => {
+            if (!prev[type]) return prev;
+            return { ...prev, [type]: { ...prev[type], in_queue: true, queue_position: data.queue_position, estimated_wait: data.estimated_wait } };
+          });
+        }
+
+        if (data.status === 'completed') {
+          completedJobsRef.current.add(analysis.jobId);
+          const resultRes  = await fetch(`${API_URL}/api/wallets/jobs/${analysis.jobId}`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          const resultData = await resultRes.json();
+          const resultType =
+            type === 'analyze'
+              ? (analysis.tokens?.length > 1 ? 'batch-token' : 'single-token')
+              : type === 'trending' ? 'trending-batch'
+              : type;
+          await completeAnalysis(type, { ...resultData, result_type: resultType });
+          setDashboardRefreshKey(k => k + 1);
+          return;
+
+        } else if (data.status === 'failed') {
+          setActiveAnalyses(prev => ({ ...prev, [type]: null }));
+          deleteActiveAnalysisFromRedis(type);
+          return;
+
+        } else {
+          setActiveAnalyses(prev => {
+            if (!prev[type]) return prev;
+            return {
+              ...prev,
+              [type]: {
+                ...prev[type],
+                progress: {
+                  current: data.tokens_completed || 0,
+                  total:   data.tokens_total || 1,
+                  phase:   data.phase || '',
+                },
+                in_queue:       data.queue_position ? true : false,
+                queue_position: data.queue_position,
+                estimated_wait: data.estimated_wait,
+              }
+            };
+          });
+        }
+      } catch (e) { console.error(`Poll error for ${type}:`, e); }
 
       scheduleNext();
     };
 
     function scheduleNext() {
       if (cancelled) return;
-      timeoutId = setTimeout(poll, getPollingInterval(attempt));
+      const tid = setTimeout(poll, getPollingInterval(attempt));
+      pollIntervalsRef.current[`fallback_${type}`] = tid;
     }
 
-    timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
-    pollIntervalsRef.current['__global'] = timeoutId;
+    scheduleNext();
+    sseCleanupRef.current[type] = () => { cancelled = true; };
+  }, [API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis]);
 
-    return () => { cancelled = true; clearTimeout(timeoutId); };
+  // ── Start SSE streams for all active analyses ───────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const currentAnalyses = activeAnalysesRef.current;
+    for (const [type, analysis] of Object.entries(currentAnalyses)) {
+      if (!analysis?.jobId) continue;
+      if (completedJobsRef.current.has(analysis.jobId)) continue;
+      if (sseCleanupRef.current[type]) continue; // already streaming
+      startSSEStream(type, analysis);
+    }
+
+    // Re-check periodically for newly added analyses
+    const checkInterval = setInterval(() => {
+      const analyses = activeAnalysesRef.current;
+      for (const [type, analysis] of Object.entries(analyses)) {
+        if (!analysis?.jobId) continue;
+        if (completedJobsRef.current.has(analysis.jobId)) continue;
+        if (sseCleanupRef.current[type]) continue;
+        startSSEStream(type, analysis);
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(checkInterval);
+      Object.values(sseCleanupRef.current).forEach(cleanup => cleanup?.());
+      sseCleanupRef.current = {};
+      Object.keys(pollIntervalsRef.current).forEach(key => {
+        if (key.startsWith('fallback_')) {
+          clearTimeout(pollIntervalsRef.current[key]);
+          delete pollIntervalsRef.current[key];
+        }
+      });
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis]);
+  }, [isAuthenticated, API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis, startSSEStream]);
 
   const activeCount = Object.values(activeAnalyses).filter(Boolean).length;
 
