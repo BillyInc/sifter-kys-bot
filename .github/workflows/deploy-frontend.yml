@@ -22,12 +22,35 @@ env:
   DEPLOY_PATH: ~/sifter-frontend
 
 jobs:
+  # ========================
+  # Detect changed paths
+  # ========================
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for frontend changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/deploy-frontend.yml'
+
   # ==================
-  # Lint
+  # Lint & Type Check
   # ==================
   lint:
-    name: Lint
+    name: Lint & Type Check
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
     defaults:
       run:
         working-directory: frontend
@@ -46,11 +69,28 @@ jobs:
         with:
           version: 9
 
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run ESLint
         run: pnpm run lint || echo "Lint warnings found"
+        continue-on-error: true
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
         continue-on-error: true
 
   # ==================
@@ -59,7 +99,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
     environment: development
     defaults:
       run:
@@ -79,6 +120,19 @@ jobs:
         with:
           version: 9
 
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -97,13 +151,80 @@ jobs:
           retention-days: 7
 
   # ==================
+  # E2E Tests
+  # ==================
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/test-results/
+          retention-days: 14
+
+  # ==================
   # Deploy (main only)
   # ==================
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: [lint, build]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: [changes, lint, build, e2e]
+    if: |
+      (needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
     environment: development
 
     steps:
@@ -178,6 +299,16 @@ jobs:
 
             echo "Frontend deployment complete!"
           ENDSSH
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Frontend Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Triggered by:** ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Actor:** ${{ github.actor }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Status:** ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
