@@ -193,7 +193,7 @@ export default function SifterKYS() {
     if (!userId || !isAuthenticated) return;
     try {
       const authToken = getAccessToken();
-      const res  = await fetch(`${API_URL}/api/user/active-analyses?user_id=${userId}`, {
+      const res  = await fetch(`${API_URL}/api/wallets/user/active-analyses?user_id=${userId}`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
       const data = await res.json();
