@@ -1,26 +1,46 @@
 import React, { useState } from 'react';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  ExternalLink, 
-  Copy, 
-  CheckCircle, 
-  Clock, 
+import {
+  TrendingUp,
+  TrendingDown,
+  ExternalLink,
+  Copy,
+  CheckCircle,
+  Clock,
   DollarSign,
   ArrowRight,
   Activity
 } from 'lucide-react';
 
-export default function WalletAlertCard({ notification, onCopyTrade, onViewChart }) {
-  const [copied, setCopied] = useState(false);
+interface NotificationData {
+  side: string;
+  block_time?: number;
+  sent_at: number;
+  wallet_address?: string;
+  token_ticker?: string;
+  token_name?: string;
+  usd_value: number;
+  price?: number;
+  tx_hash?: string;
+  token_address?: string;
+  [key: string]: any;
+}
 
-  const handleCopy = (text, label) => {
+interface Props {
+  notification: NotificationData;
+  onCopyTrade?: (notification: NotificationData) => void;
+  onViewChart?: (notification: NotificationData) => void;
+}
+
+export default function WalletAlertCard({ notification, onCopyTrade, onViewChart }: Props) {
+  const [copied, setCopied] = useState<string | false>(false);
+
+  const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const formatTime = (timestamp) => {
+  const formatTime = (timestamp: number): string => {
     const date = new Date(timestamp * 1000);
     return date.toLocaleString('en-US', {
       month: 'short',
@@ -30,7 +50,7 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
     });
   };
 
-  const formatUSD = (value) => {
+  const formatUSD = (value: number): string => {
     if (value >= 1000000) return `$${(value / 1000000).toFixed(2)}M`;
     if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
     return `$${value.toFixed(2)}`;
@@ -40,11 +60,11 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
 
   return (
     <div className={`bg-gradient-to-br ${
-      isBuy 
-        ? 'from-green-900/20 to-green-950/10 border-green-500/30' 
+      isBuy
+        ? 'from-green-900/20 to-green-950/10 border-green-500/30'
         : 'from-red-900/20 to-red-950/10 border-red-500/30'
     } border-2 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300`}>
-      
+
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -72,8 +92,8 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
         </div>
 
         <div className={`px-3 py-1 rounded-lg text-xs font-bold ${
-          isBuy 
-            ? 'bg-green-500/20 text-green-400' 
+          isBuy
+            ? 'bg-green-500/20 text-green-400'
             : 'bg-red-500/20 text-red-400'
         }`}>
           LIVE
@@ -90,7 +110,7 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
                 {notification.wallet_address?.slice(0, 8)}...
               </code>
               <button
-                onClick={() => handleCopy(notification.wallet_address, 'wallet')}
+                onClick={() => handleCopy(notification.wallet_address!, 'wallet')}
                 className="p-1 hover:bg-white/10 rounded transition"
                 title="Copy wallet address"
               >
@@ -132,9 +152,9 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
           <div>
             <p className="text-xs text-gray-400 mb-1">Price</p>
             <span className="text-sm text-gray-300">
-              {notification.price 
-                ? `$${notification.price < 0.000001 
-                    ? notification.price.toExponential(2) 
+              {notification.price
+                ? `$${notification.price < 0.000001
+                    ? notification.price.toExponential(2)
                     : notification.price.toFixed(6)}`
                 : 'N/A'}
             </span>
@@ -184,7 +204,7 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
             Token: {notification.token_address}
           </code>
           <button
-            onClick={() => handleCopy(notification.token_address, 'token')}
+            onClick={() => handleCopy(notification.token_address!, 'token')}
             className="p-1 hover:bg-white/10 rounded transition"
             title="Copy token address"
           >

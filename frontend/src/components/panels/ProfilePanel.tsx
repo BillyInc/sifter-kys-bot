@@ -6,15 +6,24 @@ import TelegramSettings from '../../TelegramSettings';
 import MyDashboardPanel from './MyDashboardPanel';
 import ReferralDashboardSubPanel from './ReferralDashboardSubPanel';
 
-export default function ProfilePanel({ 
-  user, 
+interface Props {
+  user: any;
+  userId: string;
+  apiUrl: string;
+  onNavigate: (panel: string) => void;
+  onSignOut: () => void;
+  getAccessToken: () => string | Promise<string>;
+}
+
+export default function ProfilePanel({
+  user,
   userId,
   apiUrl,
   onNavigate,
   onSignOut,
   getAccessToken
-}) {
-  const [subPanel, setSubPanel] = useState(null);
+}: Props) {
+  const [subPanel, setSubPanel] = useState<string | null>(null);
 
   // Prefer a real display name over the email prefix
   const displayName =
@@ -98,8 +107,8 @@ export default function ProfilePanel({
             onClick={item.action}
             className="w-full p-3 rounded-lg text-left transition flex items-center gap-3"
             style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
+            onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
           >
             <item.icon className={item.color} size={18} />
             <span className="font-medium">{item.label}</span>
@@ -113,8 +122,8 @@ export default function ProfilePanel({
           onClick={() => onNavigate('help')}
           className="w-full p-3 rounded-lg text-left transition flex items-center gap-3"
           style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
-          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
+          onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+          onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
         >
           <HelpCircle className="text-blue-400" size={18} />
           <span className="font-medium">Help & Support</span>

@@ -1,15 +1,23 @@
 import { useState, useEffect } from 'react'
 import { Mail, Lock, Eye, EyeOff, Loader2, ArrowLeft } from 'lucide-react'
 
-export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePassword, isPasswordRecovery }) {
-  const [mode, setMode] = useState(isPasswordRecovery ? 'update-password' : 'signin')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [message, setMessage] = useState(null)
+interface Props {
+  onSignIn: (email: string, password: string) => Promise<{ error?: any }>;
+  onSignUp: (email: string, password: string, refCode?: string | null) => Promise<{ error?: any }>;
+  onResetPassword: (email: string) => Promise<{ error?: any }>;
+  onUpdatePassword: (password: string) => Promise<{ error?: any }>;
+  isPasswordRecovery?: boolean;
+}
+
+export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePassword, isPasswordRecovery }: Props) {
+  const [mode, setMode] = useState<string>(isPasswordRecovery ? 'update-password' : 'signin')
+  const [email, setEmail] = useState<string>('')
+  const [password, setPassword] = useState<string>('')
+  const [confirmPassword, setConfirmPassword] = useState<string>('')
+  const [showPassword, setShowPassword] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
@@ -17,16 +25,16 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const refCode = urlParams.get('ref')
-    
+
     if (refCode) {
       // Track click
       fetch(`${API_URL}/api/referral-points/track-click/${refCode}`, {
         method: 'POST'
-      }).catch(err => console.error('Referral tracking error:', err))
-      
+      }).catch((err: any) => console.error('Referral tracking error:', err))
+
       // Store for signup
       sessionStorage.setItem('referral_code', refCode)
-      
+
       // Show message to user
       setMessage(`🎁 You're signing up with referral code: ${refCode}`)
     }
@@ -40,12 +48,12 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
     setMessage(null)
   }
 
-  const switchMode = (newMode) => {
+  const switchMode = (newMode: string) => {
     resetForm()
     setMode(newMode)
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
     setMessage(null)
@@ -84,16 +92,16 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
         if (password !== confirmPassword) {
           throw new Error('Passwords do not match')
         }
-        
+
         // ========== GET REFERRAL CODE FROM SESSION ==========
         const refCode = sessionStorage.getItem('referral_code')
-        
+
         const { error } = await onSignUp(email, password, refCode)
         if (error) throw error
-        
+
         // Clear referral code after successful signup
         sessionStorage.removeItem('referral_code')
-        
+
         setMessage('Check your email for the confirmation link!')
         resetForm()
       } else {
@@ -103,14 +111,14 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
         const { error } = await onSignIn(email, password)
         if (error) throw error
       }
-    } catch (err) {
+    } catch (err: any) {
       setError(err.message || 'An error occurred')
     } finally {
       setLoading(false)
     }
   }
 
-  const getTitle = () => {
+  const getTitle = (): string => {
     switch (mode) {
       case 'signup': return 'Create your account'
       case 'forgot': return 'Reset your password'
@@ -119,7 +127,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
     }
   }
 
-  const getButtonText = () => {
+  const getButtonText = (): string => {
     if (loading) {
       switch (mode) {
         case 'signup': return 'Creating account...'
@@ -170,7 +178,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                   <input
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
                     placeholder="you@example.com"
                     className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-4 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}
@@ -189,7 +197,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
                     placeholder={mode === 'update-password' ? 'Enter new password' : 'Enter your password'}
                     className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-12 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}
@@ -213,7 +221,7 @@ export default function Auth({ onSignIn, onSignUp, onResetPassword, onUpdatePass
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm your password"
                     className="w-full bg-white/10 border border-white/20 rounded-lg pl-10 pr-4 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-purple-500 focus:bg-white/15"
                     disabled={loading}

@@ -2,17 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { Copy, Share2, TrendingUp, Users, Award, ChevronLeft } from 'lucide-react';
 
 // In-memory cache so reopening the panel is instant
-const referralCache = {};
+const referralCache: Record<string, any> = {};
 
-function SkeletonBox({ className = '' }) {
+interface SkeletonBoxProps {
+  className?: string;
+}
+
+function SkeletonBox({ className = '' }: SkeletonBoxProps) {
   return <div className={`animate-pulse bg-white/10 rounded-lg ${className}`} />;
 }
 
-export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getAccessToken }) {
-  const [dashboard, setDashboard] = useState(referralCache[userId] || null);
-  const [isLoading, setIsLoading] = useState(!referralCache[userId]);
-  const [error, setError] = useState(null);
-  const [copied, setCopied] = useState(false);
+interface Props {
+  userId: string;
+  apiUrl: string;
+  onBack: () => void;
+  getAccessToken: () => string | Promise<string>;
+}
+
+export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getAccessToken }: Props) {
+  const [dashboard, setDashboard] = useState<any>(referralCache[userId] || null);
+  const [isLoading, setIsLoading] = useState<boolean>(!referralCache[userId]);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
 
   useEffect(() => {
     if (referralCache[userId]) {
@@ -24,14 +35,14 @@ export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getA
     }
   }, [userId]);
 
-  const loadDashboard = async (silent = false) => {
+  const loadDashboard = async (silent: boolean = false) => {
     if (!silent) {
       setIsLoading(true);
       setError(null);
     }
     try {
       // getAccessToken may be async — always await it
-      let token = null;
+      let token: string | null = null;
       if (typeof getAccessToken === 'function') {
         token = await Promise.resolve(getAccessToken());
       }
@@ -40,7 +51,7 @@ export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getA
         token = localStorage.getItem('accessToken');
       }
 
-      const headers = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const response = await fetch(`${apiUrl}/api/referral-points/dashboard`, { headers });
@@ -57,7 +68,7 @@ export default function ReferralDashboardSubPanel({ userId, apiUrl, onBack, getA
       } else {
         throw new Error(data.error || 'Server returned success: false');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Referral dashboard error:', err);
       if (!silent) setError(err.message);
     } finally {

@@ -3,19 +3,33 @@ import { Bell, BellRing, X, Check, CheckCheck, ExternalLink, Clock, TrendingUp, 
 import walletActivityService from './WalletActivityService';
 import { useAuth } from './contexts/AuthContext';
 
+interface Notification {
+  id: string;
+  wallet_address?: string;
+  side: string;
+  usd_value?: number;
+  token_ticker?: string;
+  token_name?: string;
+  tx_hash?: string;
+  sent_at: number;
+  read_at?: string | null;
+  block_time?: number;
+  [key: string]: any;
+}
+
 export default function WalletActivityMonitor() {
-  const { user } = useAuth();
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [isOpen, setIsOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showToast, setShowToast] = useState(false);
-  const [latestNotification, setLatestNotification] = useState(null);
-  const dropdownRef = useRef(null);
+  const { user } = useAuth() as { user: any };
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [isOpen, setIsOpen] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showToast, setShowToast] = useState<boolean>(false);
+  const [latestNotification, setLatestNotification] = useState<Notification | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     }
@@ -28,7 +42,7 @@ export default function WalletActivityMonitor() {
 
     walletActivityService.start(user.id);
 
-    const unsubscribe = walletActivityService.subscribe((data) => {
+    const unsubscribe = walletActivityService.subscribe((data: any) => {
       if (data.has_new && data.notifications.length > 0) {
         const newest = data.notifications[0];
         setLatestNotification(newest);
@@ -55,7 +69,7 @@ export default function WalletActivityMonitor() {
     setIsLoading(false);
   };
 
-  const handleMarkAsRead = async (notificationId) => {
+  const handleMarkAsRead = async (notificationId: string) => {
     const success = await walletActivityService.markAsRead(notificationId);
     if (success) loadNotifications();
   };
@@ -65,11 +79,11 @@ export default function WalletActivityMonitor() {
     if (success) loadNotifications();
   };
 
-  const handleNotificationClick = (notification) => {
+  const handleNotificationClick = (notification: Notification) => {
     if (!notification.read_at) handleMarkAsRead(notification.id);
   };
 
-  const formatTime = (timestamp) => {
+  const formatTime = (timestamp: number): string => {
     const now = Date.now() / 1000;
     const diff = now - timestamp;
     if (diff < 60) return 'just now';
@@ -78,7 +92,7 @@ export default function WalletActivityMonitor() {
     return `${Math.floor(diff / 86400)}d ago`;
   };
 
-  const formatUSD = (value) => {
+  const formatUSD = (value?: number): string => {
     if (!value) return '$0.00';
     if (value >= 1000000) return `$${(value / 1000000).toFixed(2)}M`;
     if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
@@ -179,7 +193,7 @@ export default function WalletActivityMonitor() {
                             <span className="flex items-center gap-1"><Clock size={12} />{formatTime(notification.sent_at)}</span>
                           </div>
                           {notification.tx_hash && (
-                            <a href={`https://solscan.io/tx/${notification.tx_hash}`} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1 mt-2">
+                            <a href={`https://solscan.io/tx/${notification.tx_hash}`} target="_blank" rel="noopener noreferrer" onClick={(e: React.MouseEvent) => e.stopPropagation()} className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1 mt-2">
                               View on Solscan <ExternalLink size={10} />
                             </a>
                           )}

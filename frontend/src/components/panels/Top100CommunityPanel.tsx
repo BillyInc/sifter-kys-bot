@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, TrendingUp, BookmarkPlus, RefreshCw } from 'lucide-react';
 
-export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist }) {
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState(null);
+interface Props {
+  userId: string;
+  apiUrl: string;
+  onAddToWatchlist: (wallet: any) => void;
+}
+
+export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist }: Props) {
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   useEffect(() => {
     loadLeaderboard();
@@ -15,7 +21,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
     try {
       const response = await fetch(`${apiUrl}/api/wallets/top-100-community?user_id=${userId}`);
       const data = await response.json();
-      
+
       if (data.success) {
         setLeaderboard(data.wallets || []);
         setLastUpdate(new Date());
@@ -26,7 +32,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
     setIsLoading(false);
   };
 
-  const formatTimeSince = (date) => {
+  const formatTimeSince = (date: Date | null): string => {
     if (!date) return 'Never';
     const hours = Math.floor((Date.now() - date.getTime()) / 1000 / 60 / 60);
     return hours < 1 ? 'Just now' : `${hours}h ago`;
@@ -66,7 +72,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
       {/* Leaderboard */}
       {!isLoading && (
         <div className="space-y-2">
-          {leaderboard.map((wallet, idx) => (
+          {leaderboard.map((wallet: any, idx: number) => (
             <div
               key={wallet.wallet_address}
               className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg p-3 transition"
@@ -121,7 +127,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
         <div className="bg-gradient-to-r from-green-900/20 to-green-800/10 border border-green-500/30 rounded-lg p-4">
           <h4 className="text-sm font-semibold text-green-400 mb-2">📈 Trending Up This Week</h4>
           <div className="space-y-1 text-xs text-gray-300">
-            {leaderboard.slice(0, 3).map((wallet, idx) => (
+            {leaderboard.slice(0, 3).map((wallet: any, idx: number) => (
               <div key={wallet.wallet_address}>
                 • {wallet.wallet_address?.slice(0, 8)}... (+{wallet.rank_change || 0} positions)
               </div>

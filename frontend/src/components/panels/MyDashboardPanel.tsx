@@ -2,21 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BarChart3, TrendingUp, Target, Award, Calendar, Activity, X } from 'lucide-react';
 
 // Simple in-memory cache so re-opening the panel feels instant
-const statsCache = {};
+const statsCache: Record<string, any> = {};
 
-function SkeletonBox({ className = '' }) {
+interface SkeletonBoxProps {
+  className?: string;
+}
+
+function SkeletonBox({ className = '' }: SkeletonBoxProps) {
   return (
     <div className={`animate-pulse rounded-lg ${className}`} style={{ backgroundColor: 'var(--bg-card)' }} />
   );
 }
 
-export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
-  const [stats, setStats] = useState(statsCache[userId] || null);
-  const [isLoading, setIsLoading] = useState(!statsCache[userId]);
-  
+interface Props {
+  userId: string;
+  apiUrl: string;
+  refreshKey?: number;
+}
+
+export default function MyDashboardPanel({ userId, apiUrl, refreshKey }: Props) {
+  const [stats, setStats] = useState<any>(statsCache[userId] || null);
+  const [isLoading, setIsLoading] = useState<boolean>(!statsCache[userId]);
+
   // Dismissible welcome banner (per user)
   const storageKey = `dash_welcome_dismissed_${userId}`;
-  const [showWelcome, setShowWelcome] = useState(() => {
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
     try { return localStorage.getItem(storageKey) !== 'true'; } catch { return true; }
   });
 
@@ -26,7 +36,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
   };
 
   // Track if this is the first load to prevent double loading
-  const initialLoadDone = useRef(false);
+  const initialLoadDone = useRef<boolean>(false);
 
   useEffect(() => {
     // If we already have cached data, show it immediately and refresh silently
@@ -39,13 +49,13 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
     }
   }, [userId, refreshKey]); // ← add refreshKey dependency
 
-  const loadStats = async (silent = false) => {
+  const loadStats = async (silent: boolean = false) => {
     // On explicit refresh (non-silent), bust the cache
     if (!silent) {
       delete statsCache[userId]; // bust on foreground load
       setIsLoading(true);
     }
-    
+
     try {
       const response = await fetch(`${apiUrl}/api/user/dashboard-stats?user_id=${userId}`);
       const data = await response.json();
@@ -84,8 +94,8 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
             onClick={dismissWelcome}
             className="absolute top-3 right-3 p-1.5 rounded-lg transition"
             style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <X size={16} />
           </button>
@@ -136,7 +146,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
           Recent Activity
         </h3>
         <div className="space-y-2">
-          {(stats?.recent_activity || []).map((activity, idx) => (
+          {(stats?.recent_activity || []).map((activity: any, idx: number) => (
             <div key={`${activity.type}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${
@@ -161,7 +171,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
           Your Top Performing Wallets
         </h3>
         <div className="space-y-2">
-          {(stats?.top_performers || []).slice(0, 3).map((wallet, idx) => (
+          {(stats?.top_performers || []).slice(0, 3).map((wallet: any, idx: number) => (
             <div key={wallet.address} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div className="flex items-center gap-2">
                 <span className="text-lg">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>

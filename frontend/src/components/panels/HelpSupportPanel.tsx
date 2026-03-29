@@ -2,11 +2,21 @@ import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Search, Book, Video, MessageSquare, Mail, Send, ChevronDown, ChevronUp } from 'lucide-react';
 
-export default function HelpSupportPanel({ userId, apiUrl }) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [expandedFaq, setExpandedFaq] = useState(null);
-  const [ticketForm, setTicketForm] = useState({ subject: '', message: '' });
-  const [isSubmitting, setIsSubmitting] = useState(false);
+interface Props {
+  userId: string;
+  apiUrl: string;
+}
+
+interface TicketForm {
+  subject: string;
+  message: string;
+}
+
+export default function HelpSupportPanel({ userId, apiUrl }: Props) {
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+  const [ticketForm, setTicketForm] = useState<TicketForm>({ subject: '', message: '' });
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const quickStartGuides = [
     { title: 'Getting Started', icon: '🚀', time: '5 min' },
@@ -86,7 +96,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         <input
           type="text"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
           placeholder="Search help articles..."
           className="w-full rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-purple-500"
           style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
@@ -158,8 +168,8 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
               <button
                 onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}
                 className="w-full p-3 text-left flex items-center justify-between transition"
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
                 <span className="text-sm font-medium">{faq.q}</span>
                 {expandedFaq === idx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -180,7 +190,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           <Mail className="text-green-400" size={16} />
           Contact Support
         </h3>
-        
+
         <div className="space-y-3 mb-4">
           <a
             href="mailto:support@sifterkys.com"
@@ -212,14 +222,14 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
             <input
               type="text"
               value={ticketForm.subject}
-              onChange={(e) => setTicketForm({...ticketForm, subject: e.target.value})}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTicketForm({...ticketForm, subject: e.target.value})}
               placeholder="Subject"
               className="w-full rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
               style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
             <textarea
               value={ticketForm.message}
-              onChange={(e) => setTicketForm({...ticketForm, message: e.target.value})}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setTicketForm({...ticketForm, message: e.target.value})}
               placeholder="Describe your issue..."
               rows={4}
               className="w-full rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"

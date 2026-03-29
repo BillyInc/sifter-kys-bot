@@ -1,16 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Crown, Lock, Download, TrendingUp, Filter } from 'lucide-react';
 
-export default function PremiumElite100Panel({ 
-  userId, 
-  apiUrl, 
+interface Props {
+  userId: string;
+  apiUrl: string;
+  isPremium?: boolean;
+  onUpgrade: () => void;
+  onAddToWatchlist: (wallet: any) => void;
+}
+
+export default function PremiumElite100Panel({
+  userId,
+  apiUrl,
   isPremium = false,
   onUpgrade,
-  onAddToWatchlist 
-}) {
-  const [eliteWallets, setEliteWallets] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [sortBy, setSortBy] = useState('score'); // 'score', 'roi', 'runners'
+  onAddToWatchlist
+}: Props) {
+  const [eliteWallets, setEliteWallets] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [sortBy, setSortBy] = useState<string>('score'); // 'score', 'roi', 'runners'
 
   useEffect(() => {
     if (isPremium) {
@@ -25,7 +33,7 @@ export default function PremiumElite100Panel({
         `${apiUrl}/api/wallets/premium-elite-100?user_id=${userId}&sort_by=${sortBy}`
       );
       const data = await response.json();
-      
+
       if (data.success) {
         setEliteWallets(data.wallets || []);
       }
@@ -139,7 +147,7 @@ export default function PremiumElite100Panel({
         <span className="text-xs text-gray-400">Sort by:</span>
         <select
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSortBy(e.target.value)}
           className="px-3 py-1.5 bg-black/50 border border-white/10 rounded-lg text-xs focus:outline-none focus:border-purple-500"
         >
           <option value="score">Professional Score</option>
@@ -155,7 +163,7 @@ export default function PremiumElite100Panel({
         </div>
       ) : (
         <div className="space-y-2">
-          {eliteWallets.map((wallet, idx) => (
+          {eliteWallets.map((wallet: any, idx: number) => (
             <div
               key={wallet.wallet_address}
               className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg p-3 transition"
@@ -208,7 +216,7 @@ export default function PremiumElite100Panel({
       <div className="flex gap-2">
         <button
           onClick={() => {
-            eliteWallets.slice(0, 10).forEach(w => onAddToWatchlist(w));
+            eliteWallets.slice(0, 10).forEach((w: any) => onAddToWatchlist(w));
           }}
           className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 rounded-lg font-semibold text-sm transition"
         >

@@ -1,18 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, CheckSquare, Square, ExternalLink } from 'lucide-react';
 
-export default function TokenSearch({ onTokensSelected }) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [selectedTokens, setSelectedTokens] = useState([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const searchRef = useRef(null);
+interface TokenResult {
+  address: string;
+  ticker: string;
+  name: string;
+  chain: string;
+  dex: string;
+  price: string;
+  liquidity: number;
+  volume24h: number;
+  priceChange24h: number;
+  pairAddress: string;
+  url: string;
+}
+
+interface Props {
+  onTokensSelected: (tokens: TokenResult[]) => void;
+}
+
+export default function TokenSearch({ onTokensSelected }: Props) {
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<TokenResult[]>([]);
+  const [selectedTokens, setSelectedTokens] = useState<TokenResult[]>([]);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [showResults, setShowResults] = useState<boolean>(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (searchRef.current && !searchRef.current.contains(event.target)) {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setShowResults(false);
       }
     }
@@ -20,7 +38,7 @@ export default function TokenSearch({ onTokensSelected }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const searchTokens = async (query) => {
+  const searchTokens = async (query: string) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
       return;
@@ -33,7 +51,7 @@ export default function TokenSearch({ onTokensSelected }) {
       const data = await response.json();
 
       if (data.pairs && data.pairs.length > 0) {
-        const formattedResults = data.pairs.map(pair => ({
+        const formattedResults: TokenResult[] = data.pairs.map((pair: any) => ({
           address: pair.baseToken.address,
           ticker: pair.baseToken.symbol,
           name: pair.baseToken.name,
@@ -65,7 +83,7 @@ export default function TokenSearch({ onTokensSelected }) {
     // Clear results immediately when query changes
     setSearchResults([]);
     setShowResults(false);
-    
+
     const timer = setTimeout(() => {
       if (searchQuery.trim()) {
         searchTokens(searchQuery.trim());
@@ -77,13 +95,13 @@ export default function TokenSearch({ onTokensSelected }) {
   }, [searchQuery]);
 
   // FIXED: Prevent duplicate selections by checking address AND chain
-  const toggleTokenSelection = (token) => {
+  const toggleTokenSelection = (token: TokenResult) => {
     // Check if this exact token (by address AND chain) is already selected
     const isSelected = selectedTokens.some(
-      t => t.address.toLowerCase() === token.address.toLowerCase() && 
+      t => t.address.toLowerCase() === token.address.toLowerCase() &&
            t.chain === token.chain
     );
-    
+
     if (isSelected) {
       // Remove the token
       setSelectedTokens(selectedTokens.filter(
@@ -93,13 +111,13 @@ export default function TokenSearch({ onTokensSelected }) {
       // Add the token
       setSelectedTokens([...selectedTokens, token]);
     }
-    
+
     // FIXED: Don't close dropdown or clear search - let user keep selecting
     // setShowResults(false);
     // setSearchQuery('');
   };
 
-  const removeToken = (address, chain) => {
+  const removeToken = (address: string, chain: string) => {
     setSelectedTokens(selectedTokens.filter(
       t => !(t.address.toLowerCase() === address.toLowerCase() && t.chain === chain)
     ));
@@ -116,13 +134,13 @@ export default function TokenSearch({ onTokensSelected }) {
     }
   }, [selectedTokens, onTokensSelected]);
 
-  const formatNumber = (num) => {
+  const formatNumber = (num: number): string => {
     if (num >= 1000000) return `$${(num / 1000000).toFixed(2)}M`;
     if (num >= 1000) return `$${(num / 1000).toFixed(1)}K`;
     return `$${num.toFixed(2)}`;
   };
 
-  const formatPrice = (price) => {
+  const formatPrice = (price: string | null): string => {
     if (!price) return '$0.00';
     const num = parseFloat(price);
     if (num < 0.000001) return `$${num.toExponential(2)}`;
@@ -138,7 +156,7 @@ export default function TokenSearch({ onTokensSelected }) {
         <input
           type="text"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
           onFocus={() => searchResults.length > 0 && setShowResults(true)}
           placeholder="Search tokens by name, ticker, or contract address..."
           className="w-full rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500"
@@ -155,10 +173,10 @@ export default function TokenSearch({ onTokensSelected }) {
           <div className="absolute top-full mt-2 w-full rounded-lg shadow-xl max-h-96 overflow-y-auto z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
             {searchResults.map((token, idx) => {
               const isSelected = selectedTokens.some(
-                t => t.address.toLowerCase() === token.address.toLowerCase() && 
+                t => t.address.toLowerCase() === token.address.toLowerCase() &&
                      t.chain === token.chain
               );
-              
+
               return (
                 <div
                   key={`${token.chain}-${token.address}-${idx}`}
@@ -184,9 +202,9 @@ export default function TokenSearch({ onTokensSelected }) {
                         </span>
                         <span className="text-xs text-gray-500">{token.dex}</span>
                       </div>
-                      
+
                       <div className="text-xs text-gray-400 mb-1">{token.name}</div>
-                      
+
                       <div className="flex items-center gap-3 text-xs">
                         <div>
                           <span className="text-gray-500">Price: </span>
@@ -203,7 +221,7 @@ export default function TokenSearch({ onTokensSelected }) {
                           </span>
                         </div>
                       </div>
-                      
+
                       <div className="text-xs text-gray-500 mt-1 font-mono truncate">
                         CA: {token.address}
                       </div>
@@ -213,7 +231,7 @@ export default function TokenSearch({ onTokensSelected }) {
                       href={token.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
                       className="text-gray-400 hover:text-purple-400 transition mt-1"
                     >
                       <ExternalLink size={14} />
@@ -267,7 +285,7 @@ export default function TokenSearch({ onTokensSelected }) {
                     {token.address}
                   </div>
                 </div>
-                
+
                 <button
                   onClick={() => removeToken(token.address, token.chain)}
                   className="text-red-400 hover:text-red-300 transition text-xs ml-2"
