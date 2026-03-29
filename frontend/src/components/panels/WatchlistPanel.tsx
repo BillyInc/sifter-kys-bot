@@ -18,16 +18,16 @@ const NOTE_TYPES = [
   { value: 'note',     label: 'Note',     icon: StickyNote, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
 ];
 
-function getNoteTypeMeta(v) { return NOTE_TYPES.find(t => t.value === v) || NOTE_TYPES[3]; }
+function getNoteTypeMeta(v: string) { return NOTE_TYPES.find(t => t.value === v) || NOTE_TYPES[3]; }
 
-function formatNoteTs(ts) {
+function formatNoteTs(ts: any) {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' +
     d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function timeAgo(ts) {
+function timeAgo(ts: any) {
   const diff = Date.now() - new Date(ts).getTime();
   if (isNaN(diff) || diff < 0) return 'just now';
   const m = Math.floor(diff / 60_000);
@@ -40,12 +40,19 @@ function timeAgo(ts) {
 }
 
 // ─── Composer ─────────────────────────────────────────────────────────────────
-function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false }) {
-  const [text, setText]           = useState(editingEntry?.text || '');
-  const [type, setType]           = useState(editingEntry?.type || 'thought');
-  const [tagInput, setTagInput]   = useState(editingEntry?.tags?.join(', ') || '');
-  const [walletRef, setWalletRef] = useState(editingEntry?.walletRef || '');
-  const textRef = useRef(null);
+interface NoteComposerProps {
+  onSave: (data: any) => void;
+  onCancel: () => void;
+  editingEntry?: any;
+  saving?: boolean;
+}
+
+function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false }: NoteComposerProps) {
+  const [text, setText]           = useState<string>(editingEntry?.text || '');
+  const [type, setType]           = useState<string>(editingEntry?.type || 'thought');
+  const [tagInput, setTagInput]   = useState<string>(editingEntry?.tags?.join(', ') || '');
+  const [walletRef, setWalletRef] = useState<string>(editingEntry?.walletRef || '');
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => { textRef.current?.focus(); }, []);
 
   const handleSave = () => {
@@ -100,10 +107,16 @@ function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false })
 }
 
 // ─── Global diary entry ────────────────────────────────────────────────────────
-function GlobalDiaryEntry({ entry, onEdit, onDelete }) {
+interface GlobalDiaryEntryProps {
+  entry: any;
+  onEdit: (entry: any) => void;
+  onDelete: (id: string) => void;
+}
+
+function GlobalDiaryEntry({ entry, onEdit, onDelete }: GlobalDiaryEntryProps) {
   const meta = getNoteTypeMeta(entry.type);
   const Icon = meta.icon;
-  const [conf, setConf] = useState(false);
+  const [conf, setConf] = useState<boolean>(false);
 
   return (
     <motion.div layout initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
@@ -145,15 +158,20 @@ function GlobalDiaryEntry({ entry, onEdit, onDelete }) {
 }
 
 // ─── Global diary panel ────────────────────────────────────────────────────────
-function GlobalDiary({ userId, apiUrl }) {
-  const diary = useGlobalDiary({ userId, apiUrl });
-  const [composing, setComposing] = useState(false);
-  const [editing, setEditing]     = useState(null);
-  const [saving, setSaving]       = useState(false);
-  const [filter, setFilter]       = useState('all');
-  const [search, setSearch]       = useState('');
+interface GlobalDiaryProps {
+  userId: string;
+  apiUrl: string;
+}
 
-  const handleSave = async (data) => {
+function GlobalDiary({ userId, apiUrl }: GlobalDiaryProps) {
+  const diary = useGlobalDiary({ userId, apiUrl });
+  const [composing, setComposing] = useState<boolean>(false);
+  const [editing, setEditing]     = useState<any>(null);
+  const [saving, setSaving]       = useState<boolean>(false);
+  const [filter, setFilter]       = useState<string>('all');
+  const [search, setSearch]       = useState<string>('');
+
+  const handleSave = async (data: any) => {
     setSaving(true);
     if (editing) { await diary.updateNote(editing.id, data); setEditing(null); }
     else         { await diary.addNote(data); }
@@ -230,7 +248,7 @@ function GlobalDiary({ userId, apiUrl }) {
       </div>
 
       {/* Stats tiles */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {NOTE_TYPES.map(t => {
           const TIcon = t.icon;
           return (
@@ -384,7 +402,7 @@ export default function WatchlistPanel({ userId, apiUrl }) {
       {/* Wallets tab */}
       {activeTab === 'wallets' && (
         <>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
             <motion.div whileHover={{ scale: 1.02 }} style={{ backgroundColor: 'var(--bg-card)' }} className="border border-green-500/30 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2"><Activity className="text-green-400" size={18} /><span className="text-2xl font-bold text-green-400">{healthyCount}</span></div>
               <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Healthy</div>
@@ -399,8 +417,8 @@ export default function WatchlistPanel({ userId, apiUrl }) {
             </motion.div>
           </div>
 
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', borderRadius: 8, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, padding: '9px 16px', background: 'var(--bg-secondary, var(--bg-card))', borderBottom: '1px solid var(--border-color-strong)', fontFamily: 'monospace', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)' }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', borderRadius: 8, overflowX: 'auto', overflowY: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(80px,140px) 44px 52px 76px 68px 60px 60px 1fr', gap: 8, padding: '9px 12px', background: 'var(--bg-secondary, var(--bg-card))', borderBottom: '1px solid var(--border-color-strong)', fontFamily: 'monospace', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)', minWidth: 600 }}>
               <div style={{ textAlign: 'center' }}>#</div>
               <div>ADDRESS</div>
               <div style={{ textAlign: 'center' }}>TIER</div>

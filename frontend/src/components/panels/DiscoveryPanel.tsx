@@ -5,6 +5,26 @@ import { Zap, Search, Sparkles, CheckCircle, AlertCircle, Shield, XCircle, Alert
 const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 400;   // 400 × 3s = 20 minutes
 
+interface DiscoveryProgress {
+  current: number;
+  total: number;
+  phase: string;
+}
+
+interface DiscoveryPanelProps {
+  userId: string;
+  apiUrl: string;
+  onClose: () => void;
+  onAddToWatchlist: (...args: any[]) => any;
+  formatNumber: (v: any) => string;
+  onResultsReady: ((data: any, type: string) => void) | null;
+  onAnalysisStart: (info: any) => void;
+  onAnalysisProgress: (progress: DiscoveryProgress) => void;
+  onAnalysisComplete: (data: any) => void;
+  activeAnalysis: any;
+  onMinimize: (() => void) | null;
+}
+
 export default function DiscoveryPanel({
   userId,
   apiUrl,
@@ -17,16 +37,16 @@ export default function DiscoveryPanel({
   onAnalysisComplete,
   activeAnalysis,
   onMinimize,
-}) {
-  const [isDiscovering, setIsDiscovering]       = useState(false);
-  const [discoveryResults, setDiscoveryResults] = useState(null);
-  const [currentJobId, setCurrentJobId]         = useState(null);
-  const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
-  const [timedOut, setTimedOut]                 = useState(false);
-  const [timeoutMessage, setTimeoutMessage]     = useState('');
+}: DiscoveryPanelProps) {
+  const [isDiscovering, setIsDiscovering]       = useState<boolean>(false);
+  const [discoveryResults, setDiscoveryResults] = useState<any[] | null>(null);
+  const [currentJobId, setCurrentJobId]         = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<DiscoveryProgress>({ current: 0, total: 0, phase: '' });
+  const [timedOut, setTimedOut]                 = useState<boolean>(false);
+  const [timeoutMessage, setTimeoutMessage]     = useState<string>('');
 
-  const pollIntervalRef = useRef(null);
-  const pollCountRef    = useRef(0);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef    = useRef<number>(0);
 
   useEffect(() => {
     return () => { if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };

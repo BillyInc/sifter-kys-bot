@@ -36,7 +36,7 @@ export default function SlideOutPanel({
       />
 
       <div
-        className={`fixed top-0 ${direction === 'left' ? 'left-0' : 'right-0'} h-full w-full sm:${width} border-${direction === 'left' ? 'r' : 'l'} z-50 flex flex-col shadow-2xl animate-slide-in-${direction}`}
+        className={`fixed top-0 ${direction === 'left' ? 'left-0' : 'right-0'} h-full slide-out-panel-width ${width} border-${direction === 'left' ? 'r' : 'l'} z-50 flex flex-col shadow-2xl animate-slide-in-${direction}`}
         style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}
       >
         <div className="flex-shrink-0 flex items-center justify-between p-3 sm:p-4 border-b" style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
@@ -67,6 +67,9 @@ export default function SlideOutPanel({
         .animate-fade-in { animation: fade-in 0.2s ease-out; }
         .animate-slide-in-left { animation: slide-in-left 0.3s ease-out; }
         .animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
+        @media (max-width: 639px) {
+          .slide-out-panel-width { width: 100% !important; max-width: 100% !important; }
+        }
       `}</style>
     </>
   );

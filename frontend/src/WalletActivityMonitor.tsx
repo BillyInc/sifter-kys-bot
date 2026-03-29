@@ -102,8 +102,8 @@ export default function WalletActivityMonitor() {
   return (
     <>
       {showToast && latestNotification && (
-        <div className="fixed top-20 right-6 z-50 animate-slide-in-right">
-          <div className="bg-gradient-to-br from-purple-900 to-purple-950 border-2 border-purple-500/50 rounded-2xl shadow-2xl p-4 w-96 backdrop-blur-xl">
+        <div className="fixed top-20 left-2 right-2 sm:left-auto sm:right-6 z-50 animate-slide-in-right">
+          <div className="bg-gradient-to-br from-purple-900 to-purple-950 border-2 border-purple-500/50 rounded-2xl shadow-2xl p-3 sm:p-4 w-full sm:w-96 backdrop-blur-xl">
             <div className="flex items-start gap-3">
               <div className="p-2 bg-purple-500/20 rounded-lg">
                 <BellRing className="text-purple-400 animate-pulse" size={20} />
@@ -142,7 +142,7 @@ export default function WalletActivityMonitor() {
         </button>
 
         {isOpen && (
-          <div className="absolute right-0 top-12 w-96 max-h-[600px] rounded-xl shadow-2xl overflow-hidden animate-fade-in z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
+          <div className="fixed sm:absolute left-2 right-2 sm:left-auto sm:right-0 top-16 sm:top-12 w-auto sm:w-96 max-h-[80vh] sm:max-h-[600px] rounded-xl shadow-2xl overflow-hidden animate-fade-in z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
             <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 p-4" style={{ borderBottom: '1px solid var(--border-color-strong)' }}>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-lg font-bold flex items-center gap-2">
