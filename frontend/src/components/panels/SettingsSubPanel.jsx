@@ -59,7 +59,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       </button>
 
       {/* Tabs - FIXED: No horizontal scroll */}
-      <div className="flex gap-1 border-b border-white/10 overflow-x-auto pb-2">
+      <div className="flex gap-1 overflow-x-auto pb-2" style={{ borderBottom: '1px solid var(--border-color)' }}>
         {[
           { id: 'account', icon: User, label: 'Account' },
           { id: 'alerts', icon: Bell, label: 'Alerts' },
@@ -71,9 +71,10 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
             onClick={() => setActiveSettingsTab(tab.id)}
             className={`flex items-center gap-2 px-3 py-2 border-b-2 transition text-xs whitespace-nowrap flex-shrink-0 ${
               activeSettingsTab === tab.id
-                ? 'border-purple-500 text-white'
-                : 'border-transparent text-gray-400 hover:text-white'
+                ? 'border-purple-500'
+                : 'border-transparent'
             }`}
+            style={{ color: activeSettingsTab === tab.id ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           >
             <tab.icon size={14} />
             {tab.label}
@@ -84,7 +85,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       {/* Account Tab */}
       {activeSettingsTab === 'account' && (
         <div className="space-y-4">
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-sm font-semibold mb-3">Account Settings</h3>
             
             <div className="space-y-3">
@@ -131,23 +132,23 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
             </div>
           </div>
 
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-sm font-semibold mb-3">Change Password</h3>
             <div className="space-y-2">
               <input
                 type="password"
                 placeholder="Current password"
-                className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                className="w-full rounded px-3 py-2 text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
               />
               <input
                 type="password"
                 placeholder="New password"
-                className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                className="w-full rounded px-3 py-2 text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
               />
               <input
                 type="password"
                 placeholder="Confirm new password"
-                className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                className="w-full rounded px-3 py-2 text-sm" style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}
               />
               <button className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm font-semibold transition">
                 Update Password
@@ -160,7 +161,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       {/* Alerts Tab */}
       {activeSettingsTab === 'alerts' && (
         <div className="space-y-4">
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-sm font-semibold mb-3">Notification Preferences</h3>
             
             <div className="space-y-3">
@@ -209,7 +210,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       {/* Analysis Tab */}
       {activeSettingsTab === 'analysis' && (
         <div className="space-y-4">
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-sm font-semibold mb-3">Default Analysis Settings</h3>
             
             <div className="space-y-3">
@@ -261,7 +262,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
       {/* Display Tab */}
       {activeSettingsTab === 'display' && (
         <div className="space-y-4">
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+          <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
             <h3 className="text-sm font-semibold mb-3">Display Preferences</h3>
             
             <div className="space-y-3">

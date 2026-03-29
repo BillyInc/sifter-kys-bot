@@ -45,8 +45,8 @@ const StatPill = ({ label, value, color = '#94a3b8', accent = false }) => (
   <div style={{
     display: 'flex', flexDirection: 'column', gap: 2,
     padding: '5px 9px', borderRadius: 6,
-    background: accent ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
-    border: `1px solid ${accent ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.10)'}`,
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
     minWidth: 56,
   }}>
     <span style={{ fontFamily: 'monospace', fontSize: 8, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em' }}>

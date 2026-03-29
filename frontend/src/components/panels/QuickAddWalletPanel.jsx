@@ -127,7 +127,7 @@ export default function QuickAddWalletPanel({
             <button
               key={preset.address}
               onClick={() => applyPreset(preset)}
-              className="w-full px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left text-sm transition group"
+              className="w-full px-3 py-2 rounded-lg text-left text-sm transition group" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
             >
               <div className="flex items-center justify-between">
                 <div className="flex-1">
@@ -144,7 +144,7 @@ export default function QuickAddWalletPanel({
       </div>
 
       {/* Manual Input */}
-      <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+      <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h3 className="text-sm font-semibold mb-3">Manual Entry</h3>
         
         <div className="space-y-3">
@@ -200,7 +200,7 @@ export default function QuickAddWalletPanel({
       </div>
 
       {/* Alert Settings */}
-      <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+      <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
           🔔 Alert Settings
         </h3>
@@ -295,7 +295,7 @@ export default function QuickAddWalletPanel({
       </div>
 
       {/* How It Works */}
-      <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+      <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h4 className="text-sm font-semibold mb-2">How It Works</h4>
         <ol className="space-y-2 text-xs text-gray-400">
           <li className="flex gap-2">

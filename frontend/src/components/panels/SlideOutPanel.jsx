@@ -32,7 +32,7 @@ export default function SlideOutPanel({
       >
         <div className="flex-shrink-0 flex items-center justify-between p-4 border-b" style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
           <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition">
+          <button onClick={onClose} className="p-2 rounded-lg transition" onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
             <X size={20} />
           </button>
         </div>

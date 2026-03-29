@@ -84,7 +84,7 @@ export default function ProfilePanel({
             <div className="text-xs text-gray-400">{user?.email}</div>
           </div>
         </div>
-        <div className="flex items-center justify-between pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid var(--border-color)' }}>
           <span className="text-xs text-gray-400">Plan:</span>
           <span className="text-sm font-bold text-purple-400">Pro</span>
         </div>
@@ -96,7 +96,10 @@ export default function ProfilePanel({
           <button
             key={item.id}
             onClick={item.action}
-            className="w-full p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left transition flex items-center gap-3"
+            className="w-full p-3 rounded-lg text-left transition flex items-center gap-3"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
           >
             <item.icon className={item.color} size={18} />
             <span className="font-medium">{item.label}</span>
@@ -105,10 +108,13 @@ export default function ProfilePanel({
       </div>
 
       {/* Help & Sign Out */}
-      <div className="space-y-2 pt-4 border-t border-white/10">
+      <div className="space-y-2 pt-4" style={{ borderTop: '1px solid var(--border-color)' }}>
         <button
           onClick={() => onNavigate('help')}
-          className="w-full p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left transition flex items-center gap-3"
+          className="w-full p-3 rounded-lg text-left transition flex items-center gap-3"
+          style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-card)'}
         >
           <HelpCircle className="text-blue-400" size={18} />
           <span className="font-medium">Help & Support</span>

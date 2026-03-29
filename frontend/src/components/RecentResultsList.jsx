@@ -51,7 +51,8 @@ export default function RecentResultsList({
         {[...Array(4)].map((_, i) => (
           <div
             key={`skeleton-${i}`}
-            className="animate-pulse bg-white/5 border border-white/10 rounded-xl h-[62px]"
+            className="animate-pulse rounded-xl h-[62px]"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
           />
         ))}
       </div>
@@ -68,7 +69,8 @@ export default function RecentResultsList({
         {onRefresh && (
           <button
             onClick={onRefresh}
-            className="mt-4 flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 transition mx-auto"
+            className="mt-4 flex items-center gap-2 px-4 py-2 rounded-lg text-xs transition mx-auto"
+            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
           >
             <RefreshCw size={12} /> Try again
           </button>
@@ -127,7 +129,7 @@ export default function RecentResultsList({
             <div className="shrink-0">{meta.icon}</div>
 
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-white truncate">{entry.label}</div>
+              <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{entry.label}</div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span className="text-xs text-gray-500">{entry.sublabel}</span>
                 {walletCount > 0 && (

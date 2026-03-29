@@ -6,7 +6,7 @@ const statsCache = {};
 
 function SkeletonBox({ className = '' }) {
   return (
-    <div className={`animate-pulse bg-white/10 rounded-lg ${className}`} />
+    <div className={`animate-pulse rounded-lg ${className}`} style={{ backgroundColor: 'var(--bg-card)' }} />
   );
 }
 
@@ -82,7 +82,10 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
         <div className="relative bg-gradient-to-br from-purple-900/30 to-purple-800/20 border border-purple-500/30 rounded-xl p-6">
           <button
             onClick={dismissWelcome}
-            className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+            className="absolute top-3 right-3 p-1.5 rounded-lg transition"
+            style={{ color: 'var(--text-secondary)' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <X size={16} />
           </button>
@@ -93,7 +96,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between mb-2">
             <BarChart3 className="text-purple-400" size={20} />
             <span className="text-2xl font-bold text-purple-400">{stats?.tokens_analyzed || 0}</span>
@@ -101,7 +104,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
           <div className="text-xs text-gray-400">Tokens Analyzed (This Week)</div>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between mb-2">
             <Activity className="text-green-400" size={20} />
             <span className="text-2xl font-bold text-green-400">{stats?.watchlist_count || 0}</span>
@@ -109,7 +112,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
           <div className="text-xs text-gray-400">Wallets in Watchlist</div>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between mb-2">
             <TrendingUp className="text-blue-400" size={20} />
             <span className="text-2xl font-bold text-blue-400">{stats?.success_rate || 0}%</span>
@@ -117,7 +120,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
           <div className="text-xs text-gray-400">Success Rate</div>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between mb-2">
             <Target className="text-yellow-400" size={20} />
             <span className="text-2xl font-bold text-yellow-400">{stats?.avg_roi || 0}%</span>
@@ -134,7 +137,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
         </h3>
         <div className="space-y-2">
           {(stats?.recent_activity || []).map((activity, idx) => (
-            <div key={`${activity.type}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 bg-black/30 rounded">
+            <div key={`${activity.type}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${
                   activity.type === 'analysis' ? 'bg-purple-500' :
@@ -159,7 +162,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }) {
         </h3>
         <div className="space-y-2">
           {(stats?.top_performers || []).slice(0, 3).map((wallet, idx) => (
-            <div key={wallet.address} className="flex items-center justify-between p-2 bg-black/30 rounded">
+            <div key={wallet.address} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div className="flex items-center gap-2">
                 <span className="text-lg">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
                 <code className="text-sm font-mono text-gray-300">{wallet.address?.slice(0, 8)}…</code>

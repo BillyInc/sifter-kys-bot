@@ -103,7 +103,8 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           {quickStartGuides.map((guide) => (
             <button
               key={guide.title}
-              className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left transition"
+              className="p-3 rounded-lg text-left transition"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
             >
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-lg">{guide.icon}</span>
@@ -124,7 +125,8 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           {featureGuides.map((guide) => (
             <button
               key={guide.title}
-              className="w-full p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-left text-sm transition flex items-center gap-2"
+              className="w-full p-2 rounded-lg text-left text-sm transition flex items-center gap-2"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
             >
               <span>{guide.icon}</span>
               <span>{guide.title}</span>
@@ -152,10 +154,12 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
         </h3>
         <div className="space-y-2">
           {faqs.map((faq, idx) => (
-            <div key={faq.q} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+            <div key={faq.q} className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
               <button
                 onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}
-                className="w-full p-3 text-left flex items-center justify-between hover:bg-white/5 transition"
+                className="w-full p-3 text-left flex items-center justify-between transition"
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
               >
                 <span className="text-sm font-medium">{faq.q}</span>
                 {expandedFaq === idx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -171,7 +175,7 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
       </div>
 
       {/* Contact Support */}
-      <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+      <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
           <Mail className="text-green-400" size={16} />
           Contact Support

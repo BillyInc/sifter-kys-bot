@@ -577,16 +577,17 @@ export default function SifterKYS() {
               <button
                 onClick={() => handleOpenPanel('recents')}
                 title="Recent analyses"
-                className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg transition"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg transition"
+                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
               >
                 <Clock size={15} className={recentsLoading ? 'text-purple-400 animate-pulse' : 'text-gray-400'} />
-                {recentResults.length > 0 && <span className="text-xs font-bold text-gray-300">{recentResults.length}</span>}
+                {recentResults.length > 0 && <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{recentResults.length}</span>}
               </button>
 
               {/* ── Active Analyses dropdown ── */}
               {showActiveAnalyses && activeCount > 0 && (
                 <div className="absolute right-44 top-12 w-80 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden z-[100]" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
-                  <div className="p-3 border-b border-white/10">
+                  <div className="p-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <Activity size={14} className="text-green-400" />
                       Active Analyses ({activeCount})
@@ -598,7 +599,7 @@ export default function SifterKYS() {
                       const isCancelling = cancellingRef.current.has(type);
                       const pct = Math.round(((analysis.progress?.current || 0) / (analysis.progress?.total || 1)) * 100);
                       return (
-                        <div key={type} className="p-3 hover:bg-white/5 rounded-lg mb-2">
+                        <div key={type} className="p-3 rounded-lg mb-2" style={{ cursor: 'default' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-semibold capitalize">
                               {type === 'analyze'   ? '🔍 Token Analysis' :
@@ -620,12 +621,12 @@ export default function SifterKYS() {
                                 <span key={t} className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">{t}</span>
                               ))}
                               {analysis.tokens.length > 4 && (
-                                <span className="text-xs px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">+{analysis.tokens.length - 4}</span>
+                                <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>+{analysis.tokens.length - 4}</span>
                               )}
                             </div>
                           )}
                           <div className="text-xs text-gray-400 mb-2">{analysis.progress?.phase || 'Processing…'}</div>
-                          <div className="bg-white/10 rounded-full h-1.5 mb-1">
+                          <div className="rounded-full h-1.5 mb-1" style={{ backgroundColor: 'var(--bg-secondary)' }}>
                             <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: `${pct}%` }} />
                           </div>
                           <div className="flex justify-between text-xs text-gray-500">
@@ -665,7 +666,8 @@ export default function SifterKYS() {
               <div className="relative">
                 <button
                   onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-                  className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg transition"
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg transition"
+                  style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}
                 >
                   <div className="w-8 h-8 bg-purple-500/20 rounded-full flex items-center justify-center">
                     <User size={16} className="text-purple-400" />
@@ -675,21 +677,21 @@ export default function SifterKYS() {
                 </button>
                 {showProfileDropdown && (
                   <div className="absolute right-0 top-12 w-64 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden z-[100]" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
-                    <div className="p-4 border-b border-white/10">
-                      <div className="text-xs text-gray-400">{user?.email}</div>
+                    <div className="p-4" style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{user?.email}</div>
                     </div>
                     <div className="p-2">
-                      <button onClick={() => handleOpenPanel('profile')} className="w-full p-2 hover:bg-white/10 rounded-lg text-left text-sm transition flex items-center gap-2">
+                      <button onClick={() => handleOpenPanel('profile')} className="w-full p-2 rounded-lg text-left text-sm transition flex items-center gap-2" style={{ color: 'var(--text-primary)' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                         <BarChart3 size={16} className="text-purple-400" /> My Dashboard
                       </button>
-                      <button onClick={() => handleOpenPanel('profile')} className="w-full p-2 hover:bg-white/10 rounded-lg text-left text-sm transition flex items-center gap-2">
+                      <button onClick={() => handleOpenPanel('profile')} className="w-full p-2 rounded-lg text-left text-sm transition flex items-center gap-2" style={{ color: 'var(--text-primary)' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                         <Settings size={16} className="text-gray-400" /> Settings
                       </button>
-                      <button onClick={() => handleOpenPanel('help')} className="w-full p-2 hover:bg-white/10 rounded-lg text-left text-sm transition flex items-center gap-2">
+                      <button onClick={() => handleOpenPanel('help')} className="w-full p-2 rounded-lg text-left text-sm transition flex items-center gap-2" style={{ color: 'var(--text-primary)' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                         <HelpCircle size={16} className="text-blue-400" /> Help & Support
                       </button>
                     </div>
-                    <div className="p-2 border-t border-white/10 sticky bottom-0" style={{ backgroundColor: 'var(--bg-card)' }}>
+                    <div className="p-2 sticky bottom-0" style={{ backgroundColor: 'var(--bg-card)', borderTop: '1px solid var(--border-color)' }}>
                       <button onClick={signOut} className="w-full p-2 hover:bg-red-500/10 rounded-lg text-left text-sm transition flex items-center gap-2 text-red-400">
                         <LogOut size={16} /> Sign Out
                       </button>

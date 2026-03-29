@@ -44,7 +44,10 @@ export default function DashboardHome({
           <button
             onClick={dismissWelcome}
             title="Dismiss welcome banner"
-            className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+            className="absolute top-3 right-3 p-1.5 rounded-lg transition"
+            style={{ color: 'var(--text-secondary)' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <X size={16} />
           </button>
@@ -84,7 +87,7 @@ export default function DashboardHome({
           <h3 className="text-lg font-semibold mb-3">Recent Activity</h3>
           <div className="space-y-2">
             {recentActivity.slice(0, 5).map((activity, idx) => (
-              <div key={`${activity.description}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 bg-black/30 rounded">
+              <div key={`${activity.description}-${activity.time}-${idx}`} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
                 <span className="text-sm">{activity.description}</span>
                 <span className="text-xs text-gray-400">{activity.time}</span>
               </div>

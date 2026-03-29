@@ -240,7 +240,8 @@ export default function DiscoveryPanel({
             <button
               onClick={onMinimize}
               title="Minimize to background"
-              className="px-3 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition flex items-center gap-1.5 text-gray-400 hover:text-white"
+              className="px-3 py-3 rounded-lg transition flex items-center gap-1.5"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
             >
               <Minimize2 size={16} />
             </button>
@@ -250,7 +251,7 @@ export default function DiscoveryPanel({
         {/* Progress bar */}
         {(isDiscovering || (activeAnalysis && !discoveryResults)) && (
           <div className="mt-4 space-y-2">
-            <div className="bg-white/10 rounded-full h-2 overflow-hidden">
+            <div className="rounded-full h-2 overflow-hidden" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div
                 className="bg-gradient-to-r from-yellow-500 to-amber-400 h-2 transition-all duration-500"
                 style={{ width: `${displayPct}%` }}
@@ -280,13 +281,14 @@ export default function DiscoveryPanel({
             {onMinimize && (
               <button
                 onClick={onMinimize}
-                className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-xs text-gray-400 transition"
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition"
+                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
               >
                 <Minimize2 size={12} /> Minimize
               </button>
             )}
           </div>
-          <div className="bg-white/10 rounded-full h-2 overflow-hidden mb-2">
+          <div className="rounded-full h-2 overflow-hidden mb-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             <div
               className="bg-green-500 h-2 transition-all duration-500"
               style={{ width: `${Math.round(((activeAnalysis.progress?.current || 0) / (activeAnalysis.progress?.total || 1)) * 100)}%` }}
@@ -319,7 +321,7 @@ export default function DiscoveryPanel({
 
       {/* ── Results ── */}
       {discoveryResults && (
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-base font-semibold flex items-center gap-2">
@@ -349,7 +351,8 @@ export default function DiscoveryPanel({
               {discoveryResults.map((wallet, idx) => (
                 <div
                   key={wallet.wallet || idx}
-                  className="bg-black/30 border border-white/10 rounded-lg p-3 hover:bg-black/40 transition"
+                  className="rounded-lg p-3 transition"
+                  style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
@@ -367,11 +370,11 @@ export default function DiscoveryPanel({
                       </div>
                       <div className="grid grid-cols-3 gap-3 text-xs">
                         <div><span className="text-gray-500">Runners:</span><span className="ml-1 text-yellow-400 font-bold">{wallet.runner_count || wallet.runner_hits_30d || 0}</span></div>
-                        <div><span className="text-gray-500">Score:</span><span className="ml-1 text-white font-bold">{wallet.avg_professional_score || wallet.professional_score || 0}</span></div>
+                        <div><span className="text-gray-500">Score:</span><span className="ml-1 font-bold" style={{ color: 'var(--text-primary)' }}>{wallet.avg_professional_score || wallet.professional_score || 0}</span></div>
                         <div><span className="text-gray-500">Avg ROI:</span><span className="ml-1 text-green-400 font-bold">+{(wallet.avg_roi || 0).toFixed(1)}%</span></div>
                       </div>
                       {wallet.runners_hit?.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-white/10">
+                        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--border-color)' }}>
                           <div className="text-xs text-gray-500 mb-1">Recent Hits:</div>
                           <div className="flex flex-wrap gap-1">
                             {wallet.runners_hit.slice(0, 5).map((token, tidx) => (
@@ -396,7 +399,7 @@ export default function DiscoveryPanel({
       )}
 
       {/* ── How it works ── */}
-      <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+      <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <h4 className="text-sm font-semibold mb-2">How Auto Discovery Works</h4>
         <ol className="space-y-2 text-xs text-gray-400">
           <li className="flex gap-2"><span className="text-purple-400">1.</span><span>Scans all trending tokens from the past 30 days</span></li>

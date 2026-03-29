@@ -55,13 +55,14 @@ function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false })
 
   return (
     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-      className="bg-black/40 border border-white/15 rounded-xl p-4 space-y-3">
+      className="rounded-xl p-4 space-y-3" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)' }}>
       <div className="flex gap-1.5 flex-wrap">
         {NOTE_TYPES.map(t => {
           const TIcon = t.icon;
           return (
             <button key={t.value} onClick={() => setType(t.value)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${type === t.value ? `${t.bg} ${t.border} ${t.color}` : 'bg-white/5 border-white/10 text-gray-500 hover:text-gray-300'}`}>
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${type === t.value ? `${t.bg} ${t.border} ${t.color}` : 'text-gray-500 hover:text-gray-300'}`}
+              style={type !== t.value ? { backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' } : {}}>
               <TIcon size={11} />{t.label}
             </button>
           );
@@ -73,21 +74,21 @@ function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false })
         className="w-full rounded-lg px-3 py-2.5 text-sm placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none"
         style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }} />
       <div className="grid grid-cols-2 gap-2">
-        <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5">
+        <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border-color)' }}>
           <Tag size={11} className="text-gray-600 shrink-0" />
           <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Tags (comma separated)"
-            className="flex-1 bg-transparent text-xs text-gray-300 placeholder-gray-600 focus:outline-none" />
+            className="flex-1 bg-transparent text-xs placeholder-gray-600 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
         </div>
-        <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5">
+        <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border-color)' }}>
           <span className="text-gray-600 text-[10px] shrink-0 font-mono">WALLET</span>
           <input type="text" value={walletRef} onChange={e => setWalletRef(e.target.value)} placeholder="Link to wallet (optional)"
-            className="flex-1 bg-transparent text-xs text-gray-300 placeholder-gray-600 focus:outline-none font-mono" />
+            className="flex-1 bg-transparent text-xs placeholder-gray-600 focus:outline-none font-mono" style={{ color: 'var(--text-primary)' }} />
         </div>
       </div>
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-gray-700">⌘↵ to save · Esc to cancel</span>
         <div className="flex gap-2">
-          <button onClick={onCancel} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 transition">Cancel</button>
+          <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-xs transition" style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>Cancel</button>
           <button onClick={handleSave} disabled={!text.trim() || saving}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 rounded-lg text-xs font-semibold text-white transition">
             <Save size={11} /> {saving ? 'Saving…' : editingEntry ? 'Update' : 'Save note'}
@@ -108,19 +109,19 @@ function GlobalDiaryEntry({ entry, onEdit, onDelete }) {
     <motion.div layout initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
       className={`group relative rounded-xl border p-4 ${meta.bg} ${meta.border}`}>
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 p-1.5 rounded-lg bg-black/30"><Icon size={13} className={meta.color} /></div>
+        <div className="mt-0.5 p-1.5 rounded-lg" style={{ backgroundColor: 'var(--bg-secondary)' }}><Icon size={13} className={meta.color} /></div>
         <div className="flex-1 min-w-0">
           {entry.walletRef && (
             <div className="mb-1.5">
-              <span className="text-[10px] font-mono bg-white/10 text-gray-400 px-2 py-0.5 rounded">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
                 {entry.walletRef.length > 12 ? `${entry.walletRef.slice(0, 8)}…${entry.walletRef.slice(-4)}` : entry.walletRef}
               </span>
             </div>
           )}
-          <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">{entry.text}</p>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>{entry.text}</p>
           {entry.tags?.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-              {entry.tags.map((t) => <span key={t} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-gray-400 rounded">{t}</span>)}
+              {entry.tags.map((t) => <span key={t} className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>{t}</span>)}
             </div>
           )}
           <div className="flex items-center gap-2 mt-2">
@@ -234,10 +235,11 @@ function GlobalDiary({ userId, apiUrl }) {
           const TIcon = t.icon;
           return (
             <button key={t.value} onClick={() => setFilter(f => f === t.value ? 'all' : t.value)}
-              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition ${filter === t.value ? `${t.bg} ${t.border}` : 'bg-white/5 border-white/10 hover:bg-white/8'}`}>
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition ${filter === t.value ? `${t.bg} ${t.border}` : ''}`}
+              style={filter !== t.value ? { backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' } : {}}>
               <TIcon size={13} className={t.color} />
               <div>
-                <div className={`text-sm font-bold ${filter === t.value ? t.color : 'text-white'}`}>{typeCounts[t.value] || 0}</div>
+                <div className={`text-sm font-bold ${filter === t.value ? t.color : ''}`} style={filter !== t.value ? { color: 'var(--text-primary)' } : {}}>{typeCounts[t.value] || 0}</div>
                 <div className="text-[10px] text-gray-500">{t.label}s</div>
               </div>
             </button>
@@ -254,15 +256,15 @@ function GlobalDiary({ userId, apiUrl }) {
       {diary.error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{diary.error}</p>}
 
       {diary.notes.length > 3 && (
-        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border-color)' }}>
           <Search size={13} className="text-gray-600 shrink-0" />
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search notes, tags, wallets…"
-            className="flex-1 bg-transparent text-sm text-gray-300 placeholder-gray-600 focus:outline-none" />
+            className="flex-1 bg-transparent text-sm placeholder-gray-600 focus:outline-none" style={{ color: 'var(--text-primary)' }} />
           {search && <button onClick={() => setSearch('')} className="text-gray-600 hover:text-gray-400"><X size={12} /></button>}
         </div>
       )}
 
-      {diary.loading && [...Array(3)].map((_, i) => <div key={`skeleton-${i}`} className="animate-pulse bg-white/5 rounded-xl h-20 border border-white/10" />)}
+      {diary.loading && [...Array(3)].map((_, i) => <div key={`skeleton-${i}`} className="animate-pulse rounded-xl h-20" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }} />)}
 
       {!diary.loading && visible.length === 0 && (
         <div className="text-center py-14 text-gray-700">

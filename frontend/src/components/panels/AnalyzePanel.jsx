@@ -72,7 +72,8 @@ export default function AnalyzePanel({
             <button
               onClick={onMinimize}
               title="Minimize to background"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-400 hover:text-white transition shrink-0"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition shrink-0"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
             >
               <Minimize2 size={12} /> Minimize
             </button>
@@ -85,13 +86,13 @@ export default function AnalyzePanel({
                 <span key={t} className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">{t}</span>
               ))}
               {activeAnalysis.tokens.length > 5 && (
-                <span className="text-xs px-2 py-0.5 bg-white/10 text-gray-400 rounded-full">+{activeAnalysis.tokens.length - 5}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>+{activeAnalysis.tokens.length - 5}</span>
               )}
             </div>
           )}
 
           {/* Progress bar */}
-          <div className="bg-white/10 rounded-full h-2 overflow-hidden mb-2">
+          <div className="rounded-full h-2 overflow-hidden mb-2" style={{ backgroundColor: 'var(--bg-secondary)' }}>
             <div
               className="bg-gradient-to-r from-green-500 to-emerald-400 h-2 rounded-full transition-all duration-500"
               style={{ width: `${pct}%` }}
@@ -117,7 +118,7 @@ export default function AnalyzePanel({
       )}
 
       {/* ── Token Search ── */}
-      <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+      <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-semibold">Token Search</h3>
           <select
@@ -174,13 +175,16 @@ export default function AnalyzePanel({
                   <div
                     key={`${token.chain}-${address}-${idx}`}
                     onClick={() => toggleTokenSelection({ ...token, address, ticker })}
-                    className={`p-3 border-b border-white/5 hover:bg-white/5 cursor-pointer transition ${isSelected ? 'bg-purple-500/10' : ''}`}
+                    className={`p-3 cursor-pointer transition ${isSelected ? 'bg-purple-500/10' : ''}`}
+                    style={{ borderBottom: '1px solid var(--border-color)' }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'; }}
+                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
                     <div className="flex items-start gap-2">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="font-semibold text-sm">{ticker}</span>
-                          <span className="text-xs px-2 py-0.5 bg-white/10 rounded">{(token.chain || 'SOLANA').toUpperCase()}</span>
+                          <span className="text-xs px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>{(token.chain || 'SOLANA').toUpperCase()}</span>
                           {token.hasSocials && <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">✓ Social</span>}
                         </div>
                         <div className="text-xs text-gray-400">{token.name}</div>
@@ -217,14 +221,14 @@ export default function AnalyzePanel({
         <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-base font-semibold">Selected Tokens ({selectedTokens.length})</h3>
-            <button onClick={() => setSelectedTokens([])} className="text-xs text-gray-400 hover:text-white">
+            <button onClick={() => setSelectedTokens([])} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
               Clear All
             </button>
           </div>
 
           <div className="space-y-2 mb-4">
             {selectedTokens.map((token) => (
-              <div key={`${token.chain}-${token.address}`} className="bg-black/30 rounded-lg p-3">
+              <div key={`${token.chain}-${token.address}`} className="rounded-lg p-3" style={{ backgroundColor: 'var(--bg-secondary)' }}>
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="font-semibold text-sm">{token.ticker || token.symbol}</div>
@@ -279,7 +283,8 @@ export default function AnalyzePanel({
               <button
                 onClick={onMinimize}
                 title="Minimize to background"
-                className="px-3 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition flex items-center gap-1.5 text-gray-400 hover:text-white text-sm"
+                className="px-3 py-3 rounded-lg transition flex items-center gap-1.5 text-sm"
+                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
               >
                 <Minimize2 size={16} />
               </button>
