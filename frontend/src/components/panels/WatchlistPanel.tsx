@@ -315,12 +315,17 @@ function GlobalDiary({ userId, apiUrl }: GlobalDiaryProps) {
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export default function WatchlistPanel({ userId, apiUrl }) {
+interface WatchlistPanelProps {
+  userId: string;
+  apiUrl: string;
+}
+
+export default function WatchlistPanel({ userId, apiUrl }: WatchlistPanelProps) {
   const { getAccessToken } = useAuth();
-  const [wallets, setWallets]           = useState([]);
-  const [lastUpdate, setLastUpdate]     = useState(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [activeTab, setActiveTab]       = useState('wallets');
+  const [wallets, setWallets]           = useState<any[]>([]);
+  const [lastUpdate, setLastUpdate]     = useState<Date | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [activeTab, setActiveTab]       = useState<string>('wallets');
 
   useEffect(() => { loadWatchlist(); }, [userId]); // eslint-disable-line
 

@@ -1,15 +1,44 @@
-// components/panels/AnalyzePanel.jsx
+// components/panels/AnalyzePanel.tsx
 import React from 'react';
 import { Search, BarChart3, X, RefreshCw, Minimize2, Activity } from 'lucide-react';
 import AnalysisSettings from '../../Analysis_Setting';
 
-/**
- * Props:
- *  ...existing props...
- *  onMinimize       — () => void  — closes panel and shows the active analyses box
- *  activeAnalysis   — object      — current active analysis for this job (from global state)
- *  isAnalyzing      — bool        — true when an analyze job is in flight
- */
+interface AnalyzePanelProps {
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  searchResults: any[];
+  isSearching: boolean;
+  showDropdown: boolean;
+  searchRef: React.RefObject<HTMLDivElement | null>;
+  selectedTokens: any[];
+  toggleTokenSelection: (token: any) => void;
+  removeToken: (address: string, chain: string) => void;
+  analysisType: string;
+  setAnalysisType: (type: string) => void;
+  useGlobalSettings: boolean;
+  setUseGlobalSettings: (v: boolean) => void;
+  tokenSettings: Record<string, any>;
+  updateTokenSetting: (...args: any[]) => void;
+  daysBack: number;
+  setDaysBack: (v: number) => void;
+  candleSize: string;
+  setCandleSize: (v: string) => void;
+  tMinusWindow: number;
+  setTMinusWindow: (v: number) => void;
+  tPlusWindow: number;
+  setTPlusWindow: (v: number) => void;
+  handleAnalysisStreaming: () => Promise<void>;
+  isAnalyzing: boolean;
+  onClose: () => void;
+  formatNumber: (v: any) => string;
+  setSelectedTokens: (tokens: any[]) => void;
+  formatPrice: (v: any) => string;
+  onResultsReady: (...args: any[]) => any;
+  onRefreshSearch?: () => void;
+  activeAnalysis: any;
+  onMinimize: () => void;
+}
+
 export default function AnalyzePanel({
   searchQuery,
   setSearchQuery,
@@ -44,7 +73,7 @@ export default function AnalyzePanel({
   onRefreshSearch,
   activeAnalysis,
   onMinimize,
-}) {
+}: AnalyzePanelProps) {
   const handleRunAnalysis = async () => {
     // Fire and forget — handleAnalysisStreaming queues the job and registers
     // it with the global poll loop, then returns immediately.

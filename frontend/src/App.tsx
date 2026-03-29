@@ -40,6 +40,24 @@ const getPollingInterval = (attempt) => {
 const TRENDING_CACHE_KEY = 'sifter_trending_runners';
 const TRENDING_CACHE_TTL = 10 * 60 * 1000;
 
+interface ActiveAnalysis {
+  jobId: string;
+  type: string;
+  startTime: number;
+  progress: { current: number; total: number; phase: string };
+  tokens: string[];
+  in_queue?: boolean;
+  queue_position?: number;
+  estimated_wait?: number;
+  [key: string]: any;
+}
+
+interface ResultsPanelState {
+  isOpen: boolean;
+  type: string | null;
+  data: any;
+}
+
 export default function SifterKYS() {
   const {
     user, loading: authLoading, isAuthenticated,
@@ -62,13 +80,13 @@ export default function SifterKYS() {
     }
   }, [theme]);
 
-  const [openPanel, setOpenPanel]             = useState(null);
-  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
-  const [resultsPanel, setResultsPanel]       = useState({ isOpen: false, type: null, data: null });
-  const [simulatorWallet, setSimulatorWallet] = useState(null);
+  const [openPanel, setOpenPanel]             = useState<string | null>(null);
+  const [showProfileDropdown, setShowProfileDropdown] = useState<boolean>(false);
+  const [resultsPanel, setResultsPanel]       = useState<ResultsPanelState>({ isOpen: false, type: null, data: null });
+  const [simulatorWallet, setSimulatorWallet] = useState<any>(null);
 
   // ── Cached trending runners ──────────────────────────────────────────────────
-  const [cachedTrendingRunners, setCachedTrendingRunners] = useState(() => {
+  const [cachedTrendingRunners, setCachedTrendingRunners] = useState<any[]>(() => {
     try {
       const stored = localStorage.getItem(TRENDING_CACHE_KEY);
       if (stored) {
@@ -81,7 +99,7 @@ export default function SifterKYS() {
     return [];
   });
 
-  const saveTrendingToCache = useCallback((runners) => {
+  const saveTrendingToCache = useCallback((runners: any[]) => {
     try {
       localStorage.setItem(TRENDING_CACHE_KEY, JSON.stringify({ runners, timestamp: Date.now() }));
       setCachedTrendingRunners(runners);
@@ -96,41 +114,41 @@ export default function SifterKYS() {
   } = useRecents({ apiUrl: API_URL, userId, getAccessToken });
 
   // ── Search state ─────────────────────────────────────────────────────────────
-  const [searchQuery, setSearchQuery]       = useState('');
-  const [searchResults, setSearchResults]   = useState([]);
-  const [selectedTokens, setSelectedTokens] = useState([]);
-  const [isSearching, setIsSearching]       = useState(false);
-  const [showDropdown, setShowDropdown]     = useState(false);
-  const searchRef = useRef(null);
+  const [searchQuery, setSearchQuery]       = useState<string>('');
+  const [searchResults, setSearchResults]   = useState<any[]>([]);
+  const [selectedTokens, setSelectedTokens] = useState<any[]>([]);
+  const [isSearching, setIsSearching]       = useState<boolean>(false);
+  const [showDropdown, setShowDropdown]     = useState<boolean>(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   // ── Analysis settings ────────────────────────────────────────────────────────
-  const [analysisType, setAnalysisType]           = useState('general');
-  const [useGlobalSettings, setUseGlobalSettings] = useState(true);
-  const [tokenSettings, setTokenSettings]         = useState({});
-  const [daysBack, setDaysBack]                   = useState(7);
-  const [candleSize, setCandleSize]               = useState('5m');
-  const [tMinusWindow, setTMinusWindow]           = useState(4);
-  const [tPlusWindow, setTPlusWindow]             = useState(2);
+  const [analysisType, setAnalysisType]           = useState<string>('general');
+  const [useGlobalSettings, setUseGlobalSettings] = useState<boolean>(true);
+  const [tokenSettings, setTokenSettings]         = useState<Record<string, any>>({});
+  const [daysBack, setDaysBack]                   = useState<number>(7);
+  const [candleSize, setCandleSize]               = useState<string>('5m');
+  const [tMinusWindow, setTMinusWindow]           = useState<number>(4);
+  const [tPlusWindow, setTPlusWindow]             = useState<number>(2);
 
   // ── Other state ──────────────────────────────────────────────────────────────
-  const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
-  const [replacementData, setReplacementData]   = useState(null);
-  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
-  const [userPoints, setUserPoints]             = useState(0);
+  const [alertSettingsWallet, setAlertSettingsWallet] = useState<string | null>(null);
+  const [replacementData, setReplacementData]   = useState<any>(null);
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState<number>(0);
+  const [userPoints, setUserPoints]             = useState<number>(0);
 
   // ── Refs ─────────────────────────────────────────────────────────────────────
-  const completedJobsRef  = useRef(new Set());
-  const savedResultIdsRef = useRef(new Set());
-  const pollIntervalsRef  = useRef({});
-  const activeAnalysesRef = useRef({});
-  const cancellingRef     = useRef(new Set());
+  const completedJobsRef  = useRef<Set<string>>(new Set());
+  const savedResultIdsRef = useRef<Set<string>>(new Set());
+  const pollIntervalsRef  = useRef<Record<string, any>>({});
+  const activeAnalysesRef = useRef<Record<string, ActiveAnalysis | null>>({});
+  const cancellingRef     = useRef<Set<string>>(new Set());
 
   // ── Panel helpers ────────────────────────────────────────────────────────────
-  const handleOpenPanel  = (panelId) => { setOpenPanel(panelId); setShowProfileDropdown(false); setShowActiveAnalyses(false); };
+  const handleOpenPanel  = (panelId: string) => { setOpenPanel(panelId); setShowProfileDropdown(false); setShowActiveAnalyses(false); };
   const handleClosePanel = () => setOpenPanel(null);
 
   // ── Results dedup ────────────────────────────────────────────────────────────
-  const handleResultsReady = useCallback((data, type) => {
+  const handleResultsReady = useCallback((data: any, type: string) => {
     const resultId = data?.job_id || data?.id || JSON.stringify(data).slice(0, 60);
     if (savedResultIdsRef.current.has(resultId)) {
       setResultsPanel({ isOpen: true, type, data });
@@ -153,7 +171,7 @@ export default function SifterKYS() {
     addToRecents({ label, sublabel, data, resultType: type });
   }, [addToRecents]);
 
-  const getPanelConfig = (panelId) => ({
+  const getPanelConfig = (panelId: string | null) => ({
     analyze:    { direction: 'left',  width: 'w-96',             title: '🔍 Analyze Tokens'    },
     trending:   { direction: 'right', width: 'w-[800px]',        title: '🔥 Trending Runners'  },
     discovery:  { direction: 'right', width: 'w-96',             title: '⚡ Auto Discovery'     },
@@ -167,13 +185,13 @@ export default function SifterKYS() {
   }[panelId] || { direction: 'left', width: 'w-96', title: '' });
 
   // ── Active analysis tracking ──────────────────────────────────────────────
-  const [activeAnalyses, setActiveAnalyses] = useState({ trending: null, discovery: null, analyze: null });
-  const [showActiveAnalyses, setShowActiveAnalyses] = useState(false);
+  const [activeAnalyses, setActiveAnalyses] = useState<Record<string, ActiveAnalysis | null>>({ trending: null, discovery: null, analyze: null });
+  const [showActiveAnalyses, setShowActiveAnalyses] = useState<boolean>(false);
 
   useEffect(() => { activeAnalysesRef.current = activeAnalyses; }, [activeAnalyses]);
 
   // ── Redis persistence ────────────────────────────────────────────────────────
-  const saveActiveAnalysisToRedis = useCallback(async (type, analysis) => {
+  const saveActiveAnalysisToRedis = useCallback(async (type: string, analysis: any) => {
     if (!userId || !isAuthenticated) return;
     try {
       const authToken = getAccessToken();
@@ -185,7 +203,7 @@ export default function SifterKYS() {
     } catch (e) { console.error('Failed to save active analysis to Redis:', e); }
   }, [userId, isAuthenticated, getAccessToken, API_URL]);
 
-  const deleteActiveAnalysisFromRedis = useCallback(async (type) => {
+  const deleteActiveAnalysisFromRedis = useCallback(async (type: string) => {
     if (!userId || !isAuthenticated) return;
     try {
       const authToken = getAccessToken();
@@ -208,7 +226,7 @@ export default function SifterKYS() {
   }, [userId, isAuthenticated, getAccessToken, API_URL]);
 
   // ── Analysis lifecycle ────────────────────────────────────────────────────
-  const startAnalysis = useCallback(async (type, data) => {
+  const startAnalysis = useCallback(async (type: string, data: any) => {
     const newAnalysis = {
       jobId:     data.jobId,
       type:      data.analysisType || type,
@@ -223,7 +241,7 @@ export default function SifterKYS() {
     setShowActiveAnalyses(true);
   }, [saveActiveAnalysisToRedis]);
 
-  const updateAnalysisProgress = useCallback((type, progress) => {
+  const updateAnalysisProgress = useCallback((type: string, progress: any) => {
     setActiveAnalyses(prev => {
       const updated = { ...prev, [type]: prev[type] ? { ...prev[type], progress } : null };
       if (updated[type]) saveActiveAnalysisToRedis(type, updated[type]);
@@ -232,7 +250,7 @@ export default function SifterKYS() {
     });
   }, [saveActiveAnalysisToRedis, deleteActiveAnalysisFromRedis]);
 
-  const completeAnalysis = useCallback(async (type, results) => {
+  const completeAnalysis = useCallback(async (type: string, results: any) => {
     setShowActiveAnalyses(false);
     if (pollIntervalsRef.current[type]) {
       clearInterval(pollIntervalsRef.current[type]);
@@ -243,7 +261,7 @@ export default function SifterKYS() {
     handleResultsReady(results, type);
   }, [handleResultsReady, deleteActiveAnalysisFromRedis]);
 
-  const cancelAnalysis = useCallback(async (type) => {
+  const cancelAnalysis = useCallback(async (type: string) => {
     if (cancellingRef.current.has(type)) return;
     cancellingRef.current.add(type);
 
@@ -282,9 +300,9 @@ export default function SifterKYS() {
   }, [isAuthenticated, userId]);
 
   // ── SSE streaming for job progress (with polling fallback) ───────────────
-  const sseCleanupRef = useRef({});
+  const sseCleanupRef = useRef<Record<string, (() => void) | undefined>>({});
 
-  const startSSEStream = useCallback((type, analysis) => {
+  const startSSEStream = useCallback((type: string, analysis: any) => {
     if (!analysis?.jobId) return;
     if (completedJobsRef.current.has(analysis.jobId)) return;
 
@@ -359,7 +377,7 @@ export default function SifterKYS() {
   }, [API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis]);
 
   // ── Polling fallback (used if SSE connection fails) ─────────────────────
-  const startPollingFallback = useCallback((type, analysis) => {
+  const startPollingFallback = useCallback((type: string, analysis: any) => {
     if (!analysis?.jobId) return;
     if (completedJobsRef.current.has(analysis.jobId)) return;
 
@@ -482,14 +500,14 @@ export default function SifterKYS() {
   const activeCount = Object.values(activeAnalyses).filter(Boolean).length;
 
   // ── Formatters ────────────────────────────────────────────────────────────
-  const formatNumber = (num) => {
+  const formatNumber = (num: number) => {
     if (!num) return '0';
     if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
     if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
     if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
     return `$${num.toFixed(2)}`;
   };
-  const formatPrice = (price) => {
+  const formatPrice = (price: number) => {
     if (!price) return '$0';
     if (price < 0.000001) return `$${price.toExponential(2)}`;
     if (price < 0.01)     return `$${price.toFixed(6)}`;
@@ -498,7 +516,7 @@ export default function SifterKYS() {
   };
 
   // ── Points ────────────────────────────────────────────────────────────────
-  const awardPoints = async (actionType, metadata = {}) => {
+  const awardPoints = async (actionType: string, metadata: Record<string, any> = {}) => {
     try {
       const token = getAccessToken();
       await fetch(`${API_URL}/api/referral-points/points/award`, {
@@ -526,7 +544,7 @@ export default function SifterKYS() {
 
   // ── Click-outside dropdown ────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (e) => {
+    const handler = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target)) setShowDropdown(false);
     };
     document.addEventListener('mousedown', handler);
@@ -534,8 +552,8 @@ export default function SifterKYS() {
   }, []);
 
   // ── Search (debounced + manual trigger) ──────────────────────────────────
-  const [searchTrigger, setSearchTrigger] = useState(0);
-  const fireSearch = useCallback(() => setSearchTrigger(t => t + 1), []);
+  const [searchTrigger, setSearchTrigger] = useState<number>(0);
+  const fireSearch = useCallback(() => setSearchTrigger((t: number) => t + 1), []);
 
   useEffect(() => {
     const doSearch = async () => {
@@ -556,8 +574,8 @@ export default function SifterKYS() {
   }, [searchQuery, searchTrigger, API_URL]);
 
   // ── Token selection ───────────────────────────────────────────────────────
-  const toggleTokenSelection = (token) => {
-    const key = (t) => `${t.address?.toLowerCase()}-${t.chain}`;
+  const toggleTokenSelection = (token: any) => {
+    const key = (t: any) => `${t.address?.toLowerCase()}-${t.chain}`;
     const isSelected = selectedTokens.some(t => key(t) === key(token));
     if (isSelected) {
       setSelectedTokens(selectedTokens.filter(t => key(t) !== key(token)));
@@ -571,7 +589,7 @@ export default function SifterKYS() {
     setSearchQuery('');
   };
 
-  const removeToken = (address, chain) =>
+  const removeToken = (address: string, chain: string) =>
     setSelectedTokens(selectedTokens.filter(t => !(t.address?.toLowerCase() === address.toLowerCase() && t.chain === chain)));
 
   const updateTokenSetting = (address, setting, value) =>

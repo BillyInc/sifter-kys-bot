@@ -3,30 +3,51 @@ import useAppStore from '../../stores/useAppStore';
 import { toast } from 'sonner';
 import { User, Bell, BarChart3, Palette, Save } from 'lucide-react';
 
-export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
-  const [activeSettingsTab, setActiveSettingsTab] = useState('account');
-  const [settings, setSettings] = useState({
+interface SettingsSubPanelProps {
+  userId: string;
+  apiUrl: string;
+  onBack: () => void;
+}
+
+interface SettingsState {
+  email: string;
+  timezone: string;
+  language: string;
+  emailAlerts: boolean;
+  browserNotifications: boolean;
+  alertThreshold: number;
+  defaultTimeframe: string;
+  defaultCandle: string;
+  minRoiMultiplier: number;
+  theme: string;
+  compactMode: boolean;
+  dataRefreshRate: number;
+}
+
+export default function SettingsSubPanel({ userId, apiUrl, onBack }: SettingsSubPanelProps) {
+  const [activeSettingsTab, setActiveSettingsTab] = useState<string>('account');
+  const [settings, setSettings] = useState<SettingsState>({
     // Account
     email: '',
     timezone: 'UTC-5',
     language: 'English',
-    
+
     // Alerts
     emailAlerts: true,
     browserNotifications: true,
     alertThreshold: 100,
-    
+
     // Analysis
     defaultTimeframe: '7d',
     defaultCandle: '5m',
     minRoiMultiplier: 3.0,
-    
+
     // Display
     theme: 'dark',
     compactMode: false,
     dataRefreshRate: 30
   });
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const setTheme = useAppStore(state => state.setTheme);
 
   const handleSave = async () => {

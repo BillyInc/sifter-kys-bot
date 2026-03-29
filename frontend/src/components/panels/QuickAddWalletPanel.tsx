@@ -1,24 +1,38 @@
 import React, { useState } from 'react';
 import { Plus, CheckCircle, Zap, AlertCircle } from 'lucide-react';
 
-export default function QuickAddWalletPanel({ 
-  userId, 
-  apiUrl, 
+interface QuickAddWalletPanelProps {
+  userId: string;
+  apiUrl: string;
+  onSuccess?: () => void;
+  getAccessToken?: () => string | null;
+}
+
+interface AlertSettings {
+  enabled: boolean;
+  onBuy: boolean;
+  onSell: boolean;
+  minTradeUsd: number;
+}
+
+export default function QuickAddWalletPanel({
+  userId,
+  apiUrl,
   onSuccess,
   getAccessToken,
-}) {
-  const [walletAddress, setWalletAddress] = useState('');
-  const [tags, setTags] = useState('');
-  const [notes, setNotes] = useState('');
-  const [alertSettings, setAlertSettings] = useState({
+}: QuickAddWalletPanelProps) {
+  const [walletAddress, setWalletAddress] = useState<string>('');
+  const [tags, setTags] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
+  const [alertSettings, setAlertSettings] = useState<AlertSettings>({
     enabled: true,
     onBuy: true,
     onSell: true,
     minTradeUsd: 100
   });
-  const [isAdding, setIsAdding] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState(null);
+  const [isAdding, setIsAdding] = useState<boolean>(false);
+  const [success, setSuccess] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   const presets = [
     { 
