@@ -103,12 +103,21 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$SERVER" >> ~/.ssh/known_hosts
 
-      - name: Create .env file
+      - name: Create .env on first deploy only
         env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
           ENV_CONTENT: ${{ secrets.ENV_FILE }}
         run: |
-          echo "$ENV_CONTENT" > Backend/.env
-          chmod 600 Backend/.env
+          HAS_ENV=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" "test -f ~/sifter-backend/.env && echo yes || echo no")
+          if [ "$HAS_ENV" = "no" ]; then
+            echo "$ENV_CONTENT" > /tmp/deploy.env
+            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.env "$USER@$SERVER:~/sifter-backend/.env"
+            rm -f /tmp/deploy.env
+            echo "Created .env on server"
+          else
+            echo ".env already exists on server — skipping"
+          fi
 
       - name: Deploy with rsync
         env:
@@ -122,6 +131,7 @@ jobs:
             --exclude 'logs/' \
             --exclude '*.db' \
             --exclude '.git' \
+            --exclude '.env' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             Backend/ \
             "$USER@$SERVER:~/sifter-backend/"
@@ -134,9 +144,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "$USER@$SERVER" << 'ENDSSH'
             cd ~/sifter-backend
-
-            # Secure .env file permissions
-            chmod 600 .env
+            chmod 600 .env 2>/dev/null || true
 
             # Install uv if not present
             if ! command -v uv &> /dev/null; then
