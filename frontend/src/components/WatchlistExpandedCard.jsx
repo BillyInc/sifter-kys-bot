@@ -282,31 +282,31 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
   const StatBar = ({ label, val, pct, color = '#3b82f6' }) => (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ fontSize: 10, color: '#3a5a8a', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
         <span style={{ fontSize: 11, color, fontFamily: 'monospace', fontWeight: 700 }}>{val}</span>
       </div>
-      <div style={{ height: 2, background: '#1a2640', borderRadius: 2, overflow: 'hidden' }}>
+      <div style={{ height: 2, background: 'var(--border-color)', borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, pct))}%`, background: `linear-gradient(90deg, ${color}88, ${color})`, borderRadius: 2, transition: 'width 0.5s ease' }} />
       </div>
     </div>
   );
 
   return (
-    <div style={{ borderBottom: '1px solid rgba(26,38,64,0.6)', borderLeft: alertAccent ? `2px solid ${alertAccent}` : '2px solid transparent' }}>
+    <div style={{ borderBottom: '1px solid var(--border-color)', borderLeft: alertAccent ? `2px solid ${alertAccent}` : '2px solid transparent' }}>
 
       {/* Collapsed row */}
       <div onClick={() => setIsExpanded(!isExpanded)}
-        style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, alignItems: 'center', padding: '11px 16px', cursor: 'pointer', background: isExpanded ? 'rgba(59,130,246,0.04)' : 'transparent' }}
-        onMouseEnter={e => e.currentTarget.style.background = 'rgba(59,130,246,0.04)'}
-        onMouseLeave={e => e.currentTarget.style.background = isExpanded ? 'rgba(59,130,246,0.04)' : 'transparent'}>
-        <div style={{ fontFamily: 'monospace', fontSize: rank <= 3 ? 15 : 12, color: '#3a5a8a', textAlign: 'center' }}>{rankDisplay}</div>
-        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, alignItems: 'center', padding: '11px 16px', cursor: 'pointer', background: isExpanded ? 'var(--bg-secondary)' : 'transparent' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
+        onMouseLeave={e => e.currentTarget.style.background = isExpanded ? 'var(--bg-secondary)' : 'transparent'}>
+        <div style={{ fontFamily: 'monospace', fontSize: rank <= 3 ? 15 : 12, color: 'var(--text-secondary)', textAlign: 'center' }}>{rankDisplay}</div>
+        <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {wallet.wallet_address?.slice(0, 8)}...{wallet.wallet_address?.slice(-4)}
         </div>
         <div style={{ textAlign: 'center' }}>
           <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 3, fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: tc.text, background: tc.bg, border: `1px solid ${tc.border}` }}>{wallet.tier || 'C'}</span>
         </div>
-        <div style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#e2e8f0', textAlign: 'right' }}>{score}</div>
+        <div style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'right' }}>{score}</div>
         <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#22c55e', textAlign: 'right', fontWeight: 600 }}>{Number(distanceToATH).toFixed(1)}x</div>
         <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, textAlign: 'right', color: roi30dMult >= 1 ? '#22c55e' : '#ef4444' }}>{roiDisplay}</div>
         <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#f5c842', textAlign: 'right', fontWeight: 600 }}>{runners30d}</div>
@@ -327,7 +327,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
             style={{ padding: '3px 8px', borderRadius: 4, border: 'none', background: confirmDelete ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.12)', color: confirmDelete ? '#fca5a5' : '#ef4444', fontSize: 11, fontFamily: 'monospace', fontWeight: 700, cursor: 'pointer', opacity: isDeleting ? 0.5 : 1, transition: 'all 0.15s' }}>
             {confirmDelete ? '?' : '✕'}
           </button>
-          <div style={{ color: '#3a5a8a' }}>{isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</div>
+          <div style={{ color: 'var(--text-secondary)' }}>{isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</div>
         </div>
       </div>
 
@@ -343,7 +343,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                   { key: 'diary',       label: `📓 Diary${noteCount > 0 ? ` (${noteCount})` : ''}` },
                 ].map(tab => (
                   <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                    style={{ padding: '8px 16px', fontFamily: 'monospace', fontSize: 11, fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', color: activeTab === tab.key ? '#e2e8f0' : '#3a5a8a', borderBottom: activeTab === tab.key ? '2px solid #8b5cf6' : '2px solid transparent', transition: 'all 0.15s' }}>
+                    style={{ padding: '8px 16px', fontFamily: 'monospace', fontSize: 11, fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-secondary)', borderBottom: activeTab === tab.key ? '2px solid #8b5cf6' : '2px solid transparent', transition: 'all 0.15s' }}>
                     {tab.label}
                   </button>
                 ))}
@@ -352,7 +352,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
               {activeTab === 'performance' && (
                 <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
                   <div>
-                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: '#3a5a8a', marginBottom: 12 }}>● Performance Metrics</div>
+                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-secondary)', marginBottom: 12 }}>● Performance Metrics</div>
                     <StatBar label="ATH Distance"   val={`${Number(distanceToATH).toFixed(1)}x`}  pct={Math.min((distanceToATH / 100) * 100, 100)} color="#22c55e" />
                     <StatBar label="Entry Quality"  val={`${Number(entryQuality).toFixed(1)}x`}   pct={Math.max(100 - (entryQuality / 50) * 100, 0)} color="#f5c842" />
                     <StatBar label="Consistency"    val={Number(consistency).toFixed(2)}           pct={(1 - Math.min(consistency, 1)) * 100} color="#a855f7" />
@@ -360,9 +360,9 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                     <StatBar label="ROI 30d"        val={`${roi30dMult.toFixed(2)}x`}             pct={Math.min(roi30dMult * 50, 100)} color={roi30dMult >= 1 ? '#22c55e' : '#ef4444'} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: '#3a5a8a', marginBottom: 12 }}>● Recent Runners</div>
+                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-secondary)', marginBottom: 12 }}>● Recent Runners</div>
                     {topRunners.length === 0
-                      ? <div style={{ fontSize: 11, color: '#334155', fontFamily: 'monospace' }}>No runners in last 30d</div>
+                      ? <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>No runners in last 30d</div>
                       : topRunners.map((runner, i) => {
                           const sym  = runner.symbol || runner.token || runner;
                           const mult = runner.entry_to_ath_multiplier || 0;
@@ -375,7 +375,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                         })
                     }
                     <div style={{ marginTop: 14 }}>
-                      <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: '#3a5a8a', marginBottom: 8 }}>● Recent Form</div>
+                      <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-secondary)', marginBottom: 8 }}>● Recent Form</div>
                       <div style={{ display: 'flex', gap: 3 }}>
                         {form.slice(0, 10).map((f, i) => (
                           <span key={`form-letter-${f.result || 'draw'}-${i}`} style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: f.result === 'win' ? '#22c55e' : f.result === 'loss' ? '#ef4444' : '#475569' }}>
@@ -386,7 +386,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                     </div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: '#3a5a8a', marginBottom: 12 }}>● Alerts</div>
+                    <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-secondary)', marginBottom: 12 }}>● Alerts</div>
                     {alerts.length === 0
                       ? <div style={{ fontSize: 11, color: '#22c55e', fontFamily: 'monospace' }}>✓ No active alerts</div>
                       : alerts.map((alert, i) => {
@@ -403,7 +403,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
                           );
                         })
                     }
-                    <div style={{ marginTop: 12, fontSize: 11, color: '#334155', fontFamily: 'monospace' }}>
+                    <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
                       Last refresh: {wallet.last_updated ? new Date(wallet.last_updated).toLocaleString() : 'Never'}
                     </div>
                     <button onClick={handleRefresh} disabled={isRefreshing}

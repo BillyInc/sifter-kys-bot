@@ -140,8 +140,9 @@ export default function WalletLeagueTable({
     return (
       <React.Fragment key={walletAddr}>
         {/* Main Row - COMPACT DESIGN */}
-        <tr 
-          className={`border-b border-white/5 hover:bg-white/5 transition-colors ${
+        <tr
+          style={{ borderColor: 'var(--border-color)' }}
+          className={`border-b transition-colors hover:opacity-80 ${
             wallet.status === 'critical' ? 'bg-red-500/5' :
             wallet.status === 'warning' ? 'bg-yellow-500/5' :
             ''
@@ -160,7 +161,7 @@ export default function WalletLeagueTable({
             onClick={() => toggleExpand(walletAddr)}
           >
             <div className="flex items-center gap-2">
-              <code className="text-sm font-mono text-gray-300">
+              <code style={{ color: 'var(--text-secondary)' }} className="text-sm font-mono">
                 {walletAddr?.slice(0, 6)}...
               </code>
               <button
@@ -200,7 +201,7 @@ export default function WalletLeagueTable({
 
           {/* Score */}
           <td className="px-3 py-3 text-center">
-            <span className="text-sm font-bold text-white">
+            <span style={{ color: 'var(--text-primary)' }} className="text-sm font-bold">
               {wallet.professional_score || wallet.score || 0}
             </span>
           </td>
@@ -214,7 +215,7 @@ export default function WalletLeagueTable({
 
           {/* Runners */}
           <td className="px-3 py-3 text-center">
-            <span className="text-sm font-semibold text-white">
+            <span style={{ color: 'var(--text-primary)' }} className="text-sm font-semibold">
               {wallet.runners_30d || wallet.runner_hits_30d || 0}
             </span>
           </td>
@@ -247,7 +248,7 @@ export default function WalletLeagueTable({
 
         {/* Expanded Details Row */}
         {isExpanded && (
-          <tr className="bg-black/30 border-b border-white/5">
+          <tr style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b">
             <td colSpan="8" className="px-4 py-4">
               <div className="space-y-4">
                 {/* Full Address */}
@@ -256,7 +257,7 @@ export default function WalletLeagueTable({
                     Full Address:
                   </div>
                   <div className="flex items-center gap-2">
-                    <code className="text-xs text-gray-300 font-mono">
+                    <code style={{ color: 'var(--text-secondary)' }} className="text-xs font-mono">
                       {walletAddr}
                     </code>
                     <button
@@ -269,11 +270,12 @@ export default function WalletLeagueTable({
                         <Copy className="text-gray-400" size={12} />
                       )}
                     </button>
-                    <a 
+                    <a
                       href={`https://solscan.io/account/${walletAddr}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-xs transition-colors"
+                      style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-secondary)', borderColor: 'var(--border-color)' }}
+                      className="flex items-center gap-1 px-2 py-1 border rounded text-xs transition-colors"
                     >
                       <ExternalLink size={10} />
                       View on Solscan
@@ -287,29 +289,29 @@ export default function WalletLeagueTable({
                     Performance Overview:
                   </div>
                   <div className="grid grid-cols-4 gap-3">
-                    <div className="bg-white/5 rounded p-2 text-center">
-                      <div className="text-sm font-bold text-white">
+                    <div style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2 text-center">
+                      <div style={{ color: 'var(--text-primary)' }} className="text-sm font-bold">
                         {wallet.pump_count || 0}
                       </div>
-                      <div className="text-xs text-gray-400">Pumps Hit</div>
+                      <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Pumps Hit</div>
                     </div>
-                    <div className="bg-white/5 rounded p-2 text-center">
+                    <div style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2 text-center">
                       <div className="text-sm font-bold text-green-400">
                         {(wallet.avg_roi_to_peak_pct || wallet.avg_realized_roi_pct || 0).toLocaleString()}%
                       </div>
-                      <div className="text-xs text-gray-400">Avg ROI</div>
+                      <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Avg ROI</div>
                     </div>
-                    <div className="bg-white/5 rounded p-2 text-center">
+                    <div style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2 text-center">
                       <div className="text-sm font-bold text-blue-400">
                         {(wallet.avg_distance_to_ath_pct || 0).toFixed(2)}%
                       </div>
-                      <div className="text-xs text-gray-400">Dist to ATH</div>
+                      <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Dist to ATH</div>
                     </div>
-                    <div className="bg-white/5 rounded p-2 text-center">
+                    <div style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2 text-center">
                       <div className="text-sm font-bold text-purple-400">
                         {wallet.consistency_score?.toFixed(1) || 'N/A'}
                       </div>
-                      <div className="text-xs text-gray-400">Consistency</div>
+                      <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Consistency</div>
                     </div>
                   </div>
                 </div>
@@ -354,7 +356,7 @@ export default function WalletLeagueTable({
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {wallet.other_runners.slice(0, 5).map((runner, idx) => (
-                        <div key={`${runner.symbol}-${idx}`} className="bg-white/5 rounded p-2">
+                        <div key={`${runner.symbol}-${idx}`} style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-sm font-semibold text-yellow-400">
                               ${runner.symbol}
@@ -373,7 +375,7 @@ export default function WalletLeagueTable({
                 )}
 
                 {/* Alert Settings Section */}
-                <div className="pt-3 border-t border-white/10">
+                <div style={{ borderColor: 'var(--border-color)' }} className="pt-3 border-t">
                   <div className="text-xs font-semibold text-gray-400 mb-2">
                     Alert Settings:
                   </div>
@@ -453,70 +455,74 @@ export default function WalletLeagueTable({
   };
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+    <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }} className="border rounded-2xl overflow-hidden">
       {/* Table Header */}
-      <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-4">
+      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold flex items-center gap-2">
+          <h2 style={{ color: 'var(--text-primary)' }} className="text-xl font-bold flex items-center gap-2">
             📊 YOUR SMART MONEY WATCHLIST
           </h2>
-          <div className="text-sm text-gray-400">
+          <div style={{ color: 'var(--text-secondary)' }} className="text-sm">
             Last Updated: {new Date().toLocaleTimeString()}
           </div>
         </div>
       </div>
 
       {/* Filter & Sort Bar */}
-      <div className="bg-gradient-to-r from-purple-900/20 to-purple-800/10 border-b border-white/10 p-4">
+      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Filter size={16} className="text-purple-400" />
             <span className="text-sm font-semibold text-purple-300">Filter & Sort:</span>
           </div>
-          
-          <select 
+
+          <select
             value={filterTier}
             onChange={(e) => setFilterTier(e.target.value)}
-            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+            style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color)' }}
+            className="px-4 py-2 border rounded-lg text-sm font-medium transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50"
           >
-            <option value="all" className="bg-gray-900">All Tiers</option>
-            <option value="S" className="bg-gray-900">S-Tier</option>
-            <option value="A" className="bg-gray-900">A-Tier</option>
-            <option value="B" className="bg-gray-900">B-Tier</option>
-            <option value="C" className="bg-gray-900">C-Tier</option>
+            <option>All Tiers</option>
+            <option value="S">S-Tier</option>
+            <option value="A">A-Tier</option>
+            <option value="B">B-Tier</option>
+            <option value="C">C-Tier</option>
           </select>
 
-          <select 
+          <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+            style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color)' }}
+            className="px-4 py-2 border rounded-lg text-sm font-medium transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50"
           >
-            <option value="all" className="bg-gray-900">All Status</option>
-            <option value="healthy" className="bg-gray-900">Healthy</option>
-            <option value="warning" className="bg-gray-900">Warning</option>
-            <option value="critical" className="bg-gray-900">Critical</option>
+            <option value="all">All Status</option>
+            <option value="healthy">Healthy</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
           </select>
 
-          <select 
+          <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
-            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+            style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color)' }}
+            className="px-4 py-2 border rounded-lg text-sm font-medium transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50"
           >
-            <option value="position" className="bg-gray-900">Sort: Position</option>
-            <option value="roi" className="bg-gray-900">Sort: ROI</option>
-            <option value="score" className="bg-gray-900">Sort: Score</option>
-            <option value="runners" className="bg-gray-900">Sort: Runners</option>
+            <option value="position">Sort: Position</option>
+            <option value="roi">Sort: ROI</option>
+            <option value="score">Sort: Score</option>
+            <option value="runners">Sort: Runners</option>
           </select>
 
-          <select 
+          <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
-            className="px-4 py-2 bg-gray-900/80 border border-purple-500/30 rounded-lg text-sm text-white font-medium hover:bg-gray-900 hover:border-purple-500/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50 backdrop-blur-sm"
+            style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color)' }}
+            className="px-4 py-2 border rounded-lg text-sm font-medium transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500/50"
           >
-            <option value="7d" className="bg-gray-900">Last 7 Days</option>
-            <option value="30d" className="bg-gray-900">Last 30 Days</option>
-            <option value="60d" className="bg-gray-900">Last 60 Days</option>
-            <option value="90d" className="bg-gray-900">Last 90 Days</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="60d">Last 60 Days</option>
+            <option value="90d">Last 90 Days</option>
           </select>
         </div>
       </div>
@@ -524,16 +530,16 @@ export default function WalletLeagueTable({
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gray-900/50 border-b border-white/10 sticky top-0">
+          <thead style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b sticky top-0">
             <tr>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">#</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-gray-300 uppercase">Wallet</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">Tier</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">Score</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">Form</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">Runners</th>
-              <th className="px-3 py-3 text-right text-xs font-semibold text-gray-300 uppercase">30d ROI</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-300 uppercase">Change</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">#</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-left text-xs font-semibold uppercase">Wallet</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">Tier</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">Score</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">Form</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">Runners</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-right text-xs font-semibold uppercase">30d ROI</th>
+              <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">Change</th>
             </tr>
           </thead>
 
@@ -553,8 +559,8 @@ export default function WalletLeagueTable({
             {/* Mid-Table */}
             {groupedWallets.midtable.length > 0 && (
               <>
-                <tr className="bg-white/5">
-                  <td colSpan="8" className="px-3 py-2 text-xs font-semibold text-gray-400 border-y border-white/10">
+                <tr style={{ backgroundColor: 'var(--bg-secondary)' }}>
+                  <td colSpan="8" style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }} className="px-3 py-2 text-xs font-semibold border-y">
                     {getZoneLabel(4)}
                   </td>
                 </tr>
@@ -591,7 +597,7 @@ export default function WalletLeagueTable({
 
       {/* Promotion Queue */}
       {promotionQueue && promotionQueue.length > 0 && (
-        <div className="border-t border-white/10 p-4 bg-purple-500/5">
+        <div style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-secondary)' }} className="border-t p-4">
           <div className="text-sm font-semibold text-purple-400 mb-3">
             💡 PROMOTION QUEUE (Next in line for your watchlist)
           </div>
@@ -600,7 +606,8 @@ export default function WalletLeagueTable({
             {promotionQueue.slice(0, 3).map((candidate, idx) => (
               <div 
                 key={candidate.wallet || candidate.wallet_address}
-                className="flex items-center justify-between p-3 bg-black/20 rounded-lg border border-purple-500/20"
+                style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }}
+                className="flex items-center justify-between p-3 rounded-lg border"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-gray-500">#{idx + 1}</span>
