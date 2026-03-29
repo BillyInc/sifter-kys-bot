@@ -1,6 +1,22 @@
 import { supabase } from './lib/supabase';
 
+interface NotificationData {
+  notifications: any[];
+  unread_count: number;
+  has_new?: boolean;
+}
+
+type ListenerCallback = (data: NotificationData) => void;
+
 class WalletActivityService {
+  private apiUrl: string;
+  private pollInterval: ReturnType<typeof setInterval> | null;
+  private userId: string | null;
+  private listeners: Set<ListenerCallback>;
+  private notifications: any[];
+  private unreadCount: number;
+  private isPolling: boolean;
+
   constructor() {
     this.apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
     this.pollInterval = null;
@@ -11,7 +27,7 @@ class WalletActivityService {
     this.isPolling = false;
   }
 
-  async getHeaders() {
+  async getHeaders(): Promise<Record<string, string>> {
     const { data: { session } } = await supabase.auth.getSession();
     return {
       'Content-Type': 'application/json',
@@ -19,10 +35,10 @@ class WalletActivityService {
     };
   }
 
-  async start(userId) {
+  async start(userId: string): Promise<void> {
     if (!userId) return;
     this.userId = userId;
-    
+
     // Initial fetch
     await this.fetchNotifications();
 
@@ -33,7 +49,7 @@ class WalletActivityService {
     }
   }
 
-  stop() {
+  stop(): void {
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
@@ -41,13 +57,13 @@ class WalletActivityService {
     }
   }
 
-  async fetchNotifications() {
+  async fetchNotifications(): Promise<void> {
     if (!this.userId) return;
-    
+
     try {
       const data = await this.getAllNotifications(this.userId, false);
       const hasNew = data.unread_count > this.unreadCount;
-      
+
       this.notifications = data.notifications;
       this.unreadCount = data.unread_count;
 
@@ -62,7 +78,7 @@ class WalletActivityService {
     }
   }
 
-  async getAllNotifications(userId, unreadOnly = false) {
+  async getAllNotifications(userId: string | null, unreadOnly: boolean = false): Promise<{ notifications: any[]; unread_count: number }> {
     if (userId) this.userId = userId;
     if (!this.userId) return { notifications: [], unread_count: 0 };
 
@@ -72,21 +88,21 @@ class WalletActivityService {
         unread_only: unreadOnly ? 'true' : 'false',
         limit: '50'
       });
-      
+
       const headers = await this.getHeaders();
       const response = await fetch(`${this.apiUrl}/api/wallets/notifications?${params}`, { headers });
-      
+
       // Handle rate limiting gracefully
       if (response.status === 429) {
         console.warn('[WalletActivity] Rate limited - will retry on next poll');
         return { notifications: this.notifications, unread_count: this.unreadCount };
       }
-      
+
       const data = await response.json();
-      
-      return data.success ? { 
-        notifications: data.notifications || [], 
-        unread_count: data.unread_count || 0 
+
+      return data.success ? {
+        notifications: data.notifications || [],
+        unread_count: data.unread_count || 0
       } : { notifications: [], unread_count: 0 };
     } catch (error) {
       console.error('[WalletActivity] Error fetching notifications:', error);
@@ -94,7 +110,7 @@ class WalletActivityService {
     }
   }
 
-  async markAsRead(notificationId) {
+  async markAsRead(notificationId: string): Promise<boolean> {
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
@@ -102,7 +118,7 @@ class WalletActivityService {
         headers,
         body: JSON.stringify({ user_id: this.userId, notification_id: notificationId })
       });
-      
+
       const data = await response.json();
       if (data.success) {
         await this.fetchNotifications();
@@ -114,7 +130,7 @@ class WalletActivityService {
     }
   }
 
-  async markAllAsRead() {
+  async markAllAsRead(): Promise<boolean> {
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
@@ -122,7 +138,7 @@ class WalletActivityService {
         headers,
         body: JSON.stringify({ user_id: this.userId, mark_all: true })
       });
-      
+
       const data = await response.json();
       if (data.success) {
         await this.fetchNotifications();
@@ -134,12 +150,12 @@ class WalletActivityService {
     }
   }
 
-  subscribe(callback) {
+  subscribe(callback: ListenerCallback): () => void {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
   }
 
-  notifyListeners(data) {
+  notifyListeners(data: NotificationData): void {
     this.listeners.forEach(listener => {
       try {
         listener(data);
@@ -150,7 +166,7 @@ class WalletActivityService {
   }
 
   // Manual refresh method
-  async refresh() {
+  async refresh(): Promise<void> {
     await this.fetchNotifications();
   }
 }

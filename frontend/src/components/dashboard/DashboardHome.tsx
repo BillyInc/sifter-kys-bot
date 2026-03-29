@@ -1,14 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { Search, TrendingUp, Zap, BookmarkPlus, Trophy, Crown, Plus, X } from 'lucide-react';
+import { Search, TrendingUp, Zap, BookmarkPlus, Trophy, Crown, Plus, X, LucideIcon } from 'lucide-react';
 
-export default function DashboardHome({ 
-  user, 
+interface ActivityItem {
+  description: string;
+  time: string;
+}
+
+interface DashboardHomeProps {
+  user: any;
+  onOpenPanel: (id: string) => void;
+  recentActivity?: ActivityItem[];
+}
+
+interface QuickAction {
+  id: string;
+  icon: LucideIcon;
+  label: string;
+  color: string;
+}
+
+export default function DashboardHome({
+  user,
   onOpenPanel,
   recentActivity = []
-}) {
+}: DashboardHomeProps) {
   // Persist the dismissed state so it survives re-renders (but resets on sign-out)
   const storageKey = `welcome_dismissed_${user?.id || 'guest'}`;
-  const [showWelcome, setShowWelcome] = useState(() => {
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
     try { return localStorage.getItem(storageKey) !== 'true'; } catch { return true; }
   });
 
@@ -17,7 +35,7 @@ export default function DashboardHome({
     try { localStorage.setItem(storageKey, 'true'); } catch {}
   };
 
-  const quickActions = [
+  const quickActions: QuickAction[] = [
     { id: 'analyze',    icon: Search,      label: 'Analyze Tokens',       color: 'purple' },
     { id: 'trending',   icon: TrendingUp,  label: 'Trending Runners',      color: 'orange' },
     { id: 'discovery',  icon: Zap,         label: 'Auto Discovery',        color: 'yellow' },
@@ -27,7 +45,7 @@ export default function DashboardHome({
     { id: 'quickadd',   icon: Plus,        label: 'Quick Add Wallet',      color: 'cyan'   },
   ];
 
-  // Prefer display name → email prefix → 'User'
+  // Prefer display name -> email prefix -> 'User'
   const displayName =
     user?.user_metadata?.full_name ||
     user?.user_metadata?.name ||
@@ -46,8 +64,8 @@ export default function DashboardHome({
             title="Dismiss welcome banner"
             className="absolute top-3 right-3 p-1.5 rounded-lg transition"
             style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+            onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <X size={16} />
           </button>

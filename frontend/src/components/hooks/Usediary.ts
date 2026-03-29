@@ -1,10 +1,10 @@
 /**
- * useDiary.js — optimistic fast open
+ * useDiary.ts — optimistic fast open
  *
  * Speed strategy:
  *  1. Check sessionStorage SYNCHRONOUSLY on first render (no await, no network)
- *     → if key exists: initialized=true, locked=false immediately
- *     → diary renders instantly, notes load in background
+ *     -> if key exists: initialized=true, locked=false immediately
+ *     -> diary renders instantly, notes load in background
  *  2. Salt fetch + notes fetch fire IN PARALLEL (not sequentially)
  *  3. No spinner for returning users in the same tab session
  *
@@ -17,77 +17,126 @@ import {
   lockDiary,
   encryptNote,
   decryptNotes,
+  type DecryptedNote,
 } from './Diaryencryption';
 
 const LS_FALLBACK      = 'diary_fallback_';
-const SESSION_KEY_NAME = 'diary_enc_key_b64'; // must match Diaryencryption.js
+const SESSION_KEY_NAME = 'diary_enc_key_b64'; // must match Diaryencryption.ts
 
-function lsGet(userId) {
+interface DiaryNote {
+  id: string;
+  type: string;
+  text: string;
+  tags: string[];
+  walletAddress: string | null;
+  walletRef: string | null;
+  createdAt: number;
+  editedAt: number | null;
+  source: 'wallet' | 'global';
+}
+
+function lsGet(userId: string): DiaryNote[] {
   try { return JSON.parse(localStorage.getItem(LS_FALLBACK + userId) || '[]'); }
   catch { return []; }
 }
-function lsSet(userId, notes) {
+function lsSet(userId: string, notes: DiaryNote[]): void {
   try { localStorage.setItem(LS_FALLBACK + userId, JSON.stringify(notes)); }
   catch (_) {}
 }
 
 /** Synchronous — just peeks at sessionStorage, no crypto */
-function hasSessionKey() {
+function hasSessionKey(): boolean {
   try { return !!sessionStorage.getItem(SESSION_KEY_NAME); }
   catch { return false; }
 }
 
 /** Full async check with timeout fallback */
-async function safeIsDiaryUnlocked() {
+async function safeIsDiaryUnlocked(): Promise<boolean> {
   try {
     return !!(await Promise.race([
       isDiaryUnlocked(),
-      new Promise(resolve => setTimeout(() => resolve(false), 2000)),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2000)),
     ]));
   } catch {
     return false;
   }
 }
 
-function makeApi(apiUrlRef) {
-  const hdrs = { Accept: 'application/json', 'Content-Type': 'application/json' };
-  const base = { credentials: 'include', mode: 'cors' };
+interface DiaryApi {
+  getSalt: (uid: string) => Promise<any>;
+  getNotes: (uid: string, wallet?: string | null) => Promise<any>;
+  createNote: (uid: string, type: string, enc: string, wallet: string | null) => Promise<any>;
+  updateNote: (nid: string, uid: string, type: string, enc: string) => Promise<any>;
+  deleteNote: (nid: string, uid: string) => Promise<any>;
+}
 
-  async function go(url, init = {}) {
+function makeApi(apiUrlRef: React.MutableRefObject<string>): DiaryApi {
+  const hdrs: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
+  const base: RequestInit = { credentials: 'include', mode: 'cors' };
+
+  async function go(url: string, init: RequestInit = {}): Promise<any> {
     const res = await fetch(url, { ...base, headers: hdrs, ...init });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
     return res.json();
   }
 
   return {
-    getSalt:    (uid)                    => go(`${apiUrlRef.current}/api/diary/salt?user_id=${uid}`),
-    getNotes:   (uid, wallet = null)     => go(`${apiUrlRef.current}/api/diary/notes?user_id=${uid}${wallet ? `&wallet_address=${wallet}` : ''}`),
-    createNote: (uid, type, enc, wallet) => go(`${apiUrlRef.current}/api/diary/notes`, { method: 'POST', body: JSON.stringify({ user_id: uid, type, encrypted_payload: enc, wallet_address: wallet }) }),
-    updateNote: (nid, uid, type, enc)   => go(`${apiUrlRef.current}/api/diary/notes/${nid}`, { method: 'PUT',  body: JSON.stringify({ user_id: uid, type, encrypted_payload: enc }) }),
-    deleteNote: (nid, uid)              => go(`${apiUrlRef.current}/api/diary/notes/${nid}`, { method: 'DELETE', body: JSON.stringify({ user_id: uid }) }),
+    getSalt:    (uid: string)                                              => go(`${apiUrlRef.current}/api/diary/salt?user_id=${uid}`),
+    getNotes:   (uid: string, wallet: string | null = null)                => go(`${apiUrlRef.current}/api/diary/notes?user_id=${uid}${wallet ? `&wallet_address=${wallet}` : ''}`),
+    createNote: (uid: string, type: string, enc: string, wallet: string | null) => go(`${apiUrlRef.current}/api/diary/notes`, { method: 'POST', body: JSON.stringify({ user_id: uid, type, encrypted_payload: enc, wallet_address: wallet }) }),
+    updateNote: (nid: string, uid: string, type: string, enc: string)    => go(`${apiUrlRef.current}/api/diary/notes/${nid}`, { method: 'PUT',  body: JSON.stringify({ user_id: uid, type, encrypted_payload: enc }) }),
+    deleteNote: (nid: string, uid: string)                                => go(`${apiUrlRef.current}/api/diary/notes/${nid}`, { method: 'DELETE', body: JSON.stringify({ user_id: uid }) }),
   };
 }
 
-export function useDiary({ userId, apiUrl, walletAddress = null }) {
+interface UseDiaryParams {
+  userId: string | null;
+  apiUrl: string;
+  walletAddress?: string | null;
+}
+
+interface NewSaltData {
+  saltB64: string;
+  verificationToken: string;
+}
+
+interface UseDiaryReturn {
+  notes: DiaryNote[];
+  loading: boolean;
+  error: string | null;
+  locked: boolean;
+  isNew: boolean | null;
+  saltB64: string | null;
+  verificationToken: string | null;
+  onUnlocked: (newSaltData?: NewSaltData | null) => void;
+  lock: () => void;
+  offline: boolean;
+  addNote: (params: { type: string; text: string; tags?: string[]; walletRef?: string | null }) => Promise<DiaryNote | null>;
+  updateNote: (noteId: string, params: { type: string; text: string; tags: string[] }) => Promise<boolean>;
+  deleteNote: (noteId: string) => Promise<boolean>;
+  refresh: () => void;
+}
+
+export function useDiary({ userId, apiUrl, walletAddress = null }: UseDiaryParams): UseDiaryReturn {
   // ── Optimistic initial state ───────────────────────────────────────────────
   // Read sessionStorage synchronously — this is the key to instant open.
   // If the key is there we can skip the locked/spinner state entirely.
   const optimistic = hasSessionKey();
 
-  const [notes, setNotes]                         = useState([]);
-  const [loading, setLoading]                     = useState(true);
-  const [error, setError]                         = useState(null);
-  const [locked, setLocked]                       = useState(!optimistic);
-  const [isNew, setIsNew]                         = useState(optimistic ? false : null);
-  const [saltB64, setSaltB64]                     = useState(null);
-  const [verificationToken, setVerificationToken] = useState(null);
-  const [offline, setOffline]                     = useState(false);
-  const [initialized, setInitialized]             = useState(optimistic);
+  const [notes, setNotes]                         = useState<DiaryNote[]>([]);
+  const [loading, setLoading]                     = useState<boolean>(true);
+  const [error, setError]                         = useState<string | null>(null);
+  const [locked, setLocked]                       = useState<boolean>(!optimistic);
+  const [isNew, setIsNew]                         = useState<boolean | null>(optimistic ? false : null);
+  const [saltB64, setSaltB64]                     = useState<string | null>(null);
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const [offline, setOffline]                     = useState<boolean>(false);
+  const [initialized, setInitialized]             = useState<boolean>(optimistic);
 
-  const mounted      = useRef(true);
-  const loadNotesRef = useRef(null);
-  const apiUrlRef    = useRef(apiUrl);
-  const api          = useRef(makeApi(apiUrlRef)).current;
+  const mounted      = useRef<boolean>(true);
+  const loadNotesRef = useRef<(() => Promise<void>) | null>(null);
+  const apiUrlRef    = useRef<string>(apiUrl);
+  const api          = useRef<DiaryApi>(makeApi(apiUrlRef)).current;
   apiUrlRef.current  = apiUrl;
 
   useEffect(() => {
@@ -95,7 +144,7 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
     return () => { mounted.current = false; };
   }, []);
 
-  const safe = (fn) => { if (mounted.current) fn(); };
+  const safe = (fn: () => void): void => { if (mounted.current) fn(); };
 
   // ── Init effect ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -137,7 +186,7 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
             setLoading(false);
           });
 
-        } catch (err) {
+        } catch (err: any) {
           if (cancelled) return;
           console.warn('[useDiary] fast path error (offline?):', err.message);
           // Offline — show local notes
@@ -187,7 +236,7 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
             setInitialized(true);
           });
 
-        } catch (err) {
+        } catch (err: any) {
           if (cancelled) return;
           const alreadyUnlocked = await safeIsDiaryUnlocked();
           if (cancelled) return;
@@ -242,7 +291,7 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
   }, [initialized, locked, userId, walletAddress, offline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── onUnlocked ─────────────────────────────────────────────────────────────
-  const onUnlocked = useCallback((newSaltData = null) => {
+  const onUnlocked = useCallback((newSaltData: NewSaltData | null = null) => {
     if (newSaltData) {
       safe(() => {
         setSaltB64(newSaltData.saltB64);
@@ -263,18 +312,18 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
   }, []);
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
-  const addNote = useCallback(async ({ type, text, tags = [], walletRef = null }) => {
+  const addNote = useCallback(async ({ type, text, tags = [], walletRef = null }: { type: string; text: string; tags?: string[]; walletRef?: string | null }): Promise<DiaryNote | null> => {
     const w = walletRef || walletAddress || null;
     if (offline) {
-      const note = { id: Date.now().toString(), type, text, tags, walletAddress: w, walletRef: w, createdAt: Date.now(), editedAt: null, source: w ? 'wallet' : 'global' };
-      lsSet(userId, [note, ...lsGet(userId)]);
+      const note: DiaryNote = { id: Date.now().toString(), type, text, tags, walletAddress: w, walletRef: w, createdAt: Date.now(), editedAt: null, source: w ? 'wallet' : 'global' };
+      lsSet(userId!, [note, ...lsGet(userId!)]);
       safe(() => setNotes(prev => [note, ...prev]));
       return note;
     }
     try {
       const enc  = await encryptNote({ text, tags });
-      const data = await api.createNote(userId, type, enc, w);
-      const note = { id: data.id, type, text, tags, walletAddress: w, walletRef: w, createdAt: Date.now(), editedAt: null, source: w ? 'wallet' : 'global' };
+      const data = await api.createNote(userId!, type, enc, w);
+      const note: DiaryNote = { id: data.id, type, text, tags, walletAddress: w, walletRef: w, createdAt: Date.now(), editedAt: null, source: w ? 'wallet' : 'global' };
       safe(() => setNotes(prev => [note, ...prev]));
       return note;
     } catch (err) {
@@ -284,15 +333,15 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
     }
   }, [userId, walletAddress, offline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updateNote = useCallback(async (noteId, { type, text, tags }) => {
+  const updateNote = useCallback(async (noteId: string, { type, text, tags }: { type: string; text: string; tags: string[] }): Promise<boolean> => {
     if (offline) {
-      const updated = lsGet(userId).map(n => n.id === noteId ? { ...n, type, text, tags, editedAt: Date.now() } : n);
-      lsSet(userId, updated);
+      const updated = lsGet(userId!).map(n => n.id === noteId ? { ...n, type, text, tags, editedAt: Date.now() } : n);
+      lsSet(userId!, updated);
       safe(() => setNotes(updated.filter(n => walletAddress ? n.walletAddress === walletAddress : true)));
       return true;
     }
     try {
-      await api.updateNote(noteId, userId, type, await encryptNote({ text, tags }));
+      await api.updateNote(noteId, userId!, type, await encryptNote({ text, tags }));
       safe(() => setNotes(prev => prev.map(n => n.id === noteId ? { ...n, type, text, tags, editedAt: Date.now() } : n)));
       return true;
     } catch (err) {
@@ -302,14 +351,14 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
     }
   }, [userId, walletAddress, offline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const deleteNote = useCallback(async (noteId) => {
+  const deleteNote = useCallback(async (noteId: string): Promise<boolean> => {
     if (offline) {
-      lsSet(userId, lsGet(userId).filter(n => n.id !== noteId));
+      lsSet(userId!, lsGet(userId!).filter(n => n.id !== noteId));
       safe(() => setNotes(prev => prev.filter(n => n.id !== noteId)));
       return true;
     }
     try {
-      await api.deleteNote(noteId, userId);
+      await api.deleteNote(noteId, userId!);
       safe(() => setNotes(prev => prev.filter(n => n.id !== noteId)));
       return true;
     } catch (err) {
@@ -340,6 +389,11 @@ export function useDiary({ userId, apiUrl, walletAddress = null }) {
   };
 }
 
-export function useGlobalDiary({ userId, apiUrl }) {
+interface UseGlobalDiaryParams {
+  userId: string | null;
+  apiUrl: string;
+}
+
+export function useGlobalDiary({ userId, apiUrl }: UseGlobalDiaryParams): UseDiaryReturn {
   return useDiary({ userId, apiUrl, walletAddress: null });
 }

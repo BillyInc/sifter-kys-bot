@@ -1,5 +1,5 @@
 /**
- * DiaryUnlock.jsx
+ * DiaryUnlock.tsx
  *
  * Two-mode component shown when the diary is locked:
  *
@@ -9,8 +9,6 @@
  *    - Derives key, generates salt + verification_token
  *    - POSTs salt + verification_token to /api/diary/salt
  *    - Calls onUnlocked({ saltB64, verificationToken }) on success
- *      ↑ FIX: passes new salt data back so useDiary can update state
- *        without needing a full re-initialization round-trip
  *
  *  UNLOCK mode (isNew = false):
  *    User has a passphrase set — just needs to enter it.
@@ -32,15 +30,24 @@ import { Lock, Eye, EyeOff, KeyRound, ShieldCheck, AlertCircle, Loader2 } from '
 import { motion } from 'framer-motion';
 import { setupDiaryEncryption, unlockDiary, passphraseRequirements } from './hooks/Diaryencryption';
 
-export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificationToken, onUnlocked }) {
-  const [passphrase,    setPassphrase]    = useState('');
-  const [confirm,       setConfirm]       = useState('');
-  const [showPass,      setShowPass]      = useState(false);
-  const [showConfirm,   setShowConfirm]   = useState(false);
-  const [loading,       setLoading]       = useState(false);
-  const [error,         setError]         = useState(null);
-  const [strength,      setStrength]      = useState(0); // 0-4
-  const inputRef = useRef(null);
+interface DiaryUnlockProps {
+  userId: string;
+  apiUrl: string;
+  isNew: boolean | null;
+  saltB64: string | null;
+  verificationToken: string | null;
+  onUnlocked: (newSaltData?: { saltB64: string; verificationToken: string }) => void;
+}
+
+export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificationToken, onUnlocked }: DiaryUnlockProps) {
+  const [passphrase,    setPassphrase]    = useState<string>('');
+  const [confirm,       setConfirm]       = useState<string>('');
+  const [showPass,      setShowPass]      = useState<boolean>(false);
+  const [showConfirm,   setShowConfirm]   = useState<boolean>(false);
+  const [loading,       setLoading]       = useState<boolean>(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [strength,      setStrength]      = useState<number>(0); // 0-4
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Only focus when we know which mode we're in
@@ -101,7 +108,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
       if (!data.success) throw new Error(data.error || 'Failed to save passphrase.');
       // FIX: pass the new salt data back so useDiary can update state in place
       onUnlocked({ saltB64: newSalt, verificationToken: newToken });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[DiaryUnlock] Setup error:', err);
       setError(err.message || 'Setup failed. Please try again.');
     } finally {
@@ -116,16 +123,16 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
 
     setLoading(true);
     try {
-      const ok = await unlockDiary(userId, passphrase, saltB64, verificationToken);
+      const ok = await unlockDiary(userId, passphrase, saltB64!, verificationToken!);
       if (!ok) {
         setError('Incorrect passphrase. Please try again.');
         setPassphrase('');
         inputRef.current?.focus();
         return;
       }
-      
+
       onUnlocked(); // no args for existing users
-    } catch (err) {
+    } catch (err: any) {
       console.error('[DiaryUnlock] Unlock error:', err);
       setError(err.message || 'Unlock failed.');
     } finally {
@@ -133,7 +140,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       isNew ? handleSetup() : handleUnlock();
     }
@@ -174,7 +181,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
               ref={inputRef}
               type={showPass ? 'text' : 'password'}
               value={passphrase}
-              onChange={e => setPassphrase(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassphrase(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={isNew ? 'Choose a passphrase' : 'Enter your passphrase'}
               className={inputCls}
@@ -207,7 +214,7 @@ export default function DiaryUnlock({ userId, apiUrl, isNew, saltB64, verificati
               <input
                 type={showConfirm ? 'text' : 'password'}
                 value={confirm}
-                onChange={e => setConfirm(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirm(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Confirm passphrase"
                 className={inputCls + (confirm && confirm !== passphrase ? ' border-red-500/40' : '')}

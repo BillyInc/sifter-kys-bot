@@ -1,8 +1,13 @@
-// components/panels/RecentResultsList.jsx
-import React from 'react';
+// components/panels/RecentResultsList.tsx
+import React, { ReactElement } from 'react';
 import { Clock, Trash2, ChevronRight, BarChart3, TrendingUp, Zap, RefreshCw } from 'lucide-react';
 
-const TYPE_META = {
+interface TypeMeta {
+  icon: ReactElement;
+  color: string;
+}
+
+const TYPE_META: Record<string, TypeMeta> = {
   'single-token':    { icon: <BarChart3  size={14} className="text-purple-400" />, color: 'border-purple-500/20 bg-purple-500/5'  },
   'batch-token':     { icon: <BarChart3  size={14} className="text-blue-400"   />, color: 'border-blue-500/20 bg-blue-500/5'      },
   'trending-single': { icon: <TrendingUp size={14} className="text-orange-400" />, color: 'border-orange-500/20 bg-orange-500/5'  },
@@ -10,7 +15,7 @@ const TYPE_META = {
   'discovery':       { icon: <Zap        size={14} className="text-yellow-400" />, color: 'border-yellow-500/20 bg-yellow-500/5'  },
 };
 
-function timeAgo(ts) {
+function timeAgo(ts: number | string): string {
   const diff = Date.now() - new Date(ts).getTime();
   if (isNaN(diff) || diff < 0) return 'just now';
   const m = Math.floor(diff / 60_000);
@@ -22,7 +27,7 @@ function timeAgo(ts) {
   return `${d}d ago`;
 }
 
-function getWalletCount(data) {
+function getWalletCount(data: any): number {
   if (!data) return 0;
   return (
     data.wallets?.length             ??
@@ -30,6 +35,25 @@ function getWalletCount(data) {
     data.top_wallets?.length         ??
     0
   );
+}
+
+interface RecentEntry {
+  id: string;
+  resultType: string;
+  label: string;
+  sublabel: string;
+  timestamp: number | string;
+  data: any;
+}
+
+interface RecentResultsListProps {
+  recents: RecentEntry[];
+  loading: boolean;
+  error: string | null;
+  onOpen: (entry: RecentEntry) => void;
+  onRemove: (id: string) => void;
+  onClear: () => void;
+  onRefresh?: () => void;
 }
 
 export default function RecentResultsList({
@@ -40,7 +64,7 @@ export default function RecentResultsList({
   onRemove,
   onClear,
   onRefresh,
-}) {
+}: RecentResultsListProps) {
   // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -149,7 +173,7 @@ export default function RecentResultsList({
             />
 
             <button
-              onClick={e => { e.stopPropagation(); onRemove(entry.id); }}
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); onRemove(entry.id); }}
               className="shrink-0 p-1 text-gray-700 hover:text-red-400 transition opacity-0 group-hover:opacity-100"
               title="Remove"
             >

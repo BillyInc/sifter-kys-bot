@@ -1,4 +1,4 @@
-// hooks/useRecents.js
+// hooks/useRecents.ts
 // Manages recent analysis results via Supabase (permanent, cross-device).
 // Replaces Redis 6hr TTL — results persist indefinitely, capped at 50 per user.
 //
@@ -19,7 +19,39 @@ import { useState, useEffect, useCallback } from 'react';
 
 const MAX_RECENTS = 50;   // backend trigger also enforces this
 
-export function buildRecentEntry({ label, sublabel, data, resultType }) {
+interface RecentEntry {
+  id: string;
+  resultType: string;
+  label: string;
+  sublabel: string;
+  timestamp: number;
+  data: any;
+}
+
+interface BuildRecentEntryParams {
+  label: string;
+  sublabel: string;
+  data: any;
+  resultType: string;
+}
+
+interface UseRecentsParams {
+  apiUrl: string;
+  userId: string | null;
+  getAccessToken?: () => string | null;
+}
+
+interface UseRecentsReturn {
+  recents: RecentEntry[];
+  loading: boolean;
+  error: string | null;
+  saveResult: (params: BuildRecentEntryParams) => Promise<void>;
+  removeResult: (id: string) => Promise<void>;
+  clearAll: () => Promise<void>;
+  refreshRecents: () => Promise<void>;
+}
+
+export function buildRecentEntry({ label, sublabel, data, resultType }: BuildRecentEntryParams): RecentEntry {
   return {
     id:         `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     resultType,
@@ -30,16 +62,16 @@ export function buildRecentEntry({ label, sublabel, data, resultType }) {
   };
 }
 
-export function useRecents({ apiUrl, userId, getAccessToken }) {
+export function useRecents({ apiUrl, userId, getAccessToken }: UseRecentsParams): UseRecentsReturn {
   // Note: panelKey removed — history is global per user, not scoped per panel.
   // If you need panel-scoped views, filter on resultType in the UI instead.
 
-  const [recents, setRecents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+  const [recents, setRecents] = useState<RecentEntry[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError]     = useState<string | null>(null);
 
   // ── Auth headers ────────────────────────────────────────────────────────────
-  const authHeaders = useCallback(() => {
+  const authHeaders = useCallback((): Record<string, string> => {
     const token = getAccessToken?.();
     return token
       ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
@@ -75,7 +107,7 @@ export function useRecents({ apiUrl, userId, getAccessToken }) {
   }, [loadRecents]);
 
   // ── Save result — persists to Supabase, no TTL ──────────────────────────────
-  const saveResult = useCallback(async ({ label, sublabel, data, resultType }) => {
+  const saveResult = useCallback(async ({ label, sublabel, data, resultType }: BuildRecentEntryParams) => {
     const entry = buildRecentEntry({ label, sublabel, data, resultType });
 
     // Optimistic update — feels instant
@@ -94,7 +126,7 @@ export function useRecents({ apiUrl, userId, getAccessToken }) {
   }, [apiUrl, userId, authHeaders]);
 
   // ── Remove single entry ─────────────────────────────────────────────────────
-  const removeResult = useCallback(async (id) => {
+  const removeResult = useCallback(async (id: string) => {
     setRecents(prev => prev.filter(r => r.id !== id)); // optimistic
 
     try {

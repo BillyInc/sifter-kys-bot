@@ -1,11 +1,11 @@
 /**
- * diaryEncryption.js
+ * diaryEncryption.ts
  *
  * Client-side AES-256-GCM encryption for watchlist diary notes.
  * The backend (Supabase) only ever stores ciphertext — plaintext
  * never leaves the browser. The encryption key is derived from:
  *
- *   PBKDF2(userId + ":" + passphrase, salt, 310_000 iterations) → AES-256-GCM key
+ *   PBKDF2(userId + ":" + passphrase, salt, 310_000 iterations) -> AES-256-GCM key
  *
  * Key properties:
  *  - The passphrase is set once by the user and never sent to the server
@@ -28,15 +28,15 @@ const MIN_PASSPHRASE_LEN = 8;
 
 // ─── Internal helpers ──────────────────────────────────────────────────────────
 
-function b64ToBytes(b64) {
+function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 }
 
-function bytesToB64(bytes) {
+function bytesToB64(bytes: ArrayBuffer | Uint8Array): string {
   return btoa(String.fromCharCode(...new Uint8Array(bytes)));
 }
 
-async function importRawKey(rawBytes) {
+async function importRawKey(rawBytes: ArrayBuffer | Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw', rawBytes,
     { name: 'AES-GCM', length: 256 },
@@ -48,18 +48,18 @@ async function importRawKey(rawBytes) {
 // ─── In-memory key cache ───────────────────────────────────────────────────────
 // Holds the CryptoKey for the current JS context lifetime.
 // Survives React re-renders; cleared on tab close or explicit logout.
-let _keyCache = null;
+let _keyCache: CryptoKey | null = null;
 
 // ─── Key derivation ────────────────────────────────────────────────────────────
 
 /**
  * Derive a 256-bit key from userId + passphrase + salt using PBKDF2-SHA256.
- * @param {string}     userId
- * @param {string}     passphrase  – user-supplied, never stored
- * @param {Uint8Array} saltBytes   – 32 random bytes stored in Supabase
- * @returns {Promise<{ key: CryptoKey, rawBits: ArrayBuffer }>}
  */
-async function deriveKeyFromPassphrase(userId, passphrase, saltBytes) {
+async function deriveKeyFromPassphrase(
+  userId: string,
+  passphrase: string,
+  saltBytes: Uint8Array
+): Promise<{ key: CryptoKey; rawBits: ArrayBuffer }> {
   const enc     = new TextEncoder();
   const keyMat  = await crypto.subtle.importKey(
     'raw',
@@ -79,11 +79,11 @@ async function deriveKeyFromPassphrase(userId, passphrase, saltBytes) {
 
 // ─── Session cache helpers ─────────────────────────────────────────────────────
 
-function cacheKeyInSession(rawBits) {
+function cacheKeyInSession(rawBits: ArrayBuffer): void {
   try { sessionStorage.setItem(KEY_SESSION_STORE, bytesToB64(rawBits)); } catch (_) {}
 }
 
-async function loadKeyFromSession() {
+async function loadKeyFromSession(): Promise<CryptoKey | null> {
   if (_keyCache) return _keyCache;
   try {
     const stored = sessionStorage.getItem(KEY_SESSION_STORE);
@@ -106,7 +106,7 @@ async function loadKeyFromSession() {
 // On unlock, try to decrypt it — if it throws, the passphrase is wrong.
 const VERIFY_PLAINTEXT = 'diary_verify_v1';
 
-export async function createVerificationToken(userId, passphrase, saltB64) {
+export async function createVerificationToken(userId: string, passphrase: string, saltB64: string): Promise<string> {
   const { key, rawBits } = await deriveKeyFromPassphrase(userId, passphrase, b64ToBytes(saltB64));
   const iv  = crypto.getRandomValues(new Uint8Array(12));
   const enc = new TextEncoder();
@@ -114,7 +114,7 @@ export async function createVerificationToken(userId, passphrase, saltB64) {
   return btoa(JSON.stringify({ iv: bytesToB64(iv), ct: bytesToB64(ct) }));
 }
 
-export async function verifyPassphrase(userId, passphrase, saltB64, verificationTokenB64) {
+export async function verifyPassphrase(userId: string, passphrase: string, saltB64: string, verificationTokenB64: string): Promise<boolean> {
   try {
     const { key, rawBits } = await deriveKeyFromPassphrase(userId, passphrase, b64ToBytes(saltB64));
     const { iv, ct }       = JSON.parse(atob(verificationTokenB64));
@@ -138,7 +138,7 @@ export async function verifyPassphrase(userId, passphrase, saltB64, verification
 
 export const passphraseRequirements = {
   minLength: MIN_PASSPHRASE_LEN,
-  validate(p) {
+  validate(p: string): string | null {
     if (!p || p.length < MIN_PASSPHRASE_LEN) return `Passphrase must be at least ${MIN_PASSPHRASE_LEN} characters.`;
     return null; // valid
   },
@@ -150,7 +150,7 @@ export const passphraseRequirements = {
  *
  * @returns {{ saltB64, verificationToken }} — both must be saved to Supabase
  */
-export async function setupDiaryEncryption(userId, passphrase) {
+export async function setupDiaryEncryption(userId: string, passphrase: string): Promise<{ saltB64: string; verificationToken: string }> {
   const error = passphraseRequirements.validate(passphrase);
   if (error) throw new Error(error);
 
@@ -170,7 +170,7 @@ export async function setupDiaryEncryption(userId, passphrase) {
  * Returning user: unlock diary with their passphrase.
  * Returns true if passphrase is correct, false otherwise.
  */
-export async function unlockDiary(userId, passphrase, saltB64, verificationToken) {
+export async function unlockDiary(userId: string, passphrase: string, saltB64: string, verificationToken: string): Promise<boolean> {
   return verifyPassphrase(userId, passphrase, saltB64, verificationToken);
 }
 
@@ -178,20 +178,20 @@ export async function unlockDiary(userId, passphrase, saltB64, verificationToken
  * Check if the diary is already unlocked for this session
  * (passphrase was entered earlier in this tab session).
  */
-export async function isDiaryUnlocked() {
+export async function isDiaryUnlocked(): Promise<boolean> {
   const key = await loadKeyFromSession();
   return key !== null;
 }
 
 /** Lock the diary — clears key from memory and sessionStorage */
-export function lockDiary() {
+export function lockDiary(): void {
   _keyCache = null;
   sessionStorage.removeItem(KEY_SESSION_STORE);
 }
 
 // ─── Encrypt / decrypt ─────────────────────────────────────────────────────────
 
-async function getKey() {
+async function getKey(): Promise<CryptoKey> {
   const key = _keyCache || await loadKeyFromSession();
   if (!key) throw new Error('Diary is locked. Please enter your passphrase.');
   return key;
@@ -200,7 +200,7 @@ async function getKey() {
 /**
  * Encrypt { text, tags } into a base64 ciphertext blob.
  */
-export async function encryptNote(plainPayload) {
+export async function encryptNote(plainPayload: { text: string; tags: string[] }): Promise<string> {
   const key = await getKey();
   const iv  = crypto.getRandomValues(new Uint8Array(12));
   const enc = new TextEncoder();
@@ -216,7 +216,7 @@ export async function encryptNote(plainPayload) {
  * Decrypt a ciphertext blob back to { text, tags }.
  * Returns null on failure (wrong key, corrupted data).
  */
-export async function decryptNote(encryptedPayloadB64) {
+export async function decryptNote(encryptedPayloadB64: string): Promise<{ text: string; tags: string[] } | null> {
   try {
     const key        = await getKey();
     const { iv, ct } = JSON.parse(atob(encryptedPayloadB64));
@@ -227,19 +227,40 @@ export async function decryptNote(encryptedPayloadB64) {
       b64ToBytes(ct)
     );
     return JSON.parse(dec.decode(plain));
-  } catch (err) {
+  } catch (err: any) {
     console.warn('[diary] decryptNote failed:', err.message);
     return null;
   }
+}
+
+interface EncryptedNoteRow {
+  id: string;
+  type: string;
+  wallet_address?: string | null;
+  created_at: string;
+  edited_at?: string | null;
+  encrypted_payload: string;
+}
+
+export interface DecryptedNote {
+  id: string;
+  type: string;
+  walletAddress: string | null;
+  walletRef: string | null;
+  createdAt: number;
+  editedAt: number | null;
+  source: 'wallet' | 'global';
+  text: string;
+  tags: string[];
 }
 
 /**
  * Decrypt an array of Supabase rows in parallel.
  * Rows that fail decryption are silently omitted.
  */
-export async function decryptNotes(rows) {
+export async function decryptNotes(rows: EncryptedNoteRow[]): Promise<DecryptedNote[]> {
   const results = await Promise.all(
-    rows.map(async row => {
+    rows.map(async (row): Promise<DecryptedNote | null> => {
       const payload = await decryptNote(row.encrypted_payload);
       if (!payload) return null;
       return {
@@ -255,5 +276,5 @@ export async function decryptNotes(rows) {
       };
     })
   );
-  return results.filter(Boolean);
+  return results.filter((r): r is DecryptedNote => r !== null);
 }
