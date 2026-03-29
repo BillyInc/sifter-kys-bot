@@ -231,7 +231,7 @@ class UserSettingsRepository(ABC):
 class AnalysisHistoryRepository(ABC):
 
     @abstractmethod
-    def get_history(self, user_id: str, limit: int = 50) -> list[dict]:
+    def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
         ...
 
     @abstractmethod

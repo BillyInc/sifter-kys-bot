@@ -226,11 +226,13 @@ def award_points_manual():
 def get_points_leaderboard():
     """Get points leaderboard"""
     try:
-        limit = int(request.args.get('limit', 100))
+        limit = min(int(request.args.get('limit', 100)), 200)
+        offset = max(int(request.args.get('offset', 0)), 0)
         leaderboard_type = request.args.get('type', 'lifetime')  # 'lifetime' or 'current'
 
         manager = get_referral_manager()
-        leaderboard = manager.get_leaderboard(limit, leaderboard_type)
+        leaderboard = manager.get_leaderboard(limit + offset, leaderboard_type)
+        leaderboard = leaderboard[offset:offset + limit]
 
         # Get user's rank if authenticated
         user_id = getattr(request, 'user_id', None)
@@ -246,7 +248,9 @@ def get_points_leaderboard():
             'success': True,
             'leaderboard': leaderboard,
             'user_rank': user_rank,
-            'type': leaderboard_type
+            'type': leaderboard_type,
+            'limit': limit,
+            'offset': offset,
         }), 200
 
     except Exception as e:

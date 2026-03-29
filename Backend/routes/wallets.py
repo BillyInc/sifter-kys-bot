@@ -1,4 +1,5 @@
 """Wallet analysis routes - CORRECTLY FIXED for TOKEN OVERLAP ranking."""
+import hashlib
 import logging
 from flask import Blueprint, request, jsonify, Response
 import json
@@ -128,6 +129,34 @@ def compute_consistency(other_runners: list) -> int:
     return max(0, round(100 - (variance * 2)))
 
 
+def _job_dedup_key(user_id: str, tokens: list) -> str:
+    """Generate idempotency key for job deduplication."""
+    token_str = ','.join(sorted(t.get('address', '') for t in tokens))
+    return f"job_dedup:{hashlib.md5(f'{user_id}:{token_str}'.encode()).hexdigest()}"
+
+
+def _check_dedup(user_id: str, tokens: list):
+    """Check if a duplicate job is already running.
+
+    Returns (dedup_key, response_tuple) where response_tuple is a
+    (jsonify(...), status_code) pair when a duplicate exists, or None otherwise.
+    """
+    from services.redis_pool import get_redis_client
+    r = get_redis_client()
+    dedup_key = _job_dedup_key(user_id, tokens)
+    existing_job_id = r.get(dedup_key)
+    if existing_job_id:
+        return dedup_key, (jsonify({'success': True, 'job_id': existing_job_id, 'status': 'already_running'}), 200)
+    return dedup_key, None
+
+
+def _set_dedup(dedup_key: str, job_id: str, ttl: int = 600):
+    """Store dedup key with TTL after enqueuing a job."""
+    from services.redis_pool import get_redis_client
+    r = get_redis_client()
+    r.setex(dedup_key, ttl, job_id)
+
+
 # =============================================================================
 # ASYNC JOB QUEUEING WITH PROGRESS TRACKING
 # =============================================================================
@@ -147,6 +176,11 @@ def analyze_wallets():
         user_id = getattr(request, 'user_id', None)
         if not user_id:
             user_id = anon_user_id()
+
+        # Job deduplication
+        dedup_key, dedup_resp = _check_dedup(user_id, tokens)
+        if dedup_resp is not None:
+            return dedup_resp
 
         job_repo = get_analysis_job_repo()
         job_id   = str(uuid.uuid4())
@@ -168,6 +202,7 @@ def analyze_wallets():
             job_timeout=timeout,
             at_front=at_front,
         )
+        _set_dedup(dedup_key, job_id)
         print(f"[ANALYZE] Queued {job_type} job {job_id[:8]} to {queue.name} queue (at_front={at_front}, timeout={timeout}s)")
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
@@ -336,12 +371,13 @@ def get_analysis_history():
         user_id = getattr(request, 'user_id', None)
         if not user_id:
             user_id = anon_user_id()
-        limit   = int(request.args.get('limit', 50))
+        limit  = min(int(request.args.get('limit', 50)), 200)
+        offset = max(int(request.args.get('offset', 0)), 0)
 
         history_repo = get_analysis_history_repo()
-        recents = history_repo.get_history(user_id, limit)
+        recents = history_repo.get_history(user_id, limit, offset)
 
-        return jsonify({'success': True, 'recents': recents}), 200
+        return jsonify({'success': True, 'recents': recents, 'limit': limit, 'offset': offset}), 200
 
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -647,6 +683,12 @@ def analyze_trending_runners_batch():
         if not user_id:
             user_id = anon_user_id()
 
+        # Job deduplication — treat runners as tokens for key generation
+        runner_tokens = [{'address': r.get('address', '')} for r in runners]
+        dedup_key, dedup_resp = _check_dedup(user_id, runner_tokens)
+        if dedup_resp is not None:
+            return dedup_resp
+
         job_repo = get_analysis_job_repo()
         job_id   = str(uuid.uuid4())
 
@@ -660,6 +702,7 @@ def analyze_trending_runners_batch():
             'runners': runners, 'user_id': user_id,
             'min_runner_hits': min_runner_hits, 'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
         }, job_timeout=timeout, at_front=at_front)
+        _set_dedup(dedup_key, job_id)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -687,6 +730,11 @@ def auto_discover_wallets():
         min_runner_hits    = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
+        # Job deduplication for discovery
+        dedup_key, dedup_resp = _check_dedup(user_id, [{'address': f'discovery:{min_runner_hits}:{min_roi_multiplier}'}])
+        if dedup_resp is not None:
+            return dedup_resp
+
         job_repo = get_analysis_job_repo()
         job_id   = str(uuid.uuid4())
 
@@ -707,6 +755,7 @@ def auto_discover_wallets():
             'job_id':             job_id,
             'is_auto_discovery':  True,
         }, job_timeout=timeout, at_front=at_front)
+        _set_dedup(dedup_key, job_id)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -1197,13 +1246,23 @@ def get_watchlist_table():
         if not user_id:
             user_id = anon_user_id()
 
+        limit  = min(int(request.args.get('limit', 50)), 200)
+        offset = max(int(request.args.get('offset', 0)), 0)
+
         ww_repo    = get_wallet_watchlist_repo()
         table_data = ww_repo.get_premier_league_table(user_id)
 
+        # Apply pagination to the wallet list
+        all_wallets = table_data['wallets']
+        paginated_wallets = all_wallets[offset:offset + limit]
+
         return jsonify({
             'success':         True,
-            'table':           table_data['wallets'],
-            'wallets':         table_data['wallets'],
+            'table':           paginated_wallets,
+            'wallets':         paginated_wallets,
+            'total':           len(all_wallets),
+            'limit':           limit,
+            'offset':          offset,
             'promotion_queue': table_data['promotion_queue'],
             'stats':           table_data['stats'],
         }), 200
@@ -1248,14 +1307,19 @@ def get_notifications():
         if not user_id:
             user_id = anon_user_id()
 
+        limit  = min(int(request.args.get('limit', 50)), 200)
+        offset = max(int(request.args.get('offset', 0)), 0)
+
         notifications = get_user_notifications(
             user_id=user_id,
             unread_only=request.args.get('unread_only', '').lower() == 'true',
-            limit=int(request.args.get('limit', 50)),
+            limit=limit,
+            offset=offset,
         )
         unread_count = len([n for n in notifications if n['read_at'] is None])
         return jsonify({'success': True, 'notifications': notifications,
-                        'count': len(notifications), 'unread_count': unread_count}), 200
+                        'count': len(notifications), 'unread_count': unread_count,
+                        'limit': limit, 'offset': offset}), 200
 
     except Exception as e:
         logger.exception("Request failed")

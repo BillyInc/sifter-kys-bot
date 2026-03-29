@@ -785,12 +785,12 @@ class SupabaseUserSettingsRepo(UserSettingsRepository):
 
 class SupabaseAnalysisHistoryRepo(AnalysisHistoryRepository):
 
-    def get_history(self, user_id: str, limit: int = 50) -> list[dict]:
+    def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
         result = _table('user_analysis_history').select(
             'id, created_at, result_type, label, sublabel, data',
         ).eq('user_id', user_id).order(
             'created_at', desc=True,
-        ).limit(limit).execute()
+        ).range(offset, offset + limit - 1).execute()
 
         return [
             {

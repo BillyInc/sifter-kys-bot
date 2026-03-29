@@ -747,7 +747,7 @@ def get_recent_wallet_activity(wallet_address=None, limit=50, db_path=None) -> L
         return []
 
 
-def get_user_notifications(user_id, unread_only=False, limit=50, db_path=None) -> List[Dict]:
+def get_user_notifications(user_id, unread_only=False, limit=50, offset=0, db_path=None) -> List[Dict]:
     """Get notifications for a user (for API endpoint)"""
     try:
         supabase = get_supabase_client()
@@ -756,7 +756,7 @@ def get_user_notifications(user_id, unread_only=False, limit=50, db_path=None) -
         if unread_only:
             query = query.eq('is_read', False)
 
-        result = query.order('sent_at', desc=True).limit(limit).execute()
+        result = query.order('sent_at', desc=True).range(offset, offset + limit - 1).execute()
         return result.data
 
     except Exception as e:
