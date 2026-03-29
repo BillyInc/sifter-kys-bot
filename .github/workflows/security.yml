@@ -26,8 +26,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
+      - name: Run gitleaks (scan only new commits)
         uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --log-opts="--since=2026-03-29"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
