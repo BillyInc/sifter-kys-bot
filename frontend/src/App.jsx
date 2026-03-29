@@ -585,7 +585,7 @@ export default function SifterKYS() {
 
               {/* ── Active Analyses dropdown ── */}
               {showActiveAnalyses && activeCount > 0 && (
-                <div className="absolute right-44 top-12 w-80 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
+                <div className="absolute right-44 top-12 w-80 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden z-[100]" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
                   <div className="p-3 border-b border-white/10">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <Activity size={14} className="text-green-400" />
@@ -674,7 +674,7 @@ export default function SifterKYS() {
                   <ChevronDown size={16} className="hidden sm:block" />
                 </button>
                 {showProfileDropdown && (
-                  <div className="absolute right-0 top-12 w-64 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
+                  <div className="absolute right-0 top-12 w-64 backdrop-blur-xl rounded-xl shadow-2xl overflow-hidden z-[100]" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
                     <div className="p-4 border-b border-white/10">
                       <div className="text-xs text-gray-400">{user?.email}</div>
                     </div>
@@ -689,7 +689,7 @@ export default function SifterKYS() {
                         <HelpCircle size={16} className="text-blue-400" /> Help & Support
                       </button>
                     </div>
-                    <div className="p-2 border-t border-white/10 sticky bottom-0 bg-black/95">
+                    <div className="p-2 border-t border-white/10 sticky bottom-0" style={{ backgroundColor: 'var(--bg-card)' }}>
                       <button onClick={signOut} className="w-full p-2 hover:bg-red-500/10 rounded-lg text-left text-sm transition flex items-center gap-2 text-red-400">
                         <LogOut size={16} /> Sign Out
                       </button>

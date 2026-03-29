@@ -81,7 +81,7 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
       </div>
 
       {/* Transaction Details */}
-      <div className="bg-black/40 border border-white/10 rounded-xl p-4 mb-4">
+      <div className="rounded-xl p-4 mb-4" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border-color-strong)' }}>
         <div className="grid grid-cols-2 gap-4 mb-3">
           <div>
             <p className="text-xs text-gray-400 mb-1">Wallet</p>

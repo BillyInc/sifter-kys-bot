@@ -123,7 +123,8 @@ export default function AnalyzePanel({
           <select
             value={analysisType}
             onChange={(e) => setAnalysisType(e.target.value)}
-            className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm"
+            className="rounded-lg px-4 py-2.5 text-sm"
+            style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', borderColor: 'var(--border-color-strong)', border: '1px solid var(--border-color-strong)' }}
           >
             <option value="general">📊 General Analysis</option>
             <option value="pump_window">🎯 Pump Window</option>
@@ -139,7 +140,8 @@ export default function AnalyzePanel({
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && onRefreshSearch) onRefreshSearch(); }}
               placeholder="Search by token name, ticker, or contract address..."
-              className="w-full bg-black/50 border border-white/10 rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500 transition"
+              className="w-full rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500 transition"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
               autoComplete="off"
             />
             {isSearching && (
@@ -160,7 +162,7 @@ export default function AnalyzePanel({
 
           {/* Search Dropdown */}
           {showDropdown && searchResults.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-white/20 rounded-xl shadow-2xl max-h-96 overflow-y-auto z-50">
+            <div className="absolute top-full left-0 right-0 mt-2 rounded-xl shadow-2xl max-h-96 overflow-y-auto z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
               {searchResults.map((token, idx) => {
                 const isSelected = selectedTokens.some(
                   t => t.address?.toLowerCase() === (token.address || token.mint)?.toLowerCase() && t.chain === token.chain
@@ -195,7 +197,7 @@ export default function AnalyzePanel({
 
           {/* No results */}
           {showDropdown && !isSearching && searchResults.length === 0 && searchQuery.length >= 2 && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-gray-900 border border-white/20 rounded-xl shadow-2xl z-50 p-4 text-center text-sm text-gray-500">
+            <div className="absolute top-full left-0 right-0 mt-2 rounded-xl shadow-2xl z-50 p-4 text-center text-sm text-gray-500" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-secondary)' }}>
               <p>No tokens found for "{searchQuery}"</p>
               {onRefreshSearch && (
                 <button

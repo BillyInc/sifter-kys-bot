@@ -70,7 +70,8 @@ function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false })
       <textarea ref={textRef} value={text} onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave(); if (e.key === 'Escape') onCancel(); }}
         placeholder="Write your note, strategy, or to-do here…" rows={4}
-        className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none" />
+        className="w-full rounded-lg px-3 py-2.5 text-sm placeholder-gray-600 focus:outline-none focus:border-purple-500/50 resize-none"
+        style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }} />
       <div className="grid grid-cols-2 gap-2">
         <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5">
           <Tag size={11} className="text-gray-600 shrink-0" />
@@ -355,24 +356,26 @@ export default function WatchlistPanel({ userId, apiUrl }) {
 
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-bold text-lg">🏆 Your Watchlist</h3>
-          <p className="text-xs text-gray-400">Last updated: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : 'Never'}</p>
+          <h3 style={{ color: 'var(--text-primary)' }} className="font-bold text-lg">🏆 Your Watchlist</h3>
+          <p style={{ color: 'var(--text-secondary)' }} className="text-xs">Last updated: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : 'Never'}</p>
         </div>
-        <button onClick={loadWatchlist} disabled={isRefreshing} className="p-2 hover:bg-white/10 rounded-lg transition disabled:opacity-50">
+        <button onClick={loadWatchlist} disabled={isRefreshing} style={{ color: 'var(--text-secondary)' }} className="p-2 hover:opacity-70 rounded-lg transition disabled:opacity-50">
           <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
 
       {/* Tab switcher */}
-      <div className="flex border-b border-white/10">
+      <div style={{ borderColor: 'var(--border-color)' }} className="flex border-b">
         <button onClick={() => setActiveTab('wallets')}
-          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-sm font-semibold transition ${activeTab === 'wallets' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+          style={{ color: activeTab === 'wallets' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-sm font-semibold transition ${activeTab === 'wallets' ? 'border-purple-500' : 'border-transparent'}`}>
           🏆 Wallets
-          {wallets.length > 0 && <span className="text-xs bg-white/10 px-1.5 py-0.5 rounded-full">{wallets.length}</span>}
+          {wallets.length > 0 && <span style={{ backgroundColor: 'var(--input-bg)' }} className="text-xs px-1.5 py-0.5 rounded-full">{wallets.length}</span>}
         </button>
         <button onClick={() => setActiveTab('diary')}
-          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-sm font-semibold transition ${activeTab === 'diary' ? 'border-purple-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
-          <BookOpen size={14} /> Diary <Lock size={10} className="text-gray-600" />
+          style={{ color: activeTab === 'diary' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          className={`flex items-center gap-2 px-4 py-2.5 border-b-2 text-sm font-semibold transition ${activeTab === 'diary' ? 'border-purple-500' : 'border-transparent'}`}>
+          <BookOpen size={14} /> Diary <Lock size={10} style={{ color: 'var(--text-secondary)' }} />
         </button>
       </div>
 
@@ -380,22 +383,22 @@ export default function WatchlistPanel({ userId, apiUrl }) {
       {activeTab === 'wallets' && (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <motion.div whileHover={{ scale: 1.02 }} className="bg-gradient-to-br from-green-900/30 to-green-800/20 border border-green-500/30 rounded-xl p-4">
+            <motion.div whileHover={{ scale: 1.02 }} style={{ backgroundColor: 'var(--bg-card)' }} className="border border-green-500/30 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2"><Activity className="text-green-400" size={18} /><span className="text-2xl font-bold text-green-400">{healthyCount}</span></div>
-              <div className="text-xs text-gray-400">Healthy</div>
+              <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Healthy</div>
             </motion.div>
-            <motion.div whileHover={{ scale: 1.02 }} className="bg-gradient-to-br from-yellow-900/30 to-yellow-800/20 border border-yellow-500/30 rounded-xl p-4">
+            <motion.div whileHover={{ scale: 1.02 }} style={{ backgroundColor: 'var(--bg-card)' }} className="border border-yellow-500/30 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2"><Bell className="text-yellow-400" size={18} /><span className="text-2xl font-bold text-yellow-400">{warningCount}</span></div>
-              <div className="text-xs text-gray-400">Monitoring</div>
+              <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Monitoring</div>
             </motion.div>
-            <motion.div whileHover={{ scale: 1.02 }} className="bg-gradient-to-br from-red-900/30 to-red-800/20 border border-red-500/30 rounded-xl p-4">
+            <motion.div whileHover={{ scale: 1.02 }} style={{ backgroundColor: 'var(--bg-card)' }} className="border border-red-500/30 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2"><Zap className="text-red-400" size={18} /><span className="text-2xl font-bold text-red-400">{criticalCount}</span></div>
-              <div className="text-xs text-gray-400">Action Needed</div>
+              <div style={{ color: 'var(--text-secondary)' }} className="text-xs">Action Needed</div>
             </motion.div>
           </div>
 
-          <div style={{ background: '#070d14', border: '1px solid #1a2640', borderRadius: 8, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, padding: '9px 16px', background: '#0a1220', borderBottom: '1px solid #1a2640', fontFamily: 'monospace', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#3a5a8a' }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, padding: '9px 16px', background: 'var(--bg-secondary, var(--bg-card))', borderBottom: '1px solid var(--border-color-strong)', fontFamily: 'monospace', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)' }}>
               <div style={{ textAlign: 'center' }}>#</div>
               <div>ADDRESS</div>
               <div style={{ textAlign: 'center' }}>TIER</div>

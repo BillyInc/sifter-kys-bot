@@ -94,7 +94,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                   type="email"
                   value={settings.email}
                   onChange={(e) => setSettings({...settings, email: e.target.value})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                   placeholder="your@email.com"
                 />
               </div>
@@ -104,7 +105,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <select
                   value={settings.timezone}
                   onChange={(e) => setSettings({...settings, timezone: e.target.value})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 >
                   <option value="UTC-5">UTC-5 (EST)</option>
                   <option value="UTC-8">UTC-8 (PST)</option>
@@ -118,7 +120,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <select
                   value={settings.language}
                   onChange={(e) => setSettings({...settings, language: e.target.value})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 >
                   <option value="English">English</option>
                   <option value="Spanish">Español</option>
@@ -188,7 +191,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                   type="number"
                   value={settings.alertThreshold}
                   onChange={(e) => setSettings({...settings, alertThreshold: parseInt(e.target.value) || 0})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 />
               </div>
             </div>
@@ -214,7 +218,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <select
                   value={settings.defaultTimeframe}
                   onChange={(e) => setSettings({...settings, defaultTimeframe: e.target.value})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 >
                   <option value="7d">7 Days</option>
                   <option value="14d">14 Days</option>
@@ -227,7 +232,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <select
                   value={settings.defaultCandle}
                   onChange={(e) => setSettings({...settings, defaultCandle: e.target.value})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 >
                   <option value="1m">1 Minute</option>
                   <option value="5m">5 Minutes</option>
@@ -243,7 +249,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                   step="0.5"
                   value={settings.minRoiMultiplier}
                   onChange={(e) => setSettings({...settings, minRoiMultiplier: parseFloat(e.target.value) || 1})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 />
               </div>
             </div>
@@ -263,7 +270,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <select
                   value={settings.theme}
                   onChange={(e) => { setSettings({...settings, theme: e.target.value}); setTheme(e.target.value); }}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 >
                   <option value="dark">Dark</option>
                   <option value="light">Light</option>
@@ -287,7 +295,8 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                   type="number"
                   value={settings.dataRefreshRate}
                   onChange={(e) => setSettings({...settings, dataRefreshRate: parseInt(e.target.value) || 30})}
-                  className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
                 />
               </div>
             </div>

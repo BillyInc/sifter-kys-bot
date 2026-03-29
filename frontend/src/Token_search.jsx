@@ -141,7 +141,8 @@ export default function TokenSearch({ onTokensSelected }) {
           onChange={(e) => setSearchQuery(e.target.value)}
           onFocus={() => searchResults.length > 0 && setShowResults(true)}
           placeholder="Search tokens by name, ticker, or contract address..."
-          className="w-full bg-black/50 border border-white/10 rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500 text-white"
+          className="w-full rounded-lg pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-purple-500"
+          style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
         />
         {isSearching && (
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
@@ -151,7 +152,7 @@ export default function TokenSearch({ onTokensSelected }) {
 
         {/* Search Results Dropdown */}
         {showResults && searchResults.length > 0 && (
-          <div className="absolute top-full mt-2 w-full bg-black border border-white/10 rounded-lg shadow-xl max-h-96 overflow-y-auto z-50">
+          <div className="absolute top-full mt-2 w-full rounded-lg shadow-xl max-h-96 overflow-y-auto z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
             {searchResults.map((token, idx) => {
               const isSelected = selectedTokens.some(
                 t => t.address.toLowerCase() === token.address.toLowerCase() && 
@@ -226,7 +227,7 @@ export default function TokenSearch({ onTokensSelected }) {
 
         {/* No Results */}
         {showResults && searchQuery && !isSearching && searchResults.length === 0 && (
-          <div className="absolute top-full mt-2 w-full bg-black border border-white/10 rounded-lg shadow-xl p-4 text-center z-50">
+          <div className="absolute top-full mt-2 w-full rounded-lg shadow-xl p-4 text-center z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-secondary)' }}>
             <p className="text-gray-400 text-sm">No tokens found for "{searchQuery}"</p>
             <p className="text-xs text-gray-500 mt-1">Try a different search term</p>
           </div>

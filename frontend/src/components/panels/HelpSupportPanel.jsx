@@ -88,7 +88,8 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search help articles..."
-          className="w-full bg-black/50 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-purple-500"
+          className="w-full rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-purple-500"
+          style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
         />
       </div>
 
@@ -209,14 +210,16 @@ export default function HelpSupportPanel({ userId, apiUrl }) {
               value={ticketForm.subject}
               onChange={(e) => setTicketForm({...ticketForm, subject: e.target.value})}
               placeholder="Subject"
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              className="w-full rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
             <textarea
               value={ticketForm.message}
               onChange={(e) => setTicketForm({...ticketForm, message: e.target.value})}
               placeholder="Describe your issue..."
               rows={4}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              className="w-full rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
             <button
               onClick={handleSubmitTicket}

@@ -157,7 +157,8 @@ export default function QuickAddWalletPanel({
               value={walletAddress}
               onChange={(e) => setWalletAddress(e.target.value)}
               placeholder="Enter Solana wallet address..."
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 font-mono"
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 font-mono"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
             {error && (
               <div className="flex items-center gap-1 mt-1 text-xs text-red-400">
@@ -176,7 +177,8 @@ export default function QuickAddWalletPanel({
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="e.g., exchange, high-volume, whale"
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
             <p className="text-xs text-gray-500 mt-1">Separate multiple tags with commas</p>
           </div>
@@ -190,7 +192,8 @@ export default function QuickAddWalletPanel({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Why you're monitoring this wallet..."
               rows={3}
-              className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 resize-none"
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 resize-none"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
             />
           </div>
         </div>
@@ -250,7 +253,8 @@ export default function QuickAddWalletPanel({
               value={alertSettings.minTradeUsd}
               onChange={(e) => setAlertSettings({...alertSettings, minTradeUsd: parseInt(e.target.value) || 0})}
               disabled={!alertSettings.enabled}
-              className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              className="w-full rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500"
+              style={{ backgroundColor: 'var(--input-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-color-strong)' }}
               min="0"
               step="10"
             />

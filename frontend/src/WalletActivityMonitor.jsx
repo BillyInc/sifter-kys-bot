@@ -128,8 +128,8 @@ export default function WalletActivityMonitor() {
         </button>
 
         {isOpen && (
-          <div className="absolute right-0 top-12 w-96 max-h-[600px] bg-black border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-fade-in z-50">
-            <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-4">
+          <div className="absolute right-0 top-12 w-96 max-h-[600px] rounded-xl shadow-2xl overflow-hidden animate-fade-in z-50" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color-strong)', color: 'var(--text-primary)' }}>
+            <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 p-4" style={{ borderBottom: '1px solid var(--border-color-strong)' }}>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-lg font-bold flex items-center gap-2">
                   <Bell size={18} className="text-purple-400" /> Wallet Alerts
@@ -155,9 +155,9 @@ export default function WalletActivityMonitor() {
                   <p className="text-gray-400 text-sm">No wallet alerts yet</p>
                 </div>
               ) : (
-                <div className="divide-y divide-white/5">
+                <div style={{ borderColor: 'var(--border-color)' }}>
                   {notifications.map((notification) => (
-                    <div key={notification.id} onClick={() => handleNotificationClick(notification)} className={`p-4 hover:bg-white/5 transition cursor-pointer ${!notification.read_at ? 'bg-purple-500/5' : ''}`}>
+                    <div key={notification.id} onClick={() => handleNotificationClick(notification)} className={`p-4 hover:bg-white/5 transition cursor-pointer ${!notification.read_at ? 'bg-purple-500/5' : ''}`} style={{ borderBottom: '1px solid var(--border-color)' }}>
                       <div className="flex items-start gap-3">
                         <div className={`p-2 rounded-lg ${notification.side === 'buy' ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
                           <TrendingUp className={notification.side === 'buy' ? 'text-green-400' : 'text-red-400 rotate-180'} size={16} />
