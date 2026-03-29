@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import useAppStore from '../../stores/useAppStore';
 import { toast } from 'sonner';
 import { User, Bell, BarChart3, Palette, Save } from 'lucide-react';
 
@@ -26,6 +27,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
     dataRefreshRate: 30
   });
   const [isSaving, setIsSaving] = useState(false);
+  const setTheme = useAppStore(state => state.setTheme);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -260,7 +262,7 @@ export default function SettingsSubPanel({ userId, apiUrl, onBack }) {
                 <label className="block text-xs text-gray-400 mb-1">Theme</label>
                 <select
                   value={settings.theme}
-                  onChange={(e) => setSettings({...settings, theme: e.target.value})}
+                  onChange={(e) => { setSettings({...settings, theme: e.target.value}); setTheme(e.target.value); }}
                   className="w-full bg-black/50 border border-white/10 rounded px-3 py-2 text-sm"
                 >
                   <option value="dark">Dark</option>

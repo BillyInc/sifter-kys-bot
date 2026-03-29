@@ -23,6 +23,13 @@ const useAppStore = create((set, get) => ({
     analysisResults: [...state.analysisResults, result],
   })),
 
+  // Theme
+  theme: localStorage.getItem('theme') || 'dark',
+  setTheme: (theme) => {
+    localStorage.setItem('theme', theme);
+    set({ theme });
+  },
+
   // Formatting helpers (mirrors App.jsx implementations exactly)
   formatNumber: (num) => {
     if (!num) return '0';

@@ -2,6 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme CSS variables */
+:root.dark {
+  --bg-primary: #000000;
+  --bg-secondary: #12121a;
+  --bg-card: #1a1a2e;
+  --bg-nav: rgba(0, 0, 0, 0.8);
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --border-color: rgba(255, 255, 255, 0.05);
+  --border-color-strong: rgba(255, 255, 255, 0.1);
+  --input-bg: rgba(0, 0, 0, 0.5);
+}
+
+:root.light {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-nav: rgba(255, 255, 255, 0.9);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: #e2e8f0;
+  --border-color-strong: #cbd5e1;
+  --input-bg: #f1f5f9;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
 /* Solana Wallet Adapter overrides */
 .wallet-adapter-button {
   font-family: inherit !important;

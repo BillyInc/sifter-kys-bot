@@ -24,6 +24,7 @@ import WalletActivityMonitor  from './WalletActivityMonitor';
 import WalletAlertSettings    from './WalletAlertSettings';
 const WalletReplacementModal = lazy(() => import('./WalletReplacementModal'));
 import Auth from './components/Auth';
+import useAppStore from './stores/useAppStore';
 import { Toaster, toast } from 'sonner';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -41,6 +42,19 @@ export default function SifterKYS() {
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const userId  = user?.id;
+
+  // Theme
+  const theme = useAppStore(state => state.theme);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+    }
+  }, [theme]);
 
   const [openPanel, setOpenPanel]             = useState(null);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
@@ -521,7 +535,7 @@ export default function SifterKYS() {
   // ── Auth guard ────────────────────────────────────────────────────────────
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--bg-primary)" }}>
         <div className="w-12 h-12 border-4 border-white/20 border-t-purple-500 rounded-full animate-spin" />
       </div>
     );
@@ -533,11 +547,11 @@ export default function SifterKYS() {
   const config = getPanelConfig(openPanel);
 
   return (
-    <div className="min-h-screen bg-black text-gray-100">
-      <Toaster position="top-right" theme="dark" richColors />
+    <div className="min-h-screen" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
+      <Toaster position="top-right" theme={theme} richColors />
 
       {/* ── Navbar ── */}
-      <nav className="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-xl border-b border-white/5">
+      <nav className="fixed top-0 w-full z-50 backdrop-blur-xl" style={{ backgroundColor: "var(--bg-nav)", borderBottom: "1px solid var(--border-color)" }}>
         <div className="max-w-7xl mx-auto px-6 py-3">
           <div className="flex justify-between items-center">
             <div className="text-xl font-bold">
@@ -849,7 +863,7 @@ export default function SifterKYS() {
       )}
       </Suspense>
 
-      <footer className="fixed bottom-0 w-full bg-black/80 border-t border-white/10 py-2 z-30">
+      <footer className="fixed bottom-0 w-full py-2 z-30" style={{ backgroundColor: "var(--bg-nav)", borderTop: "1px solid var(--border-color-strong)" }}>
         <div className="max-w-7xl mx-auto px-6 text-center text-xs text-gray-500">
           © 2026 Sifter KYS • @SifterKYS • Terms • Privacy
         </div>
