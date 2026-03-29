@@ -1,5 +1,9 @@
 # Sifter KYS
 
+![Backend CI/CD](https://github.com/BillyInc/sifter-kys-bot/actions/workflows/deploy-backend.yml/badge.svg)
+![Frontend CI/CD](https://github.com/BillyInc/sifter-kys-bot/actions/workflows/deploy-frontend.yml/badge.svg)
+![Security](https://github.com/BillyInc/sifter-kys-bot/actions/workflows/security.yml/badge.svg)
+
 A full-stack Solana token analytics platform featuring Twitter caller analysis, professional wallet pump detection, real-time wallet activity monitoring, Elite 100 leaderboards, and Telegram alerts.
 
 ## Quick Start
