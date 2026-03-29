@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from services.clickhouse_client import CH_DATABASE
 from services.clickhouse_client import (
     _dicts_to_rows,
     insert_token_scans,
@@ -57,7 +58,7 @@ class TestInsertTokenScans:
         mock_ch.insert.assert_called_once_with(
             table='token_scans',
             data=[["SOL", 1000]],
-            database='kys',
+            database=CH_DATABASE,
             column_names=["token", "ts"],
         )
 
@@ -79,7 +80,7 @@ class TestInsertWalletTokenStats:
         mock_ch.insert.assert_called_once_with(
             table='wallet_token_stats',
             data=[["abc", "SOL", 1.5]],
-            database='kys',
+            database=CH_DATABASE,
             column_names=["wallet", "token", "roi"],
         )
 
