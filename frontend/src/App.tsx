@@ -172,16 +172,16 @@ export default function SifterKYS() {
   }, [addToRecents]);
 
   const getPanelConfig = (panelId: string | null) => ({
-    analyze:    { direction: 'left',  width: 'w-96',             title: '🔍 Analyze Tokens'    },
-    trending:   { direction: 'right', width: 'w-[800px]',        title: '🔥 Trending Runners'  },
-    discovery:  { direction: 'right', width: 'w-96',             title: '⚡ Auto Discovery'     },
-    watchlist:  { direction: 'right', width: 'w-full max-w-4xl', title: '👁️ Watchlist'          },
-    top100:     { direction: 'right', width: 'w-full max-w-4xl', title: '🏆 Top 100 Community'  },
-    premium100: { direction: 'right', width: 'w-full max-w-4xl', title: '👑 Premium Elite 100'  },
-    quickadd:   { direction: 'right', width: 'w-96',             title: '➕ Quick Add Wallet'   },
-    profile:    { direction: 'right', width: 'w-96',             title: 'Profile'               },
-    help:       { direction: 'right', width: 'w-96',             title: '❓ Help & Support'     },
-    recents:    { direction: 'right', width: 'w-[480px]',        title: '🕐 Recent Analyses'    },
+    analyze:    { direction: 'left',  width: 'w-full sm:w-96',              title: '🔍 Analyze Tokens'    },
+    trending:   { direction: 'right', width: 'w-full sm:w-[800px]',        title: '🔥 Trending Runners'  },
+    discovery:  { direction: 'right', width: 'w-full sm:w-96',             title: '⚡ Auto Discovery'     },
+    watchlist:  { direction: 'right', width: 'w-full max-w-4xl',           title: '👁️ Watchlist'          },
+    top100:     { direction: 'right', width: 'w-full max-w-4xl',           title: '🏆 Top 100 Community'  },
+    premium100: { direction: 'right', width: 'w-full max-w-4xl',           title: '👑 Premium Elite 100'  },
+    quickadd:   { direction: 'right', width: 'w-full sm:w-96',             title: '➕ Quick Add Wallet'   },
+    profile:    { direction: 'right', width: 'w-full sm:w-96',             title: 'Profile'               },
+    help:       { direction: 'right', width: 'w-full sm:w-96',             title: '❓ Help & Support'     },
+    recents:    { direction: 'right', width: 'w-full sm:w-[480px]',        title: '🕐 Recent Analyses'    },
   }[panelId] || { direction: 'left', width: 'w-96', title: '' });
 
   // ── Active analysis tracking ──────────────────────────────────────────────

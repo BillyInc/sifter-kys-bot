@@ -85,14 +85,14 @@ export default function DashboardHome({
             <button
               key={action.id}
               onClick={() => onOpenPanel(action.id)}
-              className="group relative hover:border-purple-500/50 border rounded-xl p-4 sm:p-6 transition-all duration-300"
+              className="group relative hover:border-purple-500/50 border rounded-xl p-3 sm:p-6 transition-all duration-300"
               style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
             >
-              <div className="flex flex-col items-center gap-3">
-                <div className={`p-4 bg-${action.color}-500/20 rounded-xl group-hover:scale-110 transition-transform`}>
-                  <action.icon size={32} className={`text-${action.color}-400`} />
+              <div className="flex sm:flex-col items-center gap-2 sm:gap-3">
+                <div className={`p-2 sm:p-4 bg-${action.color}-500/20 rounded-xl group-hover:scale-110 transition-transform flex-shrink-0`}>
+                  <action.icon className={`w-5 h-5 sm:w-8 sm:h-8 text-${action.color}-400`} />
                 </div>
-                <span className="font-semibold text-center">{action.label}</span>
+                <span className="font-semibold text-sm sm:text-base sm:text-center truncate max-w-full">{action.label}</span>
               </div>
             </button>
           ))}
