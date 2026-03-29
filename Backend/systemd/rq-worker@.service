@@ -10,11 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/sifter-backend
 Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
 EnvironmentFile=/home/ubuntu/sifter-backend/.env
-ExecStart=/home/ubuntu/sifter-backend/.venv/bin/python -m rq.cli worker \
-    --name worker-%i \
-    -w rq.SimpleWorker \
-    --url ${REDIS_URL} \
-    default compute high
+ExecStart=/bin/bash -c '/home/ubuntu/sifter-backend/.venv/bin/python -m rq.cli worker --name worker-%i -w rq.SimpleWorker --url "$REDIS_URL" default compute high batch'
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
