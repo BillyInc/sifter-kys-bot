@@ -31,3 +31,23 @@ def mock_clickhouse():
 def mock_redis():
     """Mock Redis client."""
     return MagicMock()
+
+
+@pytest.fixture
+def app():
+    """Create Flask test app."""
+    from app import create_app
+    with patch('app.init_scheduler', return_value=MagicMock()), \
+         patch('app.Redis.from_url', return_value=MagicMock()), \
+         patch('app.Queue', return_value=MagicMock()), \
+         patch('app.preload_trending_cache'), \
+         patch('app.start_wallet_monitoring'):
+        app = create_app()
+        app.config['TESTING'] = True
+        yield app
+
+
+@pytest.fixture
+def client(app):
+    """Flask test client."""
+    return app.test_client()
