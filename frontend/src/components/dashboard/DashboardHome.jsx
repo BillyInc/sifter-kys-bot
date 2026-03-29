@@ -35,7 +35,7 @@ export default function DashboardHome({
     'User';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" style={{ color: 'var(--text-primary)' }}>
 
       {/* ── Dismissible Welcome Header ── */}
       {showWelcome && (
@@ -59,12 +59,12 @@ export default function DashboardHome({
       {/* ── Quick Actions Grid ── */}
       <div>
         <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {quickActions.map((action) => (
             <button
               key={action.id}
               onClick={() => onOpenPanel(action.id)}
-              className="group relative bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-500/50 rounded-xl p-6 transition-all duration-300"
+              className="group relative bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-500/50 rounded-xl p-4 sm:p-6 transition-all duration-300"
             >
               <div className="flex flex-col items-center gap-3">
                 <div className={`p-4 bg-${action.color}-500/20 rounded-xl group-hover:scale-110 transition-transform`}>

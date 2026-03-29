@@ -552,13 +552,13 @@ export default function SifterKYS() {
 
       {/* ── Navbar ── */}
       <nav className="fixed top-0 w-full z-50 backdrop-blur-xl" style={{ backgroundColor: "var(--bg-nav)", borderBottom: "1px solid var(--border-color)" }}>
-        <div className="max-w-7xl mx-auto px-6 py-3">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3">
           <div className="flex justify-between items-center">
             <div className="text-xl font-bold">
               SIFTER <span className="text-purple-500">KYS</span>
             </div>
 
-            <div className="flex gap-3 items-center">
+            <div className="flex gap-1.5 sm:gap-3 items-center">
               <WalletActivityMonitor />
 
               {/* ── Active Analyses pill ── */}
@@ -670,8 +670,8 @@ export default function SifterKYS() {
                   <div className="w-8 h-8 bg-purple-500/20 rounded-full flex items-center justify-center">
                     <User size={16} className="text-purple-400" />
                   </div>
-                  <span className="text-sm font-medium">{user?.email?.split('@')[0]}</span>
-                  <ChevronDown size={16} />
+                  <span className="hidden sm:inline text-sm font-medium">{user?.email?.split('@')[0]}</span>
+                  <ChevronDown size={16} className="hidden sm:block" />
                 </button>
                 {showProfileDropdown && (
                   <div className="absolute right-0 top-12 w-64 bg-black/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[100]">
@@ -699,7 +699,7 @@ export default function SifterKYS() {
               </div>
 
               <a href="https://whop.com/sifter" target="_blank" rel="noopener noreferrer"
-                className="px-3 py-2 bg-purple-600 rounded-lg hover:bg-purple-700 transition text-sm">
+                className="hidden sm:block px-3 py-2 bg-purple-600 rounded-lg hover:bg-purple-700 transition text-sm">
                 Upgrade
               </a>
             </div>
@@ -708,7 +708,7 @@ export default function SifterKYS() {
       </nav>
 
       {/* ── Dashboard ── */}
-      <div className="pt-20 max-w-7xl mx-auto px-6 py-6">
+      <div className="pt-20 max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
         <DashboardHome user={user} onOpenPanel={handleOpenPanel} recentActivity={[]} />
       </div>
 
