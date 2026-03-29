@@ -1,11 +1,11 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { authLogger } from './logger'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseUrl: string = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey: string = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 // Validate Supabase configuration
-const isValidUrl = (url) => {
+const isValidUrl = (url: string | undefined): boolean => {
   if (!url) return false
   try {
     const parsed = new URL(url)
@@ -16,12 +16,12 @@ const isValidUrl = (url) => {
 }
 
 // Supports both new publishable keys (sb_publishable_...) and legacy JWT keys (eyJ...)
-const isValidKey = (key) => {
+const isValidKey = (key: string | undefined): boolean => {
   if (!key) return false
   return key.startsWith('sb_publishable_') || key.startsWith('eyJ')
 }
 
-export const isSupabaseConfigured = isValidUrl(supabaseUrl) && isValidKey(supabaseAnonKey)
+export const isSupabaseConfigured: boolean = isValidUrl(supabaseUrl) && isValidKey(supabaseAnonKey)
 
 if (!supabaseUrl || !supabaseAnonKey) {
   authLogger.error('Supabase credentials not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env')
@@ -37,7 +37,7 @@ if (!isSupabaseConfigured) {
   authLogger.error('Supabase client will not work. Check your .env file and restart the dev server.')
 }
 
-export const supabase = createClient(
+export const supabase: SupabaseClient = createClient(
   supabaseUrl,
   supabaseAnonKey,
   {

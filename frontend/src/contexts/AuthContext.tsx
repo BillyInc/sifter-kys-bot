@@ -1,10 +1,31 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { authLogger } from '../lib/logger';
 
-const AuthContext = createContext({})
+interface AuthContextValue {
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
+  authEvent: string | null;
+  signUp: (email: string, password: string, referralCode?: string | null) => Promise<{ data: any; error: AuthError | null }>;
+  signIn: (email: string, password: string) => Promise<{ data: any; error: AuthError | null }>;
+  signOut: () => Promise<{ error: AuthError | null }>;
+  resetPassword: (email: string, redirectTo?: string) => Promise<{ data: any; error: AuthError | null }>;
+  updatePassword: (newPassword: string) => Promise<{ data: any; error: AuthError | null }>;
+  refreshSession: () => Promise<{ data: any; error: AuthError | null }>;
+  getAccessToken: () => string | null;
+  isAuthenticated: boolean;
+  isPasswordRecovery: boolean;
+}
 
-export const useAuth = () => {
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+const AuthContext = createContext<AuthContextValue>({} as AuthContextValue)
+
+export const useAuth = (): AuthContextValue => {
   const context = useContext(AuthContext)
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider')
@@ -12,13 +33,13 @@ export const useAuth = () => {
   return context
 }
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null)
-  const [session, setSession] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [authEvent, setAuthEvent] = useState(null)
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<User | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState<boolean>(true)
+  const [authEvent, setAuthEvent] = useState<string | null>(null)
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+  const API_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
   useEffect(() => {
     // Get initial session
@@ -44,9 +65,9 @@ export function AuthProvider({ children }) {
   }, [])
 
   // ========== UPDATED SIGNUP WITH REFERRAL CODE ==========
-  const signUp = useCallback(async (email, password, referralCode = null) => {
+  const signUp = useCallback(async (email: string, password: string, referralCode: string | null = null) => {
     authLogger.debug('Attempting sign up', { email, hasReferralCode: !!referralCode })
-    
+
     // First, create the Supabase auth user
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -57,19 +78,19 @@ export function AuthProvider({ children }) {
         }
       }
     })
-    
+
     if (error) {
       authLogger.warn('Sign up failed', { email, error: error.message })
       return { data, error }
     }
-    
+
     authLogger.info('Sign up successful', { email, userId: data.user?.id })
-    
+
     // If signup was successful and we have a referral code, send it to backend
     if (data.user && referralCode) {
       try {
         authLogger.debug('Sending referral code to backend', { userId: data.user.id, referralCode })
-        
+
         const response = await fetch(`${API_URL}/api/auth/signup`, {
           method: 'POST',
           headers: {
@@ -81,30 +102,30 @@ export function AuthProvider({ children }) {
             referral_code: referralCode
           })
         })
-        
+
         const result = await response.json()
-        
+
         if (result.success) {
           authLogger.info('Referral relationship created', { userId: data.user.id })
         } else {
-          authLogger.warn('Failed to create referral relationship', { 
-            userId: data.user.id, 
-            error: result.error 
+          authLogger.warn('Failed to create referral relationship', {
+            userId: data.user.id,
+            error: result.error
           })
         }
-      } catch (backendError) {
+      } catch (backendError: any) {
         // Don't fail signup if backend call fails
-        authLogger.error('Backend referral call failed', { 
-          userId: data.user.id, 
-          error: backendError.message 
+        authLogger.error('Backend referral call failed', {
+          userId: data.user.id,
+          error: backendError.message
         })
       }
     }
-    
+
     return { data, error }
   }, [API_URL])
 
-  const signIn = useCallback(async (email, password) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     authLogger.debug('Attempting sign in', { email })
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -129,7 +150,7 @@ export function AuthProvider({ children }) {
     return { error }
   }, [])
 
-  const resetPassword = useCallback(async (email, redirectTo) => {
+  const resetPassword = useCallback(async (email: string, redirectTo?: string) => {
     authLogger.debug('Requesting password reset', { email })
     const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: redirectTo || `${window.location.origin}/reset-password`,
@@ -142,7 +163,7 @@ export function AuthProvider({ children }) {
     return { data, error }
   }, [])
 
-  const updatePassword = useCallback(async (newPassword) => {
+  const updatePassword = useCallback(async (newPassword: string) => {
     authLogger.debug('Updating password')
     const { data, error } = await supabase.auth.updateUser({
       password: newPassword,
@@ -166,11 +187,11 @@ export function AuthProvider({ children }) {
     return { data, error }
   }, [])
 
-  const getAccessToken = useCallback(() => {
+  const getAccessToken = useCallback((): string | null => {
     return session?.access_token ?? null
   }, [session])
 
-  const value = {
+  const value: AuthContextValue = {
     user,
     session,
     loading,

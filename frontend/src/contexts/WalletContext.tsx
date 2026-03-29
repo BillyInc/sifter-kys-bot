@@ -1,14 +1,18 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, ReactNode } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
+import { WalletAdapterNetwork, Adapter, WalletError } from '@solana/wallet-adapter-base';
 import { WalletConnectWalletAdapter } from '@solana/wallet-adapter-walletconnect';
 import { clusterApiUrl } from '@solana/web3.js';
 
 // Import default wallet adapter styles
 import '@solana/wallet-adapter-react-ui/styles.css';
 
-export function WalletContextProvider({ children }) {
+interface WalletContextProviderProps {
+  children: ReactNode;
+}
+
+export function WalletContextProvider({ children }: WalletContextProviderProps) {
   // Use mainnet for production
   const network = WalletAdapterNetwork.Mainnet;
   const endpoint = useMemo(() => clusterApiUrl(network), [network]);
@@ -38,7 +42,7 @@ export function WalletContextProvider({ children }) {
   );
 
   // Error handler
-  const onError = useCallback((error, adapter) => {
+  const onError = useCallback((error: WalletError, adapter?: Adapter) => {
     console.error('Wallet error:', error.name, error.message);
     if (adapter) {
       console.error('Adapter:', adapter.name);
