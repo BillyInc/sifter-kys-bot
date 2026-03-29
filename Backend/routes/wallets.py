@@ -679,7 +679,6 @@ def analyze_trending_runner():
             user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        q_high, _, _ = get_queues()
         supabase     = get_supabase_client()
         job_id       = str(uuid.uuid4())
 
@@ -689,10 +688,11 @@ def analyze_trending_runner():
             'tokens_completed': 0, 'token_address': runner['address'],
         }).execute()
 
-        q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
+        queue, at_front, timeout = _get_job_queue(user_id, 'single')
+        queue.enqueue('services.worker_tasks.perform_wallet_analysis', {
             'tokens': [{'address': runner['address'], 'ticker': runner.get('symbol', 'UNKNOWN'), 'chain': runner.get('chain', 'solana')}],
             'user_id': user_id, 'global_settings': {'min_roi_multiplier': min_roi_multiplier}, 'job_id': job_id,
-        })
+        }, job_timeout=timeout, at_front=at_front)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -721,7 +721,6 @@ def analyze_trending_runners_batch():
             user_id = anon_user_id()
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        _, q_batch, _ = get_queues()
         supabase      = get_supabase_client()
         job_id        = str(uuid.uuid4())
 
@@ -730,10 +729,11 @@ def analyze_trending_runners_batch():
             'progress': 0, 'phase': 'queued', 'tokens_total': len(runners), 'tokens_completed': 0,
         }).execute()
 
-        q_batch.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
+        queue, at_front, timeout = _get_job_queue(user_id, 'batch')
+        queue.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
             'runners': runners, 'user_id': user_id,
             'min_runner_hits': min_runner_hits, 'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
-        })
+        }, job_timeout=timeout, at_front=at_front)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -762,7 +762,6 @@ def auto_discover_wallets():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        _, _, q_compute = get_queues()
         supabase        = get_supabase_client()
         job_id          = str(uuid.uuid4())
 
@@ -775,13 +774,14 @@ def auto_discover_wallets():
         # user_analysis_history entry as result_type='discovery'.  This is what
         # allows _get_history_cache_discovery() in worker_tasks.py to distinguish
         # a cached discovery run from a cached manual batch analysis.
-        q_compute.enqueue('services.worker_tasks.perform_auto_discovery', {
+        queue, at_front, timeout = _get_job_queue(user_id, 'discovery')
+        queue.enqueue('services.worker_tasks.perform_auto_discovery', {
             'user_id':            user_id,
             'min_runner_hits':    min_runner_hits,
             'min_roi_multiplier': min_roi_multiplier,
             'job_id':             job_id,
             'is_auto_discovery':  True,
-        })
+        }, job_timeout=timeout, at_front=at_front)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
