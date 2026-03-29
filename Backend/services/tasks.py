@@ -82,7 +82,7 @@ def daily_stats_refresh():
                 tokens_qualified,
                 avg_roi_mult,
                 avg_entry_to_ath_mult
-            FROM kys.wallet_aggregate_stats FINAL
+            FROM wallet_aggregate_stats FINAL
             WHERE wallet_address IN {addrs:Array(String)}""",
             parameters={'addrs': addresses}
         )
@@ -191,7 +191,7 @@ def weekly_rerank_all():
                 wins,
                 draws,
                 losses
-            FROM kys.wallet_aggregate_stats FINAL
+            FROM wallet_aggregate_stats FINAL
             ORDER BY professional_score DESC"""
         )
         all_wallets = result.named_results()
@@ -404,7 +404,7 @@ def four_week_degradation_check():
                 groupArray(consistency_score)  AS cs_arr
             FROM (
                 SELECT *
-                FROM kys.wallet_weekly_snapshots FINAL
+                FROM wallet_weekly_snapshots FINAL
                 WHERE week_start >= {cutoff:Date}
                 ORDER BY wallet_address, week_start ASC
             )

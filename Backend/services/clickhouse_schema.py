@@ -5,7 +5,7 @@ Use SELECT ... FINAL to read deduplicated data.
 """
 
 CREATE_TOKEN_SCANS_SQL = """
-CREATE TABLE IF NOT EXISTS kys.token_scans
+CREATE TABLE IF NOT EXISTS token_scans
 (
     token_address       String,
     scan_id             String,
@@ -33,7 +33,7 @@ PARTITION BY toYYYYMM(scan_timestamp)
 """
 
 CREATE_WALLET_TOKEN_STATS_SQL = """
-CREATE TABLE IF NOT EXISTS kys.wallet_token_stats
+CREATE TABLE IF NOT EXISTS wallet_token_stats
 (
     wallet_address          String,
     token_address           String,
@@ -66,7 +66,7 @@ PARTITION BY toYYYYMM(first_entry_timestamp)
 """
 
 CREATE_WALLET_AGGREGATE_STATS_SQL = """
-CREATE TABLE IF NOT EXISTS kys.wallet_aggregate_stats
+CREATE TABLE IF NOT EXISTS wallet_aggregate_stats
 (
     wallet_address              String,
     tokens_appeared_in          UInt32,
@@ -95,7 +95,7 @@ ORDER BY (wallet_address)
 """
 
 CREATE_WALLET_WEEKLY_SNAPSHOTS_SQL = """
-CREATE TABLE IF NOT EXISTS kys.wallet_weekly_snapshots
+CREATE TABLE IF NOT EXISTS wallet_weekly_snapshots
 (
     wallet_address      String,
     week_start          Date,
@@ -116,7 +116,7 @@ PARTITION BY toYYYYMM(week_start)
 """
 
 CREATE_LEADERBOARD_RESULTS_SQL = """
-CREATE TABLE IF NOT EXISTS kys.leaderboard_results
+CREATE TABLE IF NOT EXISTS leaderboard_results
 (
     result_key          String,
     leaderboard_type    String,
@@ -143,8 +143,8 @@ PARTITION BY toYYYYMM(computed_at)
 # ── Materialized View: auto-aggregate wallet stats on INSERT ──
 
 CREATE_MV_WALLET_AGGREGATE_SQL = """
-CREATE MATERIALIZED VIEW IF NOT EXISTS kys.mv_wallet_aggregate
-TO kys.wallet_aggregate_stats
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_wallet_aggregate
+TO wallet_aggregate_stats
 AS
 SELECT
     wallet_address,
@@ -188,6 +188,6 @@ SELECT
     argMaxIf(token_address, first_entry_timestamp, qualifies=1) AS last_active_token,
     maxIf(first_entry_timestamp, qualifies=1)               AS last_active_at,
     now()                                                   AS updated_at
-FROM kys.wallet_token_stats
+FROM wallet_token_stats
 GROUP BY wallet_address
 """

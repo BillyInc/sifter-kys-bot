@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from services.clickhouse_client import get_clickhouse_client
+import clickhouse_connect
+from services.clickhouse_client import CH_DATABASE
 from services.clickhouse_schema import (
     CREATE_TOKEN_SCANS_SQL,
     CREATE_WALLET_TOKEN_STATS_SQL,
@@ -24,10 +25,33 @@ from services.clickhouse_schema import (
 
 
 def init():
-    ch = get_clickhouse_client()
+    # Connect without database first to create it
+    ch = clickhouse_connect.get_client(
+        host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
+        port=int(os.environ.get('CLICKHOUSE_PORT', 8443)),
+        username=os.environ.get('CLICKHOUSE_USER', 'default'),
+        password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
+        secure=os.environ.get('CLICKHOUSE_SECURE', 'true').lower() == 'true',
+        verify=True,
+        connect_timeout=10,
+        send_receive_timeout=60,
+    )
 
-    print("Creating database kys...")
-    ch.command("CREATE DATABASE IF NOT EXISTS kys")
+    print(f"Creating database `{CH_DATABASE}`...")
+    ch.command(f"CREATE DATABASE IF NOT EXISTS `{CH_DATABASE}`")
+
+    # Reconnect with the database selected
+    ch = clickhouse_connect.get_client(
+        host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
+        port=int(os.environ.get('CLICKHOUSE_PORT', 8443)),
+        username=os.environ.get('CLICKHOUSE_USER', 'default'),
+        password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
+        database=CH_DATABASE,
+        secure=os.environ.get('CLICKHOUSE_SECURE', 'true').lower() == 'true',
+        verify=True,
+        connect_timeout=10,
+        send_receive_timeout=60,
+    )
 
     tables = [
         ("token_scans", CREATE_TOKEN_SCANS_SQL),
@@ -44,7 +68,7 @@ def init():
     print("  Creating materialized view mv_wallet_aggregate...")
     ch.command(CREATE_MV_WALLET_AGGREGATE_SQL)
 
-    print("\nClickHouse initialized successfully.")
+    print(f"\nClickHouse initialized successfully (database: {CH_DATABASE}).")
     print("Tables: token_scans, wallet_token_stats, wallet_aggregate_stats,")
     print("        wallet_weekly_snapshots, leaderboard_results")
     print("Views:  mv_wallet_aggregate")

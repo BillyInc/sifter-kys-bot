@@ -7,6 +7,7 @@ import os
 import clickhouse_connect
 
 _client = None
+CH_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'kys')
 
 
 def get_clickhouse_client():
@@ -18,7 +19,7 @@ def get_clickhouse_client():
             port=int(os.environ.get('CLICKHOUSE_PORT', 8443)),
             username=os.environ.get('CLICKHOUSE_USER', 'default'),
             password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
-            database='kys',
+            database=CH_DATABASE,
             secure=os.environ.get('CLICKHOUSE_SECURE', 'true').lower() == 'true',
             verify=True,
             compress=True,
@@ -41,7 +42,7 @@ def insert_token_scans(rows: list[dict]):
         return
     ch = get_clickhouse_client()
     data, columns = _dicts_to_rows(rows)
-    ch.insert(table='token_scans', data=data, database='kys', column_names=columns)
+    ch.insert(table='token_scans', data=data, database=CH_DATABASE, column_names=columns)
 
 
 def insert_wallet_token_stats(rows: list[dict]):
@@ -50,7 +51,7 @@ def insert_wallet_token_stats(rows: list[dict]):
         return
     ch = get_clickhouse_client()
     data, columns = _dicts_to_rows(rows)
-    ch.insert(table='wallet_token_stats', data=data, database='kys', column_names=columns)
+    ch.insert(table='wallet_token_stats', data=data, database=CH_DATABASE, column_names=columns)
 
 
 def insert_weekly_snapshots(rows: list[dict]):
@@ -59,7 +60,7 @@ def insert_weekly_snapshots(rows: list[dict]):
         return
     ch = get_clickhouse_client()
     data, columns = _dicts_to_rows(rows)
-    ch.insert(table='wallet_weekly_snapshots', data=data, database='kys', column_names=columns)
+    ch.insert(table='wallet_weekly_snapshots', data=data, database=CH_DATABASE, column_names=columns)
 
 
 def insert_leaderboard_results(rows: list[dict]):
@@ -68,14 +69,14 @@ def insert_leaderboard_results(rows: list[dict]):
         return
     ch = get_clickhouse_client()
     data, columns = _dicts_to_rows(rows)
-    ch.insert(table='leaderboard_results', data=data, database='kys', column_names=columns)
+    ch.insert(table='leaderboard_results', data=data, database=CH_DATABASE, column_names=columns)
 
 
 def get_wallet_stats(wallet_address: str) -> dict | None:
     """Read deduplicated aggregate stats for a wallet."""
     ch = get_clickhouse_client()
     result = ch.query(
-        "SELECT * FROM kys.wallet_aggregate_stats FINAL WHERE wallet_address = {addr:String}",
+        "SELECT * FROM wallet_aggregate_stats FINAL WHERE wallet_address = {addr:String}",
         parameters={'addr': wallet_address}
     )
     return result.first_row if result.result_rows else None
@@ -85,7 +86,7 @@ def get_wallet_token_stats_for_token(wallet_address: str, token_address: str) ->
     """Read a specific wallet-token stat row."""
     ch = get_clickhouse_client()
     result = ch.query(
-        """SELECT * FROM kys.wallet_token_stats FINAL
+        """SELECT * FROM wallet_token_stats FINAL
            WHERE wallet_address = {wallet:String}
              AND token_address = {token:String}""",
         parameters={'wallet': wallet_address, 'token': token_address}
@@ -114,7 +115,7 @@ def query_top20_for_tokens(token_list: list[str]) -> list:
                     / nullIf(avg(entry_price_to_launch_mult), 0)
                 ) * 100) * 0.10
             ) AS professional_score
-        FROM kys.wallet_token_stats FINAL
+        FROM wallet_token_stats FINAL
         WHERE token_address IN ({token_list:Array(String)})
           AND qualifies = 1
         GROUP BY wallet_address
@@ -141,7 +142,7 @@ def query_elite_100() -> list:
             win_rate,
             total_pnl_usd,
             last_active_at
-        FROM kys.wallet_aggregate_stats FINAL
+        FROM wallet_aggregate_stats FINAL
         WHERE tokens_qualified >= 1
         ORDER BY professional_score DESC
         LIMIT 100"""
