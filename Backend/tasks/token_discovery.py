@@ -18,11 +18,12 @@ import time
 import uuid
 from datetime import datetime
 
-import redis
 import requests
 
 from celery_app import celery
 from services.clickhouse_client import get_clickhouse_client, insert_token_scans
+from services.http_session import get_http_session
+from services.redis_pool import get_redis_client
 
 SOLANATRACKER_BASE = "https://data.solanatracker.io"
 SOLANATRACKER_KEY = os.environ.get('SOLANATRACKER_API_KEY', '')
@@ -34,8 +35,8 @@ QUALIFIED_TOKENS_KEY = 'kys:qualified_tokens'  # SET of tokens that passed 10x f
 
 
 def get_redis():
-    """Return a Redis client from the configured REDIS_URL."""
-    return redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    """Return a Redis client from the shared connection pool."""
+    return get_redis_client()
 
 
 def fetch_solanatracker(endpoint: str) -> list:
@@ -44,7 +45,7 @@ def fetch_solanatracker(endpoint: str) -> list:
     headers = {'x-api-key': SOLANATRACKER_KEY} if SOLANATRACKER_KEY else {}
     try:
         time.sleep(0.5)  # Rate limit padding between API calls
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = get_http_session().get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data if isinstance(data, list) else []

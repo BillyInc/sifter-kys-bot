@@ -7,6 +7,7 @@ from services.log import setup_logging
 logger = logging.getLogger(__name__)
 setup_logging()
 from flask import Flask, request, jsonify
+from flask_compress import Compress
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -93,6 +94,7 @@ def run_cron_job(app, job_type):
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
+    Compress(app)
 
     CORS(app, resources={
         r"/*": {

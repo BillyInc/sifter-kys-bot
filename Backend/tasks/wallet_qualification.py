@@ -18,11 +18,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-import redis
 import requests
 
 from celery_app import celery
 from services.clickhouse_client import insert_token_scans, insert_wallet_token_stats
+from services.http_session import get_http_session
+from services.redis_pool import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ QUALIFIED_TOKENS_KEY = "kys:qualified_tokens"
 # Helpers
 # ===================================================================
 
-def _get_redis() -> redis.Redis:
-    return redis.from_url(REDIS_URL, decode_responses=True)
+def _get_redis():
+    return get_redis_client()
 
 
 def _st_headers() -> dict:
@@ -72,7 +73,7 @@ def _st_get(path: str, retries: int = 3, backoff: float = 1.0):
     url = f"{ST_BASE_URL}{path}"
     for attempt in range(retries):
         try:
-            resp = requests.get(url, headers=_st_headers(), timeout=30)
+            resp = get_http_session().get(url, headers=_st_headers(), timeout=30)
             if resp.status_code == 429:
                 wait = backoff * (2 ** attempt)
                 logger.warning("SolanaTracker rate-limited, sleeping %.1fs", wait)

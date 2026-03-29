@@ -16,6 +16,7 @@ import redis as redis_lib
 import os
 import random
 from utils import _roi_to_score
+from services.http_session import get_http_session
 
 
 class _TokenBucket:
@@ -282,11 +283,11 @@ class WalletPumpAnalyzer:
                 if semaphore:
                     semaphore.acquire()
                     try:
-                        response = requests.get(url, headers=headers, params=params, timeout=15)
+                        response = get_http_session().get(url, headers=headers, params=params, timeout=15)
                     finally:
                         semaphore.release()
                 else:
-                    response = requests.get(url, headers=headers, params=params, timeout=15)
+                    response = get_http_session().get(url, headers=headers, params=params, timeout=15)
 
                 if response.status_code == 200:
                     return response.json()

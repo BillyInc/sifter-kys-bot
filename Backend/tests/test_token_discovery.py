@@ -141,44 +141,44 @@ class TestBuildTokenScanRow:
 class TestFetchSolanatracker:
     """Tests for fetch_solanatracker."""
 
-    @patch("tasks.token_discovery.requests.get")
+    @patch("tasks.token_discovery.get_http_session")
     @patch("tasks.token_discovery.time.sleep")
-    def test_returns_empty_list_on_request_error(self, mock_sleep, mock_get):
+    def test_returns_empty_list_on_request_error(self, mock_sleep, mock_session):
         """Returns empty list when requests raises an exception."""
-        mock_get.side_effect = Exception("Connection refused")
+        mock_session.return_value.get.side_effect = Exception("Connection refused")
         result = fetch_solanatracker("tokens/trending")
         assert result == []
 
-    @patch("tasks.token_discovery.requests.get")
+    @patch("tasks.token_discovery.get_http_session")
     @patch("tasks.token_discovery.time.sleep")
-    def test_returns_empty_list_on_non_list_response(self, mock_sleep, mock_get):
+    def test_returns_empty_list_on_non_list_response(self, mock_sleep, mock_session):
         """Returns empty list when API returns a non-list JSON response."""
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"error": "not found"}
         mock_resp.raise_for_status.return_value = None
-        mock_get.return_value = mock_resp
+        mock_session.return_value.get.return_value = mock_resp
         result = fetch_solanatracker("tokens/trending")
         assert result == []
 
-    @patch("tasks.token_discovery.requests.get")
+    @patch("tasks.token_discovery.get_http_session")
     @patch("tasks.token_discovery.time.sleep")
-    def test_returns_list_on_success(self, mock_sleep, mock_get):
+    def test_returns_list_on_success(self, mock_sleep, mock_session):
         """Returns the list when API returns valid list data."""
         mock_resp = MagicMock()
         mock_resp.json.return_value = [{"token": {"mint": "ABC"}}]
         mock_resp.raise_for_status.return_value = None
-        mock_get.return_value = mock_resp
+        mock_session.return_value.get.return_value = mock_resp
         result = fetch_solanatracker("tokens/trending")
         assert len(result) == 1
         assert result[0]["token"]["mint"] == "ABC"
 
-    @patch("tasks.token_discovery.requests.get")
+    @patch("tasks.token_discovery.get_http_session")
     @patch("tasks.token_discovery.time.sleep")
-    def test_returns_empty_list_on_http_error(self, mock_sleep, mock_get):
+    def test_returns_empty_list_on_http_error(self, mock_sleep, mock_session):
         """Returns empty list when API returns HTTP error status."""
         import requests as req
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = req.HTTPError("500 Server Error")
-        mock_get.return_value = mock_resp
+        mock_session.return_value.get.return_value = mock_resp
         result = fetch_solanatracker("tokens/trending")
         assert result == []
