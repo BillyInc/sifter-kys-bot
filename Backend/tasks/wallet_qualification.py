@@ -279,7 +279,7 @@ def build_wallet_token_stats_row(
         "scan_id": str(uuid.uuid4()),
         "first_entry_price": entry_price,
         "first_entry_usd": round(total_invested, 2),
-        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time else now,
+        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1e6 if first_buy_time > 1e15 else first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time and first_buy_time > 0 else now,
         "entry_price_to_launch_mult": 0.0,  # computed downstream if launch price known
         "avg_entry_price": entry_price,
         "avg_entry_to_ath_mult": round(entry_to_ath_mult, 4),
@@ -357,7 +357,7 @@ def _disqualified_row(
         "scan_id": str(uuid.uuid4()),
         "first_entry_price": entry_price,
         "first_entry_usd": round(total_invested, 2),
-        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time else now,
+        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1e6 if first_buy_time > 1e15 else first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time and first_buy_time > 0 else now,
         "entry_price_to_launch_mult": 0.0,
         "avg_entry_price": entry_price,
         "avg_entry_to_ath_mult": 0.0,
