@@ -1,21 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Target, Zap, Award, TrendingUp, Info, ChevronDown, ChevronUp, Check } from 'lucide-react';
 
-export default function AnalysisSettings({ 
-  selectedTokens, 
+interface AnalysisSettingsProps {
+  selectedTokens: any[];
+  onSettingsChange?: (settings: any) => void;
+  analysisType: string;
+  [key: string]: any;
+}
+
+interface GlobalSettings {
+  minRoiMultiplier: number;
+  daysBack: number;
+  candleSize: string;
+  tweetWindow: { minus: number; plus: number };
+}
+
+export default function AnalysisSettings({
+  selectedTokens,
   onSettingsChange,
   analysisType
-}) {
-  const [settingsMode, setSettingsMode] = useState('global');
-  const [globalSettings, setGlobalSettings] = useState({
+}: AnalysisSettingsProps) {
+  const [settingsMode, setSettingsMode] = useState<string>('global');
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings>({
     minRoiMultiplier: 3.0,
     daysBack: 7,
     candleSize: '5m',
     tweetWindow: { minus: 35, plus: 10 }
   });
-  const [perTokenSettings, setPerTokenSettings] = useState({});
-  const [expandedTokens, setExpandedTokens] = useState({});
-  const [showInfo, setShowInfo] = useState(false);
+  const [perTokenSettings, setPerTokenSettings] = useState<Record<string, any>>({});
+  const [expandedTokens, setExpandedTokens] = useState<Record<string, boolean>>({});
+  const [showInfo, setShowInfo] = useState<boolean>(false);
 
   const roiPresets = [
     { value: 3,  label: '3x',  sublabel: 'Broad',   color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.35)' },
@@ -40,11 +54,11 @@ export default function AnalysisSettings({
     }
   }, [settingsMode, globalSettings, perTokenSettings]);
 
-  const updateGlobal = (field, value) => setGlobalSettings(p => ({ ...p, [field]: value }));
-  const updateGlobalTweet = (field, value) => setGlobalSettings(p => ({ ...p, tweetWindow: { ...p.tweetWindow, [field]: parseInt(value)||0 } }));
-  const updatePerToken = (addr, field, value) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], [field]: value } }));
-  const updatePerTokenTweet = (addr, field, value) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], tweetWindow: { ...p[addr].tweetWindow, [field]: parseInt(value)||0 } } }));
-  const toggleToken = addr => setExpandedTokens(p => ({ ...p, [addr]: !p[addr] }));
+  const updateGlobal = (field: string, value: any) => setGlobalSettings(p => ({ ...p, [field]: value }));
+  const updateGlobalTweet = (field: string, value: string) => setGlobalSettings(p => ({ ...p, tweetWindow: { ...p.tweetWindow, [field]: parseInt(value)||0 } }));
+  const updatePerToken = (addr: string, field: string, value: any) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], [field]: value } }));
+  const updatePerTokenTweet = (addr: string, field: string, value: string) => setPerTokenSettings(p => ({ ...p, [addr]: { ...p[addr], tweetWindow: { ...p[addr].tweetWindow, [field]: parseInt(value)||0 } } }));
+  const toggleToken = (addr: string) => setExpandedTokens(p => ({ ...p, [addr]: !p[addr] }));
   const applyGlobalToAll = () => {
     const u = {};
     selectedTokens.forEach(t => { u[t.address] = { ...globalSettings }; });

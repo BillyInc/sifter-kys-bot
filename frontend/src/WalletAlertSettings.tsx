@@ -3,24 +3,40 @@ import { toast } from 'sonner';
 import { Settings, Bell, BellOff, DollarSign, TrendingUp, TrendingDown, Save, X } from 'lucide-react';
 import walletActivityService from './WalletActivityService';
 
-export default function WalletAlertSettings({ walletAddress, onClose, onSave }) {
-  const [settings, setSettings] = useState({
+interface WalletAlertSettingsProps {
+  walletAddress: string;
+  onClose: () => void;
+  onSave?: (settings: any) => void;
+  userId?: string;
+  apiUrl?: string;
+  [key: string]: any;
+}
+
+interface AlertSettings {
+  alert_enabled: boolean;
+  alert_on_buy: boolean;
+  alert_on_sell: boolean;
+  min_trade_usd: number;
+}
+
+export default function WalletAlertSettings({ walletAddress, onClose, onSave }: WalletAlertSettingsProps) {
+  const [settings, setSettings] = useState<AlertSettings>({
     alert_enabled: true,
     alert_on_buy: true,
     alert_on_sell: false,
     min_trade_usd: 100
   });
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
   // Close on ESC key
   useEffect(() => {
-    const handleEscape = (e) => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !isSaving && onClose) {
         onClose();
       }
     };
-    
+
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isSaving, onClose]);
@@ -36,7 +52,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
 
   // Close on ESC key
   useEffect(() => {
-    const handleEscape = (e) => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !isSaving) {
         onClose();
       }
@@ -51,7 +67,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
     setSaveSuccess(false);
 
     try {
-      const success = await walletActivityService.updateAlertSettings(
+      const success = await (walletActivityService as any).updateAlertSettings(
         walletAddress,
         settings
       );
@@ -316,6 +332,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
         </div>
       </div>
 
+      {/* @ts-ignore */}
       <style jsx>{`
         @keyframes fade-in {
           from { opacity: 0; }

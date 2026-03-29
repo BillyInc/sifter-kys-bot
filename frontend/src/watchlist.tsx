@@ -4,13 +4,19 @@ import WalletAlertSettings from './WalletAlertSettings';
 import { supabase } from './lib/supabase';
 
 // ─── Toast Notification ───────────────────────────────────────────────────────
-function Toast({ message, type = 'error', onDismiss }) {
+interface ToastProps {
+  message: string;
+  type?: 'error' | 'success';
+  onDismiss: () => void;
+}
+
+function Toast({ message, type = 'error', onDismiss }: ToastProps) {
   useEffect(() => {
     const timer = setTimeout(onDismiss, 4000);
     return () => clearTimeout(timer);
   }, [onDismiss]);
 
-  const styles = {
+  const styles: Record<string, string> = {
     error:   'bg-red-900/90 border-red-500/50 text-red-200',
     success: 'bg-green-900/90 border-green-500/50 text-green-200',
   };
@@ -28,7 +34,13 @@ function Toast({ message, type = 'error', onDismiss }) {
 }
 
 // ─── Inline Confirmation Dialog ───────────────────────────────────────────────
-function ConfirmDelete({ onConfirm, onCancel, isDeleting }) {
+interface ConfirmDeleteProps {
+  onConfirm: () => void;
+  onCancel: () => void;
+  isDeleting: boolean;
+}
+
+function ConfirmDelete({ onConfirm, onCancel, isDeleting }: ConfirmDeleteProps) {
   return (
     <div className="flex items-center gap-2 mt-2 p-2 bg-red-950/50 border border-red-500/30 rounded-lg">
       <span className="text-xs text-red-300 flex-1">Remove from watchlist?</span>
@@ -51,36 +63,41 @@ function ConfirmDelete({ onConfirm, onCancel, isDeleting }) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function Watchlist({ userId, apiUrl }) {
-  const [activeWatchlistTab, setActiveWatchlistTab] = useState('accounts');
+interface WatchlistProps {
+  userId: string;
+  apiUrl: string;
+}
+
+export default function Watchlist({ userId, apiUrl }: WatchlistProps) {
+  const [activeWatchlistTab, setActiveWatchlistTab] = useState<string>('accounts');
 
   // Twitter watchlist state
-  const [watchlist, setWatchlist] = useState([]);
-  const [groups, setGroups] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [editingNotes, setEditingNotes] = useState(null);
-  const [editingTags, setEditingTags] = useState(null);
-  const [newNote, setNewNote] = useState('');
-  const [newTags, setNewTags] = useState('');
-  const [stats, setStats] = useState(null);
+  const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [editingNotes, setEditingNotes] = useState<string | null>(null);
+  const [editingTags, setEditingTags] = useState<string | null>(null);
+  const [newNote, setNewNote] = useState<string>('');
+  const [newTags, setNewTags] = useState<string>('');
+  const [stats, setStats] = useState<any>(null);
 
   // Wallet watchlist state
-  const [walletWatchlist, setWalletWatchlist] = useState([]);
-  const [walletStats, setWalletStats] = useState(null);
+  const [walletWatchlist, setWalletWatchlist] = useState<any[]>([]);
+  const [walletStats, setWalletStats] = useState<any>(null);
 
   // Delete confirmation state — tracks which item is pending delete
-  const [pendingDeleteAccount, setPendingDeleteAccount] = useState(null);
-  const [pendingDeleteWallet, setPendingDeleteWallet] = useState(null);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-  const [isDeletingWallet, setIsDeletingWallet] = useState(false);
+  const [pendingDeleteAccount, setPendingDeleteAccount] = useState<string | null>(null);
+  const [pendingDeleteWallet, setPendingDeleteWallet] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState<boolean>(false);
+  const [isDeletingWallet, setIsDeletingWallet] = useState<boolean>(false);
 
   // Toast notification state
-  const [toast, setToast] = useState(null); // { message, type }
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
 
   // Alert settings modal state
-  const [alertSettingsWallet, setAlertSettingsWallet] = useState(null);
+  const [alertSettingsWallet, setAlertSettingsWallet] = useState<string | null>(null);
 
-  const showToast = (message, type = 'error') => setToast({ message, type });
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => setToast({ message, type });
   const dismissToast = () => setToast(null);
 
   const getHeaders = async () => {
@@ -143,7 +160,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const removeAccount = async (authorId) => {
+  const removeAccount = async (authorId: string) => {
     setIsDeletingAccount(true);
     try {
       const headers = await getHeaders();
@@ -175,7 +192,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const updateNotes = async (authorId, notes) => {
+  const updateNotes = async (authorId: string, notes: string) => {
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/watchlist/update`, {
@@ -198,7 +215,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const updateTags = async (authorId, tags) => {
+  const updateTags = async (authorId: string, tags: string) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
       const headers = await getHeaders();
@@ -251,7 +268,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const removeWallet = async (walletAddress) => {
+  const removeWallet = async (walletAddress: string) => {
     setIsDeletingWallet(true);
     try {
       const headers = await getHeaders();
@@ -283,7 +300,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const updateWalletNotes = async (walletAddress, notes) => {
+  const updateWalletNotes = async (walletAddress: string, notes: string) => {
     try {
       const headers = await getHeaders();
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/update`, {
@@ -306,7 +323,7 @@ export default function Watchlist({ userId, apiUrl }) {
     }
   };
 
-  const updateWalletTags = async (walletAddress, tags) => {
+  const updateWalletTags = async (walletAddress: string, tags: string) => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(t => t);
       const headers = await getHeaders();

@@ -11,17 +11,24 @@ import {
   Copy
 } from 'lucide-react';
 
-export default function WalletReplacementModal({ 
-  currentWallet, 
+interface WalletReplacementModalProps {
+  currentWallet: any;
+  suggestions?: any[];
+  onReplace?: (wallet: any) => Promise<void>;
+  onDismiss: () => void;
+}
+
+export default function WalletReplacementModal({
+  currentWallet,
   suggestions = [],
   onReplace,
-  onDismiss 
-}) {
-  const [selectedReplacement, setSelectedReplacement] = useState(null);
-  const [isReplacing, setIsReplacing] = useState(false);
-  const [copied, setCopied] = useState(null);
+  onDismiss
+}: WalletReplacementModalProps) {
+  const [selectedReplacement, setSelectedReplacement] = useState<any>(null);
+  const [isReplacing, setIsReplacing] = useState<boolean>(false);
+  const [copied, setCopied] = useState<string | false | null>(null);
 
-  const handleCopy = (text, label) => {
+  const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(false), 2000);
@@ -43,12 +50,12 @@ export default function WalletReplacementModal({
     }
   };
 
-  const formatPercent = (value) => {
+  const formatPercent = (value: number | null | undefined) => {
     if (!value) return '0';
     return value > 0 ? `+${value.toFixed(0)}` : value.toFixed(0);
   };
 
-  const getComparisonColor = (current, replacement) => {
+  const getComparisonColor = (current: number, replacement: number) => {
     if (replacement > current) return 'text-green-400';
     if (replacement < current) return 'text-red-400';
     return 'text-gray-400';
@@ -348,6 +355,7 @@ export default function WalletReplacementModal({
         </div>
       </div>
 
+      {/* @ts-ignore */}
       <style jsx>{`
         @keyframes fade-in {
           from { opacity: 0; }

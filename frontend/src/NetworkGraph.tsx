@@ -1,10 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 
-export default function NetworkGraph({ data, onNodeClick }) {
-  const svgRef = useRef(null);
-  const [selectedNode, setSelectedNode] = useState(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+interface NetworkGraphProps {
+  data: { nodes: any[]; links: any[] } | null;
+  onNodeClick?: (node: any) => void;
+}
+
+export default function NetworkGraph({ data, onNodeClick }: NetworkGraphProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 800, height: 600 });
 
   useEffect(() => {
     if (!data || !data.nodes || !data.links || !svgRef.current) return;
@@ -37,7 +42,7 @@ export default function NetworkGraph({ data, onNodeClick }) {
     // Create force simulation
     const simulation = d3.forceSimulation(data.nodes)
       .force("link", d3.forceLink(data.links)
-        .id(d => d.id)
+        .id((d: any) => d.id)
         .distance(d => {
           // Stronger links (more weight) = shorter distance
           const weight = d.weight || 1;

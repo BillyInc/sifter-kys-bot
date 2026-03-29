@@ -16,9 +16,9 @@ const NOTE_TYPES = [
   { value: 'note',     label: 'Note',     icon: StickyNote, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
 ];
 
-function getNoteTypeMeta(v) { return NOTE_TYPES.find(t => t.value === v) || NOTE_TYPES[3]; }
+function getNoteTypeMeta(v: string) { return NOTE_TYPES.find(t => t.value === v) || NOTE_TYPES[3]; }
 
-function formatNoteTs(ts) {
+function formatNoteTs(ts: string | null | undefined) {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' · ' +
@@ -26,10 +26,16 @@ function formatNoteTs(ts) {
 }
 
 // ─── Single entry ─────────────────────────────────────────────────────────────
-function DiaryEntry({ entry, onEdit, onDelete }) {
+interface DiaryEntryProps {
+  entry: any;
+  onEdit: (entry: any) => void;
+  onDelete: (id: string) => void;
+}
+
+function DiaryEntry({ entry, onEdit, onDelete }: DiaryEntryProps) {
   const meta = getNoteTypeMeta(entry.type);
   const Icon = meta.icon;
-  const [conf, setConf] = useState(false);
+  const [conf, setConf] = useState<boolean>(false);
   return (
     <motion.div layout initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
       className={`group relative rounded-lg border p-3 ${meta.bg} ${meta.border}`}>
@@ -61,11 +67,18 @@ function DiaryEntry({ entry, onEdit, onDelete }) {
 }
 
 // ─── Composer ─────────────────────────────────────────────────────────────────
-function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false }) {
-  const [text, setText]         = useState(editingEntry?.text || '');
-  const [type, setType]         = useState(editingEntry?.type || 'thought');
-  const [tagInput, setTagInput] = useState(editingEntry?.tags?.join(', ') || '');
-  const textRef = useRef(null);
+interface NoteComposerProps {
+  onSave: (data: { text: string; type: string; tags: string[] }) => void;
+  onCancel: () => void;
+  editingEntry?: any;
+  saving?: boolean;
+}
+
+function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false }: NoteComposerProps) {
+  const [text, setText]         = useState<string>(editingEntry?.text || '');
+  const [type, setType]         = useState<string>(editingEntry?.type || 'thought');
+  const [tagInput, setTagInput] = useState<string>(editingEntry?.tags?.join(', ') || '');
+  const textRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { textRef.current?.focus(); }, []);
 
   const handleSave = () => {
@@ -111,14 +124,20 @@ function NoteComposer({ onSave, onCancel, editingEntry = null, saving = false })
 }
 
 // ─── Wallet diary (shown inside expanded row) ──────────────────────────────────
-function WalletDiary({ userId, apiUrl, walletAddress }) {
-  const diary = useDiary({ userId, apiUrl, walletAddress });
-  const [composing, setComposing]       = useState(false);
-  const [editingEntry, setEditingEntry] = useState(null);
-  const [saving, setSaving]             = useState(false);
-  const [filter, setFilter]             = useState('all');
+interface WalletDiaryProps {
+  userId: string;
+  apiUrl: string;
+  walletAddress: string;
+}
 
-  const handleSave = async (data) => {
+function WalletDiary({ userId, apiUrl, walletAddress }: WalletDiaryProps) {
+  const diary = useDiary({ userId, apiUrl, walletAddress });
+  const [composing, setComposing]       = useState<boolean>(false);
+  const [editingEntry, setEditingEntry] = useState<any>(null);
+  const [saving, setSaving]             = useState<boolean>(false);
+  const [filter, setFilter]             = useState<string>('all');
+
+  const handleSave = async (data: any) => {
     setSaving(true);
     if (editingEntry) {
       await diary.updateNote(editingEntry.id, data);
@@ -222,13 +241,22 @@ function WalletDiary({ userId, apiUrl, walletAddress }) {
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelete, userId, apiUrl }) {
-  const [isExpanded, setIsExpanded]       = useState(false);
-  const [isRefreshing, setIsRefreshing]   = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [isDeleting, setIsDeleting]       = useState(false);
-  const [activeTab, setActiveTab]         = useState('performance');
-  const [noteCount, setNoteCount]         = useState(0);
+interface WatchlistExpandedCardProps {
+  wallet: any;
+  rank: number;
+  onRefresh: (walletAddress: string) => Promise<void>;
+  onDelete: (walletAddress: string) => Promise<void>;
+  userId: string;
+  apiUrl: string;
+}
+
+export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelete, userId, apiUrl }: WatchlistExpandedCardProps) {
+  const [isExpanded, setIsExpanded]       = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing]   = useState<boolean>(false);
+  const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting]       = useState<boolean>(false);
+  const [activeTab, setActiveTab]         = useState<string>('performance');
+  const [noteCount, setNoteCount]         = useState<number>(0);
 
   useEffect(() => {
     if (!userId || !apiUrl) return;
@@ -240,14 +268,14 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
       .catch(() => {});
   }, [userId, apiUrl, wallet.wallet_address]);
 
-  const handleRefresh = async (e) => {
+  const handleRefresh = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsRefreshing(true);
     await onRefresh(wallet.wallet_address);
     setIsRefreshing(false);
   };
 
-  const handleDelete = async (e) => {
+  const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirmDelete) { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); return; }
     setIsDeleting(true);
@@ -279,7 +307,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
   const topAlert    = alerts[0]?.severity;
   const alertAccent = topAlert === 'red' ? '#ef4444' : topAlert === 'orange' ? '#f97316' : topAlert === 'yellow' ? '#eab308' : null;
 
-  const StatBar = ({ label, val, pct, color = '#3b82f6' }) => (
+  const StatBar = ({ label, val, pct, color = '#3b82f6' }: { label: string; val: string | number; pct: number; color?: string }) => (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
         <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>

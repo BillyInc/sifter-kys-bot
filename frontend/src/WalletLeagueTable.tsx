@@ -14,23 +14,33 @@ import {
   Filter
 } from 'lucide-react';
 
-export default function WalletLeagueTable({ 
-  wallets = [], 
+interface WalletLeagueTableProps {
+  wallets?: any[];
+  promotionQueue?: any[];
+  stats?: any;
+  onReplace?: (current: any, replacement: any) => void;
+  onExpand?: (wallet: any) => void;
+  onConfigure?: (wallet: any) => void;
+  onToggleTelegramAlert?: (wallet: any) => void;
+}
+
+export default function WalletLeagueTable({
+  wallets = [],
   promotionQueue = [],
   stats = {},
   onReplace,
   onExpand,
   onConfigure,
   onToggleTelegramAlert
-}) {
-  const [expandedWallets, setExpandedWallets] = useState({});
-  const [copied, setCopied] = useState(null);
-  const [filterTier, setFilterTier] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [sortBy, setSortBy] = useState('position');
-  const [timeRange, setTimeRange] = useState('30d');
+}: WalletLeagueTableProps) {
+  const [expandedWallets, setExpandedWallets] = useState<Record<string, boolean>>({});
+  const [copied, setCopied] = useState<string | false | null>(null);
+  const [filterTier, setFilterTier] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('position');
+  const [timeRange, setTimeRange] = useState<string>('30d');
 
-  const toggleExpand = (walletAddress) => {
+  const toggleExpand = (walletAddress: string) => {
     setExpandedWallets(prev => ({
       ...prev,
       [walletAddress]: !prev[walletAddress]
@@ -41,34 +51,34 @@ export default function WalletLeagueTable({
     }
   };
 
-  const handleCopy = (text, label) => {
+  const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const getZoneLabel = (position) => {
+  const getZoneLabel = (position: number) => {
     if (position <= 3) return '🏆 Elite';
     if (position <= 6) return '📊 Mid-Table';
     if (position <= 8) return '⚠️ Monitoring';
     return '🔴 Relegation';
   };
 
-  const getMovementIcon = (movement) => {
+  const getMovementIcon = (movement: string | null | undefined) => {
     if (!movement || movement === 'stable') return <Minus className="text-gray-400" size={14} />;
     if (movement === 'up') return <ArrowUp className="text-green-400" size={14} />;
     if (movement === 'down') return <ArrowDown className="text-red-400" size={14} />;
     return null;
   };
 
-  const getPositionBadge = (position) => {
+  const getPositionBadge = (position: number): string | number => {
     if (position === 1) return '🥇';
     if (position === 2) return '🥈';
     if (position === 3) return '🥉';
     return position;
   };
 
-  const renderFormCircles = (form) => {
+  const renderFormCircles = (form: any[] | null | undefined) => {
     if (!form || !Array.isArray(form)) return null;
     
     return (
@@ -133,7 +143,7 @@ export default function WalletLeagueTable({
     relegation: filteredWallets.filter(w => w.position > 8)
   };
 
-  const renderWalletRow = (wallet) => {
+  const renderWalletRow = (wallet: any) => {
     const isExpanded = expandedWallets[wallet.wallet_address];
     const walletAddr = wallet.wallet_address || wallet.wallet;
 
@@ -249,7 +259,7 @@ export default function WalletLeagueTable({
         {/* Expanded Details Row */}
         {isExpanded && (
           <tr style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b">
-            <td colSpan="8" className="px-4 py-4">
+            <td colSpan={8} className="px-4 py-4">
               <div className="space-y-4">
                 {/* Full Address */}
                 <div>
@@ -548,7 +558,7 @@ export default function WalletLeagueTable({
             {groupedWallets.champions.length > 0 && (
               <>
                 <tr className="bg-green-500/5">
-                  <td colSpan="8" className="px-3 py-2 text-xs font-semibold text-green-400 border-y border-green-500/30">
+                  <td colSpan={8} className="px-3 py-2 text-xs font-semibold text-green-400 border-y border-green-500/30">
                     {getZoneLabel(1)}
                   </td>
                 </tr>
@@ -560,7 +570,7 @@ export default function WalletLeagueTable({
             {groupedWallets.midtable.length > 0 && (
               <>
                 <tr style={{ backgroundColor: 'var(--bg-secondary)' }}>
-                  <td colSpan="8" style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }} className="px-3 py-2 text-xs font-semibold border-y">
+                  <td colSpan={8} style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }} className="px-3 py-2 text-xs font-semibold border-y">
                     {getZoneLabel(4)}
                   </td>
                 </tr>
@@ -572,7 +582,7 @@ export default function WalletLeagueTable({
             {groupedWallets.monitoring.length > 0 && (
               <>
                 <tr className="bg-yellow-500/5">
-                  <td colSpan="8" className="px-3 py-2 text-xs font-semibold text-yellow-400 border-y border-yellow-500/30">
+                  <td colSpan={8} className="px-3 py-2 text-xs font-semibold text-yellow-400 border-y border-yellow-500/30">
                     {getZoneLabel(7)}
                   </td>
                 </tr>
@@ -584,7 +594,7 @@ export default function WalletLeagueTable({
             {groupedWallets.relegation.length > 0 && (
               <>
                 <tr className="bg-red-500/5">
-                  <td colSpan="8" className="px-3 py-2 text-xs font-semibold text-red-400 border-y border-red-500/30">
+                  <td colSpan={8} className="px-3 py-2 text-xs font-semibold text-red-400 border-y border-red-500/30">
                     {getZoneLabel(9)}
                   </td>
                 </tr>

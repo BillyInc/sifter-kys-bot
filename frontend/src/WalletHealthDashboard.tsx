@@ -11,13 +11,21 @@ import {
   RefreshCw
 } from 'lucide-react';
 
-export default function WalletHealthDashboard({ 
-  wallets = [], 
+interface WalletHealthDashboardProps {
+  wallets?: any[];
+  stats?: any;
+  onViewWallet?: (wallet: any) => void;
+  onFindReplacements?: (walletAddress: string, autoReplace: boolean) => void;
+  onRefresh?: () => void;
+}
+
+export default function WalletHealthDashboard({
+  wallets = [],
   stats = null,
   onViewWallet,
   onFindReplacements,
-  onRefresh 
-}) {
+  onRefresh
+}: WalletHealthDashboardProps) {
   
   // Calculate health metrics
   const calculateHealth = () => {
@@ -75,7 +83,7 @@ export default function WalletHealthDashboard({
 
   const performance = getPerformanceComparison();
 
-  const getHealthColor = (status) => {
+  const getHealthColor = (status: string) => {
     switch (status) {
       case 'good': return 'text-green-400';
       case 'warning': return 'text-yellow-400';
@@ -84,7 +92,7 @@ export default function WalletHealthDashboard({
     }
   };
 
-  const getHealthText = (status) => {
+  const getHealthText = (status: string) => {
     switch (status) {
       case 'good': return 'GOOD';
       case 'warning': return 'WARNING';
@@ -93,7 +101,7 @@ export default function WalletHealthDashboard({
     }
   };
 
-  const getHealthEmoji = (status) => {
+  const getHealthEmoji = (status: string) => {
     switch (status) {
       case 'good': return '🟢';
       case 'warning': return '🟡';

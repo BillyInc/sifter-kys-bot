@@ -31,7 +31,7 @@ import { Toaster, toast } from 'sonner';
 const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 200;
 
-const getPollingInterval = (attempt) => {
+const getPollingInterval = (attempt: number) => {
   if (attempt < 10) return 3000;
   if (attempt < 30) return 5000;
   return 10000;
@@ -545,7 +545,7 @@ export default function SifterKYS() {
   // ── Click-outside dropdown ────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target)) setShowDropdown(false);
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowDropdown(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -592,7 +592,7 @@ export default function SifterKYS() {
   const removeToken = (address: string, chain: string) =>
     setSelectedTokens(selectedTokens.filter(t => !(t.address?.toLowerCase() === address.toLowerCase() && t.chain === chain)));
 
-  const updateTokenSetting = (address, setting, value) =>
+  const updateTokenSetting = (address: string, setting: string, value: any) =>
     setTokenSettings(prev => ({ ...prev, [address]: { ...prev[address], [setting]: value } }));
 
   // ── Analysis submit — fire-and-forget, routes to global poll ─────────────
@@ -638,7 +638,7 @@ export default function SifterKYS() {
   };
 
   // ── Watchlist helpers ─────────────────────────────────────────────────────
-  const computeConsistency = (otherRunners = []) => {
+  const computeConsistency = (otherRunners: any[] = []) => {
     const vals = otherRunners.map(r => r.entry_to_ath_multiplier).filter(v => v != null && v > 0);
     if (vals.length < 2) return 50;
     const mean     = vals.reduce((a, b) => a + b, 0) / vals.length;
@@ -646,7 +646,7 @@ export default function SifterKYS() {
     return Math.max(0, Math.round(100 - (variance * 2)));
   };
 
-  const addToWalletWatchlist = async (walletData) => {
+  const addToWalletWatchlist = async (walletData: any) => {
     try {
       const authToken = getAccessToken();
       const res = await fetch(`${API_URL}/api/wallets/watchlist/add`, {
@@ -693,7 +693,7 @@ export default function SifterKYS() {
 
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
-      <Toaster position="top-right" theme={theme} richColors />
+      <Toaster position="top-right" theme={theme as any} richColors />
 
       {/* ── Navbar ── */}
       <nav className="flex-shrink-0 w-full z-50 backdrop-blur-xl" style={{ backgroundColor: "var(--bg-nav)", borderBottom: "1px solid var(--border-color)" }}>
@@ -863,7 +863,7 @@ export default function SifterKYS() {
       <SlideOutPanel
         isOpen={openPanel !== null}
         onClose={handleClosePanel}
-        direction={config.direction}
+        direction={config.direction as any}
         width={config.width}
         title={config.title}
       >
@@ -893,7 +893,7 @@ export default function SifterKYS() {
             setTMinusWindow={setTMinusWindow}
             tPlusWindow={tPlusWindow}
             setTPlusWindow={setTPlusWindow}
-            handleAnalysisStreaming={handleAnalysisPolling}
+            handleAnalysisStreaming={handleAnalysisPolling as any}
             isAnalyzing={!!activeAnalyses.analyze}
             onClose={handleClosePanel}
             setSelectedTokens={setSelectedTokens}
@@ -939,7 +939,7 @@ export default function SifterKYS() {
 
         {openPanel === 'watchlist' && (
           <WatchlistPanel userId={userId} apiUrl={API_URL}
-            onConfigure={(wallet) => setAlertSettingsWallet(wallet.wallet_address)} />
+            {...{ onConfigure: (wallet: any) => setAlertSettingsWallet(wallet.wallet_address) } as any} />
         )}
         {openPanel === 'top100' && (
           <Top100CommunityPanel userId={userId} apiUrl={API_URL} onAddToWatchlist={addToWalletWatchlist} />
@@ -953,8 +953,8 @@ export default function SifterKYS() {
         )}
         {openPanel === 'profile' && (
           <ProfilePanel user={user} userId={userId} apiUrl={API_URL}
-            onNavigate={handleOpenPanel} onSignOut={signOut}
-            getAccessToken={getAccessToken} refreshKey={dashboardRefreshKey} />
+            onNavigate={handleOpenPanel} onSignOut={signOut as any}
+            getAccessToken={getAccessToken} {...{ refreshKey: dashboardRefreshKey } as any} />
         )}
         {openPanel === 'help' && <HelpSupportPanel userId={userId} apiUrl={API_URL} />}
         {openPanel === 'recents' && (
