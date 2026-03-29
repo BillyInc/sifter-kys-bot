@@ -9,7 +9,12 @@ import os
 celery = Celery(
     'sifter_tasks',
     broker=os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
-    backend=os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    backend=os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+    include=[
+        'services.tasks',
+        'tasks.token_discovery',
+        'tasks.wallet_qualification',
+    ],
 )
 
 # Celery configuration
