@@ -5,9 +5,9 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Semaphore
+import threading
 from datetime import datetime, timedelta
 import duckdb
-import time
 import asyncio
 import aiohttp
 from asyncio import Semaphore as AsyncSemaphore
@@ -16,6 +16,30 @@ import redis as redis_lib
 import os
 import random
 from utils import _roi_to_score
+
+
+class _TokenBucket:
+    """Simple token bucket rate limiter for API calls."""
+    def __init__(self, rate_per_second=3, burst=5):
+        self.rate = rate_per_second
+        self.burst = burst
+        self.tokens = burst
+        self.last_refill = time.time()
+        self.lock = threading.Lock()
+
+    def acquire(self):
+        with self.lock:
+            now = time.time()
+            self.tokens = min(self.burst, self.tokens + (now - self.last_refill) * self.rate)
+            self.last_refill = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
+        # No tokens available — wait
+        time.sleep(1.0 / self.rate)
+
+
+_st_rate_limiter = _TokenBucket(rate_per_second=3, burst=5)
 
 # ============================================================
 # CACHE TTL CONSTANTS
@@ -100,10 +124,10 @@ class WalletPumpAnalyzer:
         self._redis = self._init_redis()
 
         self.max_workers = 8
-        self.solana_tracker_semaphore       = Semaphore(1)
-        self.pnl_semaphore                  = Semaphore(1)
-        self.solana_tracker_async_semaphore = AsyncSemaphore(1)
-        self.pnl_async_semaphore            = AsyncSemaphore(1)
+        self.solana_tracker_semaphore       = Semaphore(4)
+        self.pnl_semaphore                  = Semaphore(3)
+        self.solana_tracker_async_semaphore = AsyncSemaphore(4)
+        self.pnl_async_semaphore            = AsyncSemaphore(3)
         self.executor = None
 
         self._trending_cache = {}
@@ -254,6 +278,7 @@ class WalletPumpAnalyzer:
     def fetch_with_retry(self, url, headers, params=None, semaphore=None, max_retries=3):
         for attempt in range(max_retries):
             try:
+                _st_rate_limiter.acquire()
                 if semaphore:
                     semaphore.acquire()
                     try:
@@ -269,8 +294,8 @@ class WalletPumpAnalyzer:
                     return None
                 elif response.status_code == 429:
                     wait_time = int(response.headers.get('Retry-After', 10))
-                    self._log(f"Rate limited. Waiting {wait_time}s...")
-                    time.sleep(wait_time + 2)
+                    self._log(f"Rate limited. Waiting {min(wait_time, 5)}s...")
+                    time.sleep(min(wait_time, 5))
                     continue
                 else:
                     return None

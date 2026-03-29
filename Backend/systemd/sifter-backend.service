@@ -12,7 +12,8 @@ Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
 EnvironmentFile=/home/ubuntu/sifter-backend/.env
 ExecStart=/home/ubuntu/sifter-backend/.venv/bin/gunicorn \
     --workers 2 \
-    --worker-class sync \
+    --worker-class gevent \
+    --worker-connections 200 \
     --bind 0.0.0.0:5000 \
     --timeout 300 \
     --graceful-timeout 30 \

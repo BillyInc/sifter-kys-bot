@@ -29,7 +29,13 @@ import { Toaster, toast } from 'sonner';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const POLL_INTERVAL_MS  = 3_000;
-const MAX_POLL_ATTEMPTS = 400;   // 400 × 3s = 20 minutes
+const MAX_POLL_ATTEMPTS = 200;
+
+const getPollingInterval = (attempt) => {
+  if (attempt < 10) return 3000;
+  if (attempt < 30) return 5000;
+  return 10000;
+};
 
 const TRENDING_CACHE_KEY = 'sifter_trending_runners';
 const TRENDING_CACHE_TTL = 10 * 60 * 1000;
@@ -275,17 +281,25 @@ export default function SifterKYS() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, userId]);
 
-  // ── Global poll — ALL types including analyze ─────────────────────────────
+  // ── Global poll — ALL types including analyze (with exponential backoff) ──
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const intervalId = setInterval(async () => {
+    let cancelled = false;
+    let attempt = 0;
+    let timeoutId;
+
+    const poll = async () => {
+      if (cancelled) return;
+
       const authToken = getAccessToken();
-      if (!authToken) return;
+      if (!authToken) { scheduleNext(); return; }
 
       const currentAnalyses = activeAnalysesRef.current;
       const hasActive = Object.values(currentAnalyses).some(Boolean);
-      if (!hasActive) return;
+      if (!hasActive) { attempt = 0; scheduleNext(); return; }
+
+      attempt++;
 
       for (const [type, analysis] of Object.entries(currentAnalyses)) {
         if (!analysis?.jobId) continue;
@@ -345,10 +359,19 @@ export default function SifterKYS() {
           }
         } catch (e) { console.error(`Poll error for ${type}:`, e); }
       }
-    }, POLL_INTERVAL_MS);
 
-    pollIntervalsRef.current['__global'] = intervalId;
-    return () => clearInterval(intervalId);
+      scheduleNext();
+    };
+
+    function scheduleNext() {
+      if (cancelled) return;
+      timeoutId = setTimeout(poll, getPollingInterval(attempt));
+    }
+
+    timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+    pollIntervalsRef.current['__global'] = timeoutId;
+
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, API_URL, getAccessToken, completeAnalysis, deleteActiveAnalysisFromRedis]);
 
