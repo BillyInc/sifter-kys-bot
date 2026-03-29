@@ -12,7 +12,9 @@ Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
 EnvironmentFile=/home/ubuntu/sifter-backend/.env
 ExecStart=/home/ubuntu/sifter-backend/.venv/bin/python -m rq.cli worker \
     --name worker-%i \
-    -w rq.SimpleWorker
+    -w rq.SimpleWorker \
+    --url ${REDIS_URL} \
+    default compute high
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
@@ -22,7 +24,7 @@ TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/home/ubuntu/sifter-backend/logs
+ReadWritePaths=/home/ubuntu/sifter-backend
 
 [Install]
 WantedBy=multi-user.target
