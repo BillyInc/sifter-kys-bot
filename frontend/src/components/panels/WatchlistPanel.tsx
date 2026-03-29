@@ -342,15 +342,15 @@ export default function WatchlistPanel({ userId, apiUrl }: WatchlistPanelProps) 
     setIsRefreshing(false);
   };
 
-  const getAuthHeaders = (contentType = false) => {
+  const getAuthHeaders = (contentType = false): Record<string, string> => {
     const authToken = getAccessToken();
-    const h = {};
+    const h: Record<string, string> = {};
     if (authToken) h['Authorization'] = `Bearer ${authToken}`;
     if (contentType) h['Content-Type'] = 'application/json';
     return h;
   };
 
-  const handleRefreshWallet = async (addr) => {
+  const handleRefreshWallet = async (addr: string) => {
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/watchlist/${addr}/refresh`, {
         method: 'POST', headers: getAuthHeaders(true),
@@ -361,7 +361,7 @@ export default function WatchlistPanel({ userId, apiUrl }: WatchlistPanelProps) 
     } catch (err) { console.error('Error refreshing wallet:', err); }
   };
 
-  const handleDeleteWallet = async (addr) => {
+  const handleDeleteWallet = async (addr: string) => {
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/watchlist/remove`, {
         method: 'POST', headers: getAuthHeaders(true),

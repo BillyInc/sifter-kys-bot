@@ -1,4 +1,4 @@
-// SimulatorModal.jsx
+// SimulatorModal.tsx
 // Wallet simulation wizard — 3 modes: Copy Simulator, Skill vs Luck, Exit Strategy
 // Matches existing ResultsPanel design language exactly
 
@@ -11,9 +11,9 @@ import {
 } from 'lucide-react';
 
 // ── Formatters (mirrors ResultsPanel) ────────────────────────────────────────
-const fmtX   = (v) => (v != null && !isNaN(v) ? `${Number(v).toFixed(2)}x` : '—');
-const fmtPct = (v) => (v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` : '—');
-const fmtUsd = (v) => {
+const fmtX   = (v: any) => (v != null && !isNaN(v) ? `${Number(v).toFixed(2)}x` : '—');
+const fmtPct = (v: any) => (v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` : '—');
+const fmtUsd = (v: any) => {
   if (v == null || v === 0) return '$0';
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
   if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
@@ -44,11 +44,11 @@ const C = {
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
 
-const Mono = ({ children, style = {} }) => (
+const Mono = ({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) => (
   <span style={{ fontFamily: 'monospace', ...style }}>{children}</span>
 );
 
-const Label = ({ children }) => (
+const Label = ({ children }: { children: React.ReactNode }) => (
   <div style={{
     fontFamily: 'monospace', fontSize: 9, color: C.grayL,
     textTransform: 'uppercase', letterSpacing: '0.10em',
@@ -58,7 +58,7 @@ const Label = ({ children }) => (
   </div>
 );
 
-const MiniLabel = ({ children }) => (
+const MiniLabel = ({ children }: { children: React.ReactNode }) => (
   <div style={{
     fontFamily: 'monospace', fontSize: 7, color: C.grayD,
     textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3,
@@ -71,7 +71,7 @@ const Divider = () => (
   <div style={{ height: 1, background: C.border, margin: '16px 0' }} />
 );
 
-const StatCell = ({ label, value, color = C.white, sub }) => (
+const StatCell = ({ label, value, color = C.white, sub }: { label: string; value: string; color?: string; sub?: string }) => (
   <div style={{
     padding: '8px 10px', borderRadius: 4,
     background: C.bg3, border: `1px solid ${C.border2}`,
@@ -82,7 +82,7 @@ const StatCell = ({ label, value, color = C.white, sub }) => (
   </div>
 );
 
-const ProbBar = ({ label, pct, color, value }) => (
+const ProbBar = ({ label, pct, color, value }: { label: string; pct: number; color: string; value: string }) => (
   <div style={{ marginBottom: 10 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
       <Mono style={{ fontSize: 10, color: C.grayL }}>{label}</Mono>
@@ -179,15 +179,22 @@ const EXIT_OPTIONS = [
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessToken }) {
-  const [activeTab,    setActiveTab]    = useState('copy');
-  const [delayIdx,     setDelayIdx]     = useState(2);          // default: average user
-  const [exitId,       setExitId]       = useState('trail20');
-  const [filterMin,    setFilterMin]    = useState('0');        // min buy size $ (string to allow empty while typing)
-  const [ignoreSells,  setIgnoreSells]  = useState(false);
-  const [loading,      setLoading]      = useState(false);
-  const [results,      setResults]      = useState(null);       // null = not run yet
-  const [error,        setError]        = useState(null);
+interface SimulatorModalProps {
+  walletData: any;
+  onClose: () => void;
+  apiUrl: string;
+  getAccessToken: () => string | null;
+}
+
+export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessToken }: SimulatorModalProps) {
+  const [activeTab,    setActiveTab]    = useState<string>('copy');
+  const [delayIdx,     setDelayIdx]     = useState<number>(2);          // default: average user
+  const [exitId,       setExitId]       = useState<string>('trail20');
+  const [filterMin,    setFilterMin]    = useState<string>('0');        // min buy size $ (string to allow empty while typing)
+  const [ignoreSells,  setIgnoreSells]  = useState<boolean>(false);
+  const [loading,      setLoading]      = useState<boolean>(false);
+  const [results,      setResults]      = useState<any>(null);       // null = not run yet
+  const [error,        setError]        = useState<string | null>(null);
 
   const addr       = walletData?.wallet || walletData?.wallet_address || '';
   const shortAddr  = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';

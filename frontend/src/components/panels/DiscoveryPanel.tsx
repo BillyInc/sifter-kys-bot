@@ -66,7 +66,7 @@ export default function DiscoveryPanel({
     setTimeoutMessage('');
   };
 
-  const attemptRecovery = async (jobId) => {
+  const attemptRecovery = async (jobId: string) => {
     setTimeoutMessage('Attempting to recover result from server…');
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/jobs/${jobId}/recover`, { method: 'POST' });
@@ -88,7 +88,7 @@ export default function DiscoveryPanel({
   };
 
   // Local poll — feeds progress into parent's global tracking
-  const pollJobProgress = (jobId) => {
+  const pollJobProgress = (jobId: string) => {
     pollCountRef.current = 0;
 
     pollIntervalRef.current = setInterval(async () => {
@@ -172,7 +172,7 @@ export default function DiscoveryPanel({
     }
   };
 
-  const handleAddWallet = async (wallet) => {
+  const handleAddWallet = async (wallet: any) => {
     try {
       const response = await fetch(`${apiUrl}/api/wallets/watchlist/add`, {
         method: 'POST',

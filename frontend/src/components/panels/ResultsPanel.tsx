@@ -1,4 +1,4 @@
-// ResultsPanel.jsx — REBUILT with all fixes applied:
+// ResultsPanel.tsx — REBUILT with all fixes applied:
 // 1. Per-token breakdown table in expanded panel (replaces single MCap boxes)
 // 2. Section divider between cross-token and single-token wallets
 // 3. Consistency score displayed as LOW/MED/HIGH with color — no raw number shown
@@ -16,7 +16,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-const fmtMcap = (v) => {
+const fmtMcap = (v: any) => {
   if (v == null || v === 0) return '—';
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
@@ -24,18 +24,18 @@ const fmtMcap = (v) => {
   return `$${Number(v).toFixed(0)}`;
 };
 
-const fmtUsd = (v) => {
+const fmtUsd = (v: any) => {
   if (v == null || v === 0) return '$0';
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
   if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
   return `$${Number(v).toFixed(2)}`;
 };
 
-const fmtX   = (v) => (v != null && !isNaN(v) ? `${Number(v).toFixed(2)}x` : '—');
-const fmtPct = (v) => (v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` : '—');
+const fmtX   = (v: any) => (v != null && !isNaN(v) ? `${Number(v).toFixed(2)}x` : '—');
+const fmtPct = (v: any) => (v != null && !isNaN(v) ? `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%` : '—');
 
 // ── Consistency label — NO raw number shown ───────────────────────────────────
-const consistencyLabel = (score) => {
+const consistencyLabel = (score: any) => {
   if (score == null) return { label: '—', color: '#7c879c' };
   if (score >= 70) return { label: 'HIGH',  color: '#22c55e' };
   if (score >= 40) return { label: 'MED',   color: '#eab308' };
@@ -43,7 +43,15 @@ const consistencyLabel = (score) => {
 };
 
 // ── StatBar ───────────────────────────────────────────────────────────────────
-const StatBar = ({ label, val, pct, color = '#3b82f6', sublabel }) => (
+interface StatBarProps {
+  label: string;
+  val: string;
+  pct: number;
+  color?: string;
+  sublabel?: string;
+}
+
+const StatBar = ({ label, val, pct, color = '#3b82f6', sublabel }: StatBarProps) => (
   <div style={{ marginBottom: 8 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
       <div>
@@ -70,7 +78,7 @@ const StatBar = ({ label, val, pct, color = '#3b82f6', sublabel }) => (
 );
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const gradeColor = (g) => {
+const gradeColor = (g: string | null) => {
   if (!g) return '#7c879c';
   if (g.startsWith('A')) return '#22c55e';
   if (g.startsWith('B')) return '#3b82f6';
@@ -90,7 +98,13 @@ const COL_TEMPLATE_BATCH  = '30px 40px minmax(220px, 3fr) 50px 55px 60px 100px 1
 const COL_TEMPLATE_SINGLE = '30px 40px minmax(260px, 3fr) 50px 60px 110px 110px 100px 110px';
 
 // ── Per-token breakdown table ─────────────────────────────────────────────────
-const PerTokenTable = ({ roiDetails, copyToClipboard, copiedRunnerAddress }) => {
+interface PerTokenTableProps {
+  roiDetails: any[];
+  copyToClipboard: (addr: string, type?: string) => void;
+  copiedRunnerAddress: string | null;
+}
+
+const PerTokenTable = ({ roiDetails, copyToClipboard, copiedRunnerAddress }: PerTokenTableProps) => {
   if (!roiDetails || roiDetails.length === 0) return (
     <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#5d6a81' }}>No token detail available</div>
   );
@@ -188,12 +202,22 @@ const SectionDivider = ({ label, count, sublabel }) => (
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimulate, resultType, formatNumber, formatPrice }) {
-  const [expandedWallets,     setExpandedWallets]     = useState({});
-  const [selectedWallets,     setSelectedWallets]     = useState(new Set());
-  const [copiedAddress,       setCopiedAddress]       = useState(null);
-  const [copiedTokenAddress,  setCopiedTokenAddress]  = useState(null);
-  const [copiedRunnerAddress, setCopiedRunnerAddress] = useState(null);
+interface ResultsPanelProps {
+  data: any;
+  onClose: () => void;
+  onAddToWatchlist: (wallet: any) => void;
+  onSimulate: (walletData: any) => void;
+  resultType: string;
+  formatNumber: (v: any) => string;
+  formatPrice: (v: any) => string;
+}
+
+export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimulate, resultType, formatNumber, formatPrice }: ResultsPanelProps) {
+  const [expandedWallets,     setExpandedWallets]     = useState<Record<string, boolean>>({});
+  const [selectedWallets,     setSelectedWallets]     = useState<Set<string>>(new Set());
+  const [copiedAddress,       setCopiedAddress]       = useState<string | null>(null);
+  const [copiedTokenAddress,  setCopiedTokenAddress]  = useState<string | null>(null);
+  const [copiedRunnerAddress, setCopiedRunnerAddress] = useState<string | null>(null);
 
   const isBatch     = resultType?.includes('batch') || resultType === 'discovery';
   const hasExpanded = Object.values(expandedWallets).some(Boolean);

@@ -117,7 +117,7 @@ export default function QuickAddWalletPanel({
     }
   };
 
-  const applyPreset = (preset) => {
+  const applyPreset = (preset: { address: string; label: string; description: string }) => {
     setWalletAddress(preset.address);
     setTags('stress-test, high-volume');
     setNotes(`Preset: ${preset.label} - ${preset.description}`);

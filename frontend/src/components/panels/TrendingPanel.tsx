@@ -12,7 +12,7 @@ const POLL_INTERVAL_MS  = 3_000;
 const MAX_POLL_ATTEMPTS = 400;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-const fmtNum = (v) => {
+const fmtNum = (v: any) => {
   if (!v) return '$0';
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
@@ -20,7 +20,7 @@ const fmtNum = (v) => {
   return `$${v.toFixed(2)}`;
 };
 
-const fmtPrice = (p) => {
+const fmtPrice = (p: any) => {
   if (!p) return '$0';
   if (p < 0.000001) return `$${p.toExponential(2)}`;
   if (p < 0.01)     return `$${p.toFixed(6)}`;
@@ -28,7 +28,7 @@ const fmtPrice = (p) => {
   return `$${p.toFixed(2)}`;
 };
 
-const formatTs = (d) =>
+const formatTs = (d: Date | null) =>
   d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 
 const RANK_BADGES = ['🥇', '🥈', '🥉'];
@@ -41,7 +41,14 @@ const MULT_COLORS = {
 };
 
 // ─── Stat pill ─────────────────────────────────────────────────────────────────
-const StatPill = ({ label, value, color = '#94a3b8', accent = false }) => (
+interface StatPillProps {
+  label: string;
+  value: string;
+  color?: string;
+  accent?: boolean;
+}
+
+const StatPill = ({ label, value, color = '#94a3b8', accent = false }: StatPillProps) => (
   <div style={{
     display: 'flex', flexDirection: 'column', gap: 2,
     padding: '5px 9px', borderRadius: 6,
@@ -59,7 +66,19 @@ const StatPill = ({ label, value, color = '#94a3b8', accent = false }) => (
 );
 
 // ─── Runner card ───────────────────────────────────────────────────────────────
-const RunnerCard = ({ token, rank, isSelected, isAnalyzingThis, isAnalysisRunning, showBatch, onToggle, onAnalyze, onCancel }) => {
+interface RunnerCardProps {
+  token: any;
+  rank: number;
+  isSelected: boolean;
+  isAnalyzingThis: boolean;
+  isAnalysisRunning: boolean;
+  showBatch: boolean;
+  onToggle: (token: any) => void;
+  onAnalyze: (token: any) => void;
+  onCancel: (...args: any[]) => void;
+}
+
+const RunnerCard = ({ token, rank, isSelected, isAnalyzingThis, isAnalysisRunning, showBatch, onToggle, onAnalyze, onCancel }: RunnerCardProps) => {
   const multColor =
     token.multiplier >= 50 ? '#a78bfa' :
     token.multiplier >= 20 ? '#38bdf8' :
@@ -241,6 +260,24 @@ const ProgressBar = ({ current, total, color = '#fb923c', phase = '' }) => {
 };
 
 // ─── Core panel ────────────────────────────────────────────────────────────────
+interface TrendingPanelCoreProps {
+  userId: string;
+  apiUrl: string;
+  onClose: () => void;
+  formatNumber: (v: any) => string;
+  formatPrice: (v: any) => string;
+  onResultsReady: (...args: any[]) => any;
+  onAnalysisStart: (info: any) => void;
+  onAnalysisProgress: (progress: any) => void;
+  onAnalysisComplete: (data: any) => void;
+  activeAnalysis: any;
+  preloadedRunners?: any[];
+  isRefreshingRunners?: boolean;
+  lastRefreshed?: number | null;
+  onRefreshRunners?: (runners?: any[]) => void;
+  onMinimize?: () => void;
+}
+
 function TrendingPanelCore({
   userId, apiUrl, onClose, formatNumber, formatPrice, onResultsReady,
   onAnalysisStart, onAnalysisProgress, onAnalysisComplete, activeAnalysis,
@@ -249,32 +286,32 @@ function TrendingPanelCore({
   lastRefreshed = null,
   onRefreshRunners,
   onMinimize,
-}) {
-  const [runners, setRunners]                   = useState(preloadedRunners);
-  const [isLoading, setIsLoading]               = useState(false);
-  const [isLiveRefreshing, setIsLiveRefreshing] = useState(false);
-  const [selectedRunners, setSelectedRunners]   = useState([]);
-  const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false);
-  const [isSingleAnalyzing, setIsSingleAnalyzing] = useState(false);
-  const [analyzingToken, setAnalyzingToken]     = useState(null);
-  const [currentJobId, setCurrentJobId]         = useState(null);
-  const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0, phase: '' });
-  const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
-  const [timeoutMessage, setTimeoutMessage]     = useState('');
-  const [queuePosition, setQueuePosition]       = useState(null);
-  const [estimatedWait, setEstimatedWait]       = useState(null);
-  const [liveUpdate, setLiveUpdate]             = useState(false);
-  const [lastUpdated, setLastUpdated]           = useState(lastRefreshed ? new Date(lastRefreshed) : null);
-  const [showBatch, setShowBatch]               = useState(false);
-  const [showFilters, setShowFilters]           = useState(false);
-  const [filters, setFilters]                   = useState(() => {
-    try { return JSON.parse(localStorage.getItem('trendingFilters')) || defaultFilters(); }
+}: TrendingPanelCoreProps) {
+  const [runners, setRunners]                   = useState<any[]>(preloadedRunners);
+  const [isLoading, setIsLoading]               = useState<boolean>(false);
+  const [isLiveRefreshing, setIsLiveRefreshing] = useState<boolean>(false);
+  const [selectedRunners, setSelectedRunners]   = useState<any[]>([]);
+  const [isBatchAnalyzing, setIsBatchAnalyzing] = useState<boolean>(false);
+  const [isSingleAnalyzing, setIsSingleAnalyzing] = useState<boolean>(false);
+  const [analyzingToken, setAnalyzingToken]     = useState<string | null>(null);
+  const [currentJobId, setCurrentJobId]         = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<Record<string, any>>({ current: 0, total: 0, phase: '' });
+  const [analysisTimedOut, setAnalysisTimedOut] = useState<boolean>(false);
+  const [timeoutMessage, setTimeoutMessage]     = useState<string>('');
+  const [queuePosition, setQueuePosition]       = useState<number | null>(null);
+  const [estimatedWait, setEstimatedWait]       = useState<number | null>(null);
+  const [liveUpdate, setLiveUpdate]             = useState<boolean>(false);
+  const [lastUpdated, setLastUpdated]           = useState<Date | null>(lastRefreshed ? new Date(lastRefreshed) : null);
+  const [showBatch, setShowBatch]               = useState<boolean>(false);
+  const [showFilters, setShowFilters]           = useState<boolean>(false);
+  const [filters, setFilters]                   = useState<Record<string, any>>(() => {
+    try { return JSON.parse(localStorage.getItem('trendingFilters') || 'null') || defaultFilters(); }
     catch { return defaultFilters(); }
   });
 
-  const liveIntervalRef = useRef(null);
-  const pollIntervalRef = useRef(null);
-  const pollCountRef    = useRef(0);
+  const liveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef    = useRef<number>(0);
 
   function defaultFilters() {
     return { timeframe: '7d', minMultiplier: 5, minLiquidity: 10000, minVolume: 50000 };
@@ -939,11 +976,16 @@ function TrendingPanelCore({
 }
 
 // ─── Wrapper: stale-while-revalidate ──────────────────────────────────────────
-export default function TrendingPanel({ cachedRunners = [], onRunnersLoaded, ...coreProps }) {
-  const [runners, setRunners]               = useState(cachedRunners);
-  const [isRefreshing, setIsRefreshing]     = useState(false);
-  const [lastRefreshed, setLastRefreshed]   = useState(null);
-  const fetchedRef = useRef(false);
+interface TrendingPanelProps extends Omit<TrendingPanelCoreProps, 'preloadedRunners' | 'isRefreshingRunners' | 'lastRefreshed' | 'onRefreshRunners'> {
+  cachedRunners?: any[];
+  onRunnersLoaded?: (runners: any[]) => void;
+}
+
+export default function TrendingPanel({ cachedRunners = [], onRunnersLoaded, ...coreProps }: TrendingPanelProps) {
+  const [runners, setRunners]               = useState<any[]>(cachedRunners);
+  const [isRefreshing, setIsRefreshing]     = useState<boolean>(false);
+  const [lastRefreshed, setLastRefreshed]   = useState<number | null>(null);
+  const fetchedRef = useRef<boolean>(false);
 
   const fetchRunners = useCallback(async () => {
     setIsRefreshing(true);
@@ -966,10 +1008,10 @@ export default function TrendingPanel({ cachedRunners = [], onRunnersLoaded, ...
     }
   }, []); // eslint-disable-line
 
-  const handleRunnersLoaded = useCallback((freshRunners) => {
-    setRunners(freshRunners);
+  const handleRunnersLoaded = useCallback((freshRunners?: any[]) => {
+    if (freshRunners) setRunners(freshRunners);
     setLastRefreshed(Date.now());
-    onRunnersLoaded?.(freshRunners);
+    if (freshRunners) onRunnersLoaded?.(freshRunners);
   }, [onRunnersLoaded]);
 
   return (
