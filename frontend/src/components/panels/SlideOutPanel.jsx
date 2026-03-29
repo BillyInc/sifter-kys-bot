@@ -27,9 +27,10 @@ export default function SlideOutPanel({
       />
 
       <div 
-        className={`fixed top-0 ${direction === 'left' ? 'left-0' : 'right-0'} h-full ${width} bg-gradient-to-br from-gray-900 to-black border-${direction === 'left' ? 'r' : 'l'} border-white/10 z-50 flex flex-col shadow-2xl animate-slide-in-${direction}`}
+        className={`fixed top-0 ${direction === 'left' ? 'left-0' : 'right-0'} h-full ${width} border-${direction === 'left' ? 'r' : 'l'} z-50 flex flex-col shadow-2xl animate-slide-in-${direction}`}
+        style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}
       >
-        <div className="flex-shrink-0 flex items-center justify-between p-4 border-b border-white/10">
+        <div className="flex-shrink-0 flex items-center justify-between p-4 border-b" style={{ borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
           <h2 className="text-lg font-bold">{title}</h2>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition">
             <X size={20} />

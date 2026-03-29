@@ -64,7 +64,8 @@ export default function DashboardHome({
             <button
               key={action.id}
               onClick={() => onOpenPanel(action.id)}
-              className="group relative bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-500/50 rounded-xl p-4 sm:p-6 transition-all duration-300"
+              className="group relative hover:border-purple-500/50 border rounded-xl p-4 sm:p-6 transition-all duration-300"
+              style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
             >
               <div className="flex flex-col items-center gap-3">
                 <div className={`p-4 bg-${action.color}-500/20 rounded-xl group-hover:scale-110 transition-transform`}>
@@ -79,7 +80,7 @@ export default function DashboardHome({
 
       {/* ── Recent Activity ── */}
       {recentActivity.length > 0 && (
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="border rounded-xl p-4" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
           <h3 className="text-lg font-semibold mb-3">Recent Activity</h3>
           <div className="space-y-2">
             {recentActivity.slice(0, 5).map((activity, idx) => (

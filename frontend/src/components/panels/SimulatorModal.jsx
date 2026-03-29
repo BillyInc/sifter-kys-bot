@@ -272,8 +272,8 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
         transition={{ duration: 0.18 }}
         style={{
           width: '100%', maxWidth: 900,
-          background: C.bg1, borderRadius: 12,
-          border: '1px solid #1e2a3a',
+          background: 'var(--bg-primary)', borderRadius: 12,
+          border: '1px solid var(--border-color)',
           boxShadow: '0 32px 64px -12px rgba(0,0,0,0.9), 0 0 0 1px rgba(168,85,247,0.1)',
           display: 'flex', flexDirection: 'column',
           maxHeight: '92vh', overflow: 'hidden',

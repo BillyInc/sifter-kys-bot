@@ -335,9 +335,9 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
       <AnimatePresence>
         {isExpanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
-            <div style={{ background: '#060c14', borderTop: '1px solid #1a2640' }}>
+            <div style={{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-color)' }}>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid #1a2640' }}>
+              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
                 {[
                   { key: 'performance', label: '📊 Performance' },
                   { key: 'diary',       label: `📓 Diary${noteCount > 0 ? ` (${noteCount})` : ''}` },

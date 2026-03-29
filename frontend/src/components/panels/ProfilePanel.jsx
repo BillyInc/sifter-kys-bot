@@ -71,7 +71,7 @@ export default function ProfilePanel({
   ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" style={{ color: 'var(--text-primary)' }}>
       {/* User Info */}
       <div className="bg-gradient-to-br from-purple-900/20 to-purple-800/10 border border-purple-500/20 rounded-xl p-4">
         <div className="flex items-center gap-3 mb-2">

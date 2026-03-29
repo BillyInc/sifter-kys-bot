@@ -60,7 +60,8 @@ export default function WalletReplacementModal({
       onClick={onDismiss}
     >
       <div 
-        className="bg-gradient-to-br from-gray-900 to-gray-950 border border-white/10 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in"
+        className="border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in"
+        style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
