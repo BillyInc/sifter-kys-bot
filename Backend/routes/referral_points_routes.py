@@ -322,7 +322,7 @@ def get_dashboard():
             'success': True,
             'referrals': {
                 'code': code,
-                'link': f"https://your-app.com/signup?ref={code}",
+                'link': f"{os.environ.get('FRONTEND_URL', 'https://sifter-kys-web.duckdns.org')}?ref={code}",
                 'stats': code_stats or {},
                 'conversions': total_conversions,
                 'total_earnings': total_earnings
