@@ -101,6 +101,13 @@ celery.conf.beat_schedule = {
         'schedule': crontab(minute='*/10'),
         'options': {'expires': 540, 'queue': 'stats'}
     },
+
+    # Purge notifications older than 30 days — daily at 2:30 AM UTC
+    'purge-old-notifications': {
+        'task': 'tasks.purge_old_notifications',
+        'schedule': crontab(hour=2, minute=30),
+        'options': {'expires': 3600, 'queue': 'stats'}
+    },
 }
 
 # Task routes
@@ -116,6 +123,7 @@ celery.conf.task_routes = {
     'tasks.flush_redis_to_duckdb':       {'queue': 'stats'},
     'tasks.invalidate_stale_ath_caches': {'queue': 'stats'},
     'tasks.purge_stale_analysis_cache':  {'queue': 'stats'},
+    'tasks.purge_old_notifications':     {'queue': 'stats'},
 }
 
 print("""
@@ -130,6 +138,7 @@ print("""
   👥 Community Top 100:        Every hour (:15)
   💾 Redis → DuckDB flush:     Every hour (:30)
   🔄 ATH cache invalidation:   Every hour (:45)
+  🗑️  Notification TTL purge:    Daily 2:30am UTC
 
   Start with:
     celery -A celery_app worker --loglevel=info -Q default,stats,rankings,discovery

@@ -2,10 +2,30 @@
 from datetime import datetime
 from typing import Optional
 import traceback
+import json
+import os
+
+import redis as redis_lib
 
 from analyzers import PrecisionRallyDetector, NLPDisambiguator
 from twitter import TwitterTweetExtractor
 from config import Config
+
+# ---------------------------------------------------------------------------
+# Redis cache helpers for Twitter caller data (24h TTL)
+# ---------------------------------------------------------------------------
+_redis = redis_lib.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+
+
+def _cache_get(key: str):
+    """Get a JSON value from Redis cache."""
+    val = _redis.get(key)
+    return json.loads(val) if val else None
+
+
+def _cache_set(key: str, value, ttl: int = 86400):
+    """Set a JSON value in Redis cache with TTL (default 24h)."""
+    _redis.setex(key, ttl, json.dumps(value))
 
 
 class TokenAnalyzerService:
@@ -29,6 +49,16 @@ class TokenAnalyzerService:
         """
         settings = token.get('settings', {})
         prefix = f"[{idx}/{total}]"
+
+        # Check Redis cache for previous analysis result (24h TTL)
+        cache_key = f"twitter_callers:{token.get('ticker', token.get('address', ''))}"
+        try:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                print(f"{prefix} Cache hit for {cache_key}")
+                return cached
+        except Exception:
+            pass  # Redis unavailable — proceed without cache
 
         try:
             detector = PrecisionRallyDetector(birdeye_api_key=self.birdeye_api_key)
@@ -70,11 +100,19 @@ class TokenAnalyzerService:
             )
 
             print(f"{prefix} Analysis complete")
-            return self._success_result(
+            result = self._success_result(
                 token, rally_details, top_accounts,
                 f"{len(rallies)} pump(s) detected",
                 all_account_data
             )
+
+            # Cache result for 24 hours
+            try:
+                _cache_set(cache_key, result, 86400)
+            except Exception:
+                pass  # Redis unavailable — skip caching
+
+            return result
 
         except Exception as e:
             print(f"{prefix} Error: {str(e)}")

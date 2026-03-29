@@ -13,6 +13,7 @@ Tasks:
   invalidate_stale_ath_caches  — every hour (:45)  NEW
   purge_stale_analysis_cache   — one-time / on-demand  NEW
   send_telegram_alert_async    — on-demand (queued by wallet monitor)
+  purge_old_notifications      — daily 2:30am UTC (30-day TTL)
 """
 from celery_app import celery
 from datetime import datetime, date, timedelta
@@ -1246,3 +1247,24 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
             'status': 'error',
             'error':  str(e)
         }
+
+
+# =============================================================================
+# NOTIFICATION TTL — PURGE OLD NOTIFICATIONS
+# =============================================================================
+
+@celery.task(name='tasks.purge_old_notifications')
+def purge_old_notifications():
+    """Delete notifications older than 30 days."""
+    print(f"[CELERY TASK] Purging old notifications - {datetime.utcnow().isoformat()}")
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        supabase = get_supabase_client()
+        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        result = supabase.schema(SCHEMA_NAME).table('wallet_notifications').delete().lt('sent_at', cutoff).execute()
+        count = len(result.data) if result.data else 0
+        print(f"[PURGE] Deleted {count} notifications older than 30 days")
+        return {'status': 'success', 'deleted': count}
+    except Exception as e:
+        print(f"[PURGE] Failed: {e}")
+        return {'status': 'error', 'error': str(e)}
