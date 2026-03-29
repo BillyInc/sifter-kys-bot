@@ -547,11 +547,11 @@ export default function SifterKYS() {
   const config = getPanelConfig(openPanel);
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
+    <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}>
       <Toaster position="top-right" theme={theme} richColors />
 
       {/* ── Navbar ── */}
-      <nav className="fixed top-0 w-full z-50 backdrop-blur-xl" style={{ backgroundColor: "var(--bg-nav)", borderBottom: "1px solid var(--border-color)" }}>
+      <nav className="flex-shrink-0 w-full z-50 backdrop-blur-xl" style={{ backgroundColor: "var(--bg-nav)", borderBottom: "1px solid var(--border-color)" }}>
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3">
           <div className="flex justify-between items-center">
             <div className="text-xl font-bold">
@@ -708,7 +708,7 @@ export default function SifterKYS() {
       </nav>
 
       {/* ── Dashboard ── */}
-      <div className="pt-20 max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
+      <div className="flex-1 overflow-y-auto max-w-7xl mx-auto w-full px-3 sm:px-6 py-4 sm:py-6">
         <DashboardHome user={user} onOpenPanel={handleOpenPanel} recentActivity={[]} />
       </div>
 
