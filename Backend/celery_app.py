@@ -89,6 +89,13 @@ celery.conf.beat_schedule = {
         'schedule': crontab(minute=45),
         'options': {'expires': 3600}
     },
+
+    # Pre-warm trending runners cache every 10 minutes
+    'warm-trending-cache': {
+        'task': 'tasks.warm_trending_cache',
+        'schedule': crontab(minute='*/10'),
+        'options': {'expires': 540, 'queue': 'stats'}
+    },
 }
 
 # Task routes

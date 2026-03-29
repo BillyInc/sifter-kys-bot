@@ -510,6 +510,30 @@ def four_week_degradation_check():
 
 
 # =============================================================================
+# WARM TRENDING CACHE
+# =============================================================================
+
+@celery.task(name='tasks.warm_trending_cache')
+def warm_trending_cache():
+    """Pre-warm the trending runners cache every 10 minutes.
+    Runs in Celery worker so the API endpoint always serves from cache."""
+    print(f"\n[CELERY TASK] Warming trending cache - {datetime.utcnow().isoformat()}")
+    try:
+        from routes.wallets import get_wallet_analyzer
+        analyzer = get_wallet_analyzer()
+        for days_back in [7, 14, 30]:
+            runners = analyzer.find_trending_runners_enhanced(
+                days_back=days_back, min_multiplier=5.0, min_liquidity=50000,
+            )
+            print(f"  {days_back}d: {len(runners)} runners cached")
+        return {'status': 'success', 'timestamp': datetime.utcnow().isoformat()}
+    except Exception as e:
+        print(f"[CELERY TASK] Trending cache warm failed: {e}")
+        traceback.print_exc()
+        return {'status': 'error', 'error': str(e)}
+
+
+# =============================================================================
 # ELITE 100 REFRESH
 # =============================================================================
 

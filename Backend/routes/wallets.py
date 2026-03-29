@@ -522,6 +522,8 @@ def get_trending_runners():
         return '', 204
 
     try:
+        import threading
+
         timeframe        = request.args.get('timeframe', '7d')
         min_liquidity    = float(request.args.get('min_liquidity', 50000))
         min_multiplier   = float(request.args.get('min_multiplier', 5))
@@ -533,6 +535,39 @@ def get_trending_runners():
         days_map        = {'7d': 7, '14d': 14, '30d': 30}
         days_back       = days_map.get(timeframe, 7)
 
+        # Try to serve from Redis/DuckDB cache first (fast path)
+        cache_key      = f"{days_back}_{min_multiplier}_{min_liquidity}_secure"
+        list_cache_key = f"trending:{cache_key}"
+        board_key      = f"trending_leaderboard:{cache_key}"
+
+        # Check Redis cache
+        cached = wallet_analyzer._redis_get(list_cache_key)
+        if cached is None:
+            # Check leaderboard cache (stale but available)
+            cached = wallet_analyzer._redis_get(board_key)
+
+        if cached is not None:
+            # Serve cached data immediately, refresh in background if stale
+            filtered = [
+                r for r in cached
+                if min_age_days <= r.get('token_age_days', 0) <= max_age_days
+            ]
+
+            # Trigger background refresh
+            def _bg_refresh():
+                try:
+                    wallet_analyzer.find_trending_runners_enhanced(
+                        days_back=days_back, min_multiplier=min_multiplier,
+                        min_liquidity=min_liquidity,
+                    )
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_refresh, daemon=True).start()
+
+            return jsonify({'success': True, 'runners': filtered, 'total': len(filtered),
+                            'security_filtered': True, 'cached': True}), 200
+
+        # No cache at all — must compute (slow, first request only)
         runners  = wallet_analyzer.find_trending_runners_enhanced(
             days_back=days_back, min_multiplier=min_multiplier, min_liquidity=min_liquidity,
         )
