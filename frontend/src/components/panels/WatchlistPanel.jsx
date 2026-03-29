@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   RefreshCw, TrendingUp, Activity, Bell, Zap, BookOpen, Plus, Pencil,
   X, Save, Tag, Clock, Lightbulb, ListTodo, StickyNote, Search, Trash2,
@@ -294,6 +295,7 @@ function GlobalDiary({ userId, apiUrl }) {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 export default function WatchlistPanel({ userId, apiUrl }) {
+  const { getAccessToken } = useAuth();
   const [wallets, setWallets]           = useState([]);
   const [lastUpdate, setLastUpdate]     = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -304,20 +306,29 @@ export default function WatchlistPanel({ userId, apiUrl }) {
   const loadWatchlist = async () => {
     setIsRefreshing(true);
     try {
-      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/table?user_id=${userId}`, {
-  headers: { 'Accept': 'application/json' },
-});
+      const authToken = getAccessToken();
+      const headers = { 'Accept': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/table`, { headers });
       const data = await res.json();
       if (data.success) { setWallets(data.wallets || []); setLastUpdate(new Date()); }
     } catch (err) { console.error('Error loading watchlist:', err); }
     setIsRefreshing(false);
   };
 
+  const getAuthHeaders = (contentType = false) => {
+    const authToken = getAccessToken();
+    const h = {};
+    if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+    if (contentType) h['Content-Type'] = 'application/json';
+    return h;
+  };
+
   const handleRefreshWallet = async (addr) => {
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/watchlist/${addr}/refresh`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
+        method: 'POST', headers: getAuthHeaders(true),
+        body: JSON.stringify({ wallet_address: addr }),
       });
       const data = await res.json();
       if (data.success) await loadWatchlist();
@@ -327,8 +338,8 @@ export default function WatchlistPanel({ userId, apiUrl }) {
   const handleDeleteWallet = async (addr) => {
     try {
       const res  = await fetch(`${apiUrl}/api/wallets/watchlist/remove`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, wallet_address: addr }),
+        method: 'POST', headers: getAuthHeaders(true),
+        body: JSON.stringify({ wallet_address: addr }),
       });
       const data = await res.json();
       if (data.success) setWallets(prev => prev.filter(w => w.wallet_address !== addr));
