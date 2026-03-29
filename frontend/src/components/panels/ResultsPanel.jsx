@@ -894,16 +894,17 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimula
         border: '1px solid #1e2a3a',
         boxShadow: '0 25px 50px -12px rgba(0,0,0,0.8), 0 0 0 1px rgba(124,58,237,0.12)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        margin: '0 4px',
       }}>
 
         {/* ── Header ── */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 20px', background: '#1e1b2e',
+          padding: '10px 12px', background: '#1e1b2e',
           borderBottom: '1px solid #2d2642', flexShrink: 0,
         }}>
           <div>
-            <div style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 700, color: '#fff', letterSpacing: '0.02em' }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: '0.02em' }}>
               {titleText} Results
             </div>
             {summary.token && (
@@ -958,7 +959,7 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimula
         {renderHeaders()}
 
         {/* ── Wallet rows ── */}
-        <div style={{ flex: 1, overflowY: 'auto', background: '#0b0f17', scrollbarWidth: 'thin', scrollbarColor: '#3f4a5c #1a2232' }}>
+        <div style={{ flex: 1, overflow: 'auto', background: '#0b0f17', scrollbarWidth: 'thin', scrollbarColor: '#3f4a5c #1a2232' }}>
           {allWallets.length === 0 ? (
             <div style={{ padding: '40px 24px', textAlign: 'center' }}>
               <BarChart3 size={40} style={{ color: '#3f4a5c', margin: '0 auto 16px', display: 'block' }} />
@@ -970,10 +971,9 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimula
 
         {/* ── Footer ── */}
         {allWallets.length > 0 && (
-          <div style={{
-            padding: hasExpanded ? '4px 20px' : '8px 20px',
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2" style={{
+            padding: hasExpanded ? '4px 12px' : '8px 12px',
             background: '#111827', borderTop: '1px solid #1e2a3a', flexShrink: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <button onClick={toggleSelectAll} style={{

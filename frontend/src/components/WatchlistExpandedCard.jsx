@@ -296,7 +296,8 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
 
       {/* Collapsed row */}
       <div onClick={() => setIsExpanded(!isExpanded)}
-        style={{ display: 'grid', gridTemplateColumns: '36px 140px 44px 52px 76px 68px 60px 60px 1fr', gap: 8, alignItems: 'center', padding: '11px 16px', cursor: 'pointer', background: isExpanded ? 'var(--bg-secondary)' : 'transparent' }}
+        className="watchlist-row-grid"
+        style={{ display: 'grid', gridTemplateColumns: '36px minmax(80px,140px) 44px 52px 76px 68px 60px 60px 1fr', gap: 8, alignItems: 'center', padding: '11px 12px', cursor: 'pointer', background: isExpanded ? 'var(--bg-secondary)' : 'transparent', overflowX: 'auto' }}
         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
         onMouseLeave={e => e.currentTarget.style.background = isExpanded ? 'var(--bg-secondary)' : 'transparent'}>
         <div style={{ fontFamily: 'monospace', fontSize: rank <= 3 ? 15 : 12, color: 'var(--text-secondary)', textAlign: 'center' }}>{rankDisplay}</div>
@@ -350,7 +351,7 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
               </div>
 
               {activeTab === 'performance' && (
-                <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" style={{ padding: '12px 16px', gap: 20 }}>
                   <div>
                     <div style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-secondary)', marginBottom: 12 }}>● Performance Metrics</div>
                     <StatBar label="ATH Distance"   val={`${Number(distanceToATH).toFixed(1)}x`}  pct={Math.min((distanceToATH / 100) * 100, 100)} color="#22c55e" />

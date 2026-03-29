@@ -288,7 +288,7 @@ export default function WalletLeagueTable({
                   <div className="text-xs font-semibold text-gray-400 mb-2">
                     Performance Overview:
                   </div>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }} className="border rounded p-2 text-center">
                       <div style={{ color: 'var(--text-primary)' }} className="text-sm font-bold">
                         {wallet.pump_count || 0}
@@ -457,20 +457,20 @@ export default function WalletLeagueTable({
   return (
     <div style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border-color)' }} className="border rounded-2xl overflow-hidden">
       {/* Table Header */}
-      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-4">
-        <div className="flex items-center justify-between">
-          <h2 style={{ color: 'var(--text-primary)' }} className="text-xl font-bold flex items-center gap-2">
+      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <h2 style={{ color: 'var(--text-primary)' }} className="text-base sm:text-xl font-bold flex items-center gap-2">
             📊 YOUR SMART MONEY WATCHLIST
           </h2>
-          <div style={{ color: 'var(--text-secondary)' }} className="text-sm">
+          <div style={{ color: 'var(--text-secondary)' }} className="text-xs sm:text-sm">
             Last Updated: {new Date().toLocaleTimeString()}
           </div>
         </div>
       </div>
 
       {/* Filter & Sort Bar */}
-      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-4">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b p-3 sm:p-4">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Filter size={16} className="text-purple-400" />
             <span className="text-sm font-semibold text-purple-300">Filter & Sort:</span>
@@ -529,7 +529,7 @@ export default function WalletLeagueTable({
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full min-w-[640px]">
           <thead style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }} className="border-b sticky top-0">
             <tr>
               <th style={{ color: 'var(--text-secondary)' }} className="px-3 py-3 text-center text-xs font-semibold uppercase">#</th>
@@ -607,9 +607,9 @@ export default function WalletLeagueTable({
               <div 
                 key={candidate.wallet || candidate.wallet_address}
                 style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)' }}
-                className="flex items-center justify-between p-3 rounded-lg border"
+                className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 rounded-lg border gap-2"
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs text-gray-500">#{idx + 1}</span>
                   <code className="text-sm font-mono text-purple-300">
                     {(candidate.wallet || candidate.wallet_address)?.slice(0, 12)}...

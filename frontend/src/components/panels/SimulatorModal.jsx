@@ -277,6 +277,7 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
           boxShadow: '0 32px 64px -12px rgba(0,0,0,0.9), 0 0 0 1px rgba(168,85,247,0.1)',
           display: 'flex', flexDirection: 'column',
           maxHeight: '92vh', overflow: 'hidden',
+          margin: '0 8px',
         }}
       >
         {/* ── Header ── */}
@@ -345,12 +346,13 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
         </div>
 
         {/* ── Body ── */}
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div className="flex flex-col sm:flex-row" style={{ flex: 1, overflow: 'hidden' }}>
 
           {/* ── Left: Config ── */}
-          <div style={{
-            width: 280, flexShrink: 0, padding: '16px 20px',
-            background: C.bg2, borderRight: `1px solid ${C.border}`,
+          <div className="w-full sm:w-[280px] shrink-0" style={{
+            padding: '12px 16px', background: C.bg2,
+            borderRight: `1px solid ${C.border}`,
+            borderBottom: `1px solid ${C.border}`,
             overflowY: 'auto',
           }}>
 
@@ -548,7 +550,7 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
           </div>
 
           {/* ── Right: Results ── */}
-          <div style={{ flex: 1, padding: '16px 20px', overflowY: 'auto', background: C.bg1 }}>
+          <div style={{ flex: 1, padding: '12px 16px', overflowY: 'auto', background: C.bg1 }}>
 
             {/* Loading */}
             {loading && (

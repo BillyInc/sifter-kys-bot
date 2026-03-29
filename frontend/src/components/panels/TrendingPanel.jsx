@@ -484,7 +484,7 @@ function TrendingPanelCore({
         flexShrink: 0,
       }}>
         {/* Title row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
               width: 32, height: 32, borderRadius: 8,
@@ -577,7 +577,7 @@ function TrendingPanelCore({
         {/* ── Timeframe selector ── */}
         <div style={{ marginBottom: 10 }}>
           <div style={sectionLabel}>Timeframe</div>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {[
               { value: '7d',  label: '7 days'  },
               { value: '14d', label: '14 days' },
@@ -608,7 +608,7 @@ function TrendingPanelCore({
         {/* ── Min multiplier selector ── */}
         <div>
           <div style={sectionLabel}>Min multiplier</div>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {[5, 10, 20, 50].map(m => {
               const mc     = MULT_COLORS[m];
               const active = filters.minMultiplier === m;

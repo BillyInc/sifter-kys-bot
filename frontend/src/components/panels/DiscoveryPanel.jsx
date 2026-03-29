@@ -368,7 +368,7 @@ export default function DiscoveryPanel({
                           }`}>{wallet.tier}-Tier</span>
                         )}
                       </div>
-                      <div className="grid grid-cols-3 gap-3 text-xs">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-xs">
                         <div><span className="text-gray-500">Runners:</span><span className="ml-1 text-yellow-400 font-bold">{wallet.runner_count || wallet.runner_hits_30d || 0}</span></div>
                         <div><span className="text-gray-500">Score:</span><span className="ml-1 font-bold" style={{ color: 'var(--text-primary)' }}>{wallet.avg_professional_score || wallet.professional_score || 0}</span></div>
                         <div><span className="text-gray-500">Avg ROI:</span><span className="ml-1 text-green-400 font-bold">+{(wallet.avg_roi || 0).toFixed(1)}%</span></div>

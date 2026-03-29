@@ -84,14 +84,14 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
       }}
     >
       <div 
-        className="border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in"
+        className="border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in mx-2 sm:mx-0"
         style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-6">
+        <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-4 sm:p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold flex items-center gap-3">
+            <h2 className="text-lg sm:text-xl font-bold flex items-center gap-3">
               <Settings className="text-purple-400" size={24} />
               Alert Settings
             </h2>
@@ -114,7 +114,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6 max-h-[60vh] overflow-y-auto">
           {/* Master Toggle */}
           <div className="bg-white/5 border border-white/10 rounded-xl p-4">
             <div className="flex items-center justify-between">
@@ -199,7 +199,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
               </h3>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {presetValues.map((preset) => (
                 <button
                   key={preset.value}
@@ -284,7 +284,7 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }) 
         </div>
 
         {/* Footer */}
-        <div className="bg-white/5 border-t border-white/10 p-4 flex gap-3">
+        <div className="bg-white/5 border-t border-white/10 p-3 sm:p-4 flex flex-col sm:flex-row gap-3">
           <button
             onClick={onClose}
             className="flex-1 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-semibold transition"

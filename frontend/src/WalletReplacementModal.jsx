@@ -60,15 +60,15 @@ export default function WalletReplacementModal({
       onClick={onDismiss}
     >
       <div 
-        className="border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in"
+        className="border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-scale-in mx-2 sm:mx-0"
         style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-6">
+        <div className="bg-gradient-to-r from-purple-900/50 to-purple-800/30 border-b border-white/10 p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-bold mb-1">🔄 Wallet Replacement</h2>
+              <h2 className="text-xl sm:text-2xl font-bold mb-1">🔄 Wallet Replacement</h2>
               <p className="text-sm text-gray-400">
                 Choose a better-performing wallet to replace the declining one
               </p>
@@ -83,15 +83,15 @@ export default function WalletReplacementModal({
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
           {/* Current Wallet (Declining) */}
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+          <div className="mb-6 p-3 sm:p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
             <div className="flex items-center gap-2 mb-3">
               <AlertCircle className="text-red-400" size={20} />
               <h3 className="font-bold text-red-400">Current Wallet (Declining)</h3>
             </div>
-            
-            <div className="grid grid-cols-4 gap-4">
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               <div>
                 <div className="text-xs text-gray-400 mb-1">Address</div>
                 <div className="flex items-center gap-2">
@@ -220,7 +220,7 @@ export default function WalletReplacementModal({
                       </div>
 
                       {/* Comparison Stats */}
-                      <div className="grid grid-cols-4 gap-3 mb-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                         <div className="bg-black/30 rounded p-2 text-center">
                           <div className={`text-lg font-bold ${
                             getComparisonColor(
@@ -294,7 +294,7 @@ export default function WalletReplacementModal({
                 <h4 className="font-semibold text-blue-400">Estimated Impact</h4>
               </div>
               
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-sm">
                 <div>
                   <span className="text-gray-400">Watchlist avg score:</span>
                   <span className="ml-2 text-white font-bold">
@@ -320,7 +320,7 @@ export default function WalletReplacementModal({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-white/10 p-4 bg-white/5 flex gap-3">
+        <div className="border-t border-white/10 p-3 sm:p-4 bg-white/5 flex flex-col sm:flex-row gap-3">
           <button
             onClick={onDismiss}
             className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg font-semibold transition-colors"
