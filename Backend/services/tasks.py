@@ -86,7 +86,7 @@ def daily_stats_refresh():
             WHERE wallet_address IN {addrs:Array(String)}""",
             parameters={'addrs': addresses}
         )
-        ch_rows = result.named_results()
+        ch_rows = list(result.named_results())
         stats_by_wallet = {r['wallet_address']: r for r in ch_rows}
         print(f"[DAILY] Got stats for {len(stats_by_wallet)} wallets from ClickHouse")
 
@@ -194,7 +194,7 @@ def weekly_rerank_all():
             FROM wallet_aggregate_stats FINAL
             ORDER BY professional_score DESC"""
         )
-        all_wallets = result.named_results()
+        all_wallets = list(result.named_results())
         total = len(all_wallets)
         print(f"[RERANK] Loaded {total} wallets from ClickHouse")
 
@@ -412,7 +412,7 @@ def four_week_degradation_check():
             HAVING length(dates) >= 4""",
             parameters={'cutoff': cutoff_date}
         )
-        wallets = result.named_results()
+        wallets = list(result.named_results())
         print(f"[DEGRADATION] Found {len(wallets)} wallets with 4+ weeks of data")
 
         # ----------------------------------------------------------------
