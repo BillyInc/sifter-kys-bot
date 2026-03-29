@@ -43,6 +43,7 @@ def fetch_solanatracker(endpoint: str) -> list:
     url = f"{SOLANATRACKER_BASE}/{endpoint}"
     headers = {'x-api-key': SOLANATRACKER_KEY} if SOLANATRACKER_KEY else {}
     try:
+        time.sleep(0.5)  # Rate limit padding between API calls
         resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
