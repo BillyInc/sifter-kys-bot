@@ -18,18 +18,12 @@ import traceback
 from routes import anon_user_id
 
 from auth import optional_auth
-from services.supabase_client import get_supabase_client, SCHEMA_NAME
+from repositories.registry import get_diary_repo
 
 logger = logging.getLogger(__name__)
 
 diary_bp = Blueprint('diary', __name__, url_prefix='/api/diary')
 
-
-def _supabase():
-    return get_supabase_client()
-
-def _table(name: str):
-    return _supabase().schema(SCHEMA_NAME).table(name)
 
 def _get_user_id() -> str | None:
     # Only trust the auth middleware (JWT) — never user-supplied input
@@ -76,12 +70,10 @@ def get_salt():
         return _cors_response({'error': 'user_id required'}, 400)
 
     try:
-        result = _table('diary_user_salt').select(
-            'salt_b64, verification_token'
-        ).eq('user_id', user_id).execute()
+        repo = get_diary_repo()
+        row = repo.get_salt(user_id)
 
-        if result.data:
-            row = result.data[0]
+        if row:
             return _cors_response({
                 'success': True,
                 'salt_b64': row['salt_b64'],
@@ -117,28 +109,22 @@ def save_salt():
         return _cors_response({'error': 'user_id, salt_b64, and verification_token required'}, 400)
 
     try:
-        existing = _table('diary_user_salt').select(
-            'salt_b64, verification_token'
-        ).eq('user_id', user_id).execute()
+        repo = get_diary_repo()
+        existing = repo.get_salt(user_id)
 
-        if existing.data:
-            row = existing.data[0]
+        if existing:
             return _cors_response({
                 'success': True,
-                'salt_b64': row['salt_b64'],
-                'verification_token': row['verification_token'],
+                'salt_b64': existing['salt_b64'],
+                'verification_token': existing['verification_token'],
             })
         else:
-            _table('diary_user_salt').insert({
-                'user_id': user_id,
-                'salt_b64': salt_b64,
-                'verification_token': verification_token,
-            }).execute()
+            result = repo.save_salt(user_id, salt_b64, verification_token)
             print(f"[DIARY] 🔐 Passphrase initialised for user {str(user_id)[:8]}...")
             return _cors_response({
                 'success': True,
-                'salt_b64': salt_b64,
-                'verification_token': verification_token,
+                'salt_b64': result['salt_b64'],
+                'verification_token': result['verification_token'],
             }, 201)
 
     except Exception as e:
@@ -165,21 +151,13 @@ def list_notes():
     offset         = int(request.args.get('offset', 0))
 
     try:
-        query = _table('watchlist_diary').select(
-            'id, wallet_address, type, encrypted_payload, created_at, edited_at'
-        ).eq('user_id', user_id)
-
-        if wallet_address:
-            query = query.eq('wallet_address', wallet_address)
-        if note_type:
-            query = query.eq('type', note_type)
-
-        result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        repo = get_diary_repo()
+        notes = repo.list_notes(user_id, wallet_address, note_type, limit, offset)
 
         return _cors_response({
             'success': True,
-            'notes': result.data,
-            'count': len(result.data),
+            'notes': notes,
+            'count': len(notes),
         })
 
     except Exception as e:
@@ -210,18 +188,13 @@ def create_note():
         return _cors_response({'error': f'type must be one of {valid_types}'}, 400)
 
     try:
-        result = _table('watchlist_diary').insert({
-            'user_id':           user_id,
-            'wallet_address':    wallet_address,
-            'type':              note_type,
-            'encrypted_payload': encrypted_payload,
-        }).execute()
+        repo = get_diary_repo()
+        row = repo.create_note(user_id, encrypted_payload, note_type, wallet_address)
 
-        row = result.data[0] if result.data else {}
         print(f"[DIARY] ✅ {note_type} note saved for {str(user_id)[:8]}..."
               + (f" wallet={wallet_address[:8]}..." if wallet_address else " (global)"))
 
-        return _cors_response({'success': True, 'id': row.get('id')}, 201)
+        return _cors_response({'success': True, 'id': row.get('id') if row else None}, 201)
 
     except Exception as e:
         traceback.print_exc()
@@ -244,22 +217,17 @@ def update_note(note_id):
         return _cors_response({'error': 'user_id and encrypted_payload required'}, 400)
 
     try:
-        check = _table('watchlist_diary').select('id').eq('id', note_id).eq('user_id', user_id).execute()
-        if not check.data:
-            return _cors_response({'error': 'Note not found or access denied'}, 404)
+        repo = get_diary_repo()
 
-        update_data = {
-            'encrypted_payload': encrypted_payload,
-            'edited_at':         datetime.utcnow().isoformat(),
-        }
+        if not repo.note_exists(user_id, note_id):
+            return _cors_response({'error': 'Note not found or access denied'}, 404)
 
         if note_type:
             valid_types = {'thought', 'strategy', 'todo', 'note'}
             if note_type not in valid_types:
                 return _cors_response({'error': f'type must be one of {valid_types}'}, 400)
-            update_data['type'] = note_type
 
-        _table('watchlist_diary').update(update_data).eq('id', note_id).eq('user_id', user_id).execute()
+        repo.update_note(user_id, note_id, encrypted_payload, note_type)
         return _cors_response({'success': True})
 
     except Exception as e:
@@ -279,11 +247,12 @@ def delete_note(note_id):
         return _cors_response({'error': 'user_id required'}, 400)
 
     try:
-        check = _table('watchlist_diary').select('id').eq('id', note_id).eq('user_id', user_id).execute()
-        if not check.data:
+        repo = get_diary_repo()
+
+        if not repo.note_exists(user_id, note_id):
             return _cors_response({'error': 'Note not found or access denied'}, 404)
 
-        _table('watchlist_diary').delete().eq('id', note_id).eq('user_id', user_id).execute()
+        repo.delete_note(user_id, note_id)
         return _cors_response({'success': True})
 
     except Exception as e:
@@ -307,7 +276,8 @@ def clear_all_notes():
         return _cors_response({'error': 'Pass { "confirm": "DELETE_ALL" } to confirm bulk deletion'}, 400)
 
     try:
-        _table('watchlist_diary').delete().eq('user_id', user_id).execute()
+        repo = get_diary_repo()
+        repo.clear_all_notes(user_id)
         print(f"[DIARY] 🗑️  Cleared all notes for user {str(user_id)[:8]}...")
         return _cors_response({'success': True})
 

@@ -97,6 +97,36 @@ class WalletWatchlistRepository(ABC):
     def save_position_snapshot(self, user_id: str) -> bool:
         ...
 
+    @abstractmethod
+    def wallet_exists(self, user_id: str, wallet_address: str) -> bool:
+        ...
+
+    @abstractmethod
+    def add_wallet_raw(self, user_id: str, data: dict) -> bool:
+        """Insert a fully-formed wallet row (used by route-level custom inserts)."""
+        ...
+
+    @abstractmethod
+    def get_wallet_watchlist_columns(
+        self, user_id: str, columns: str, tier_filter: str | None = None,
+    ) -> list[dict]:
+        """Select specific columns from wallet_watchlist."""
+        ...
+
+    @abstractmethod
+    def get_wallet_field(
+        self, user_id: str, wallet_address: str, field: str,
+    ) -> object | None:
+        """Return a single field value for a wallet, or None if not found."""
+        ...
+
+    @abstractmethod
+    def update_wallet_fields(
+        self, user_id: str, wallet_address: str, data: dict,
+    ) -> bool:
+        """Update arbitrary fields on a wallet watchlist row."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Notifications (wallet_notifications table)
@@ -214,4 +244,125 @@ class AnalysisHistoryRepository(ABC):
 
     @abstractmethod
     def clear_all(self, user_id: str) -> bool:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Support tickets (support_tickets table)
+# ---------------------------------------------------------------------------
+
+class SupportTicketRepository(ABC):
+
+    @abstractmethod
+    def create_ticket(
+        self, user_id: str, subject: str, message: str,
+    ) -> bool:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Referral & Points (referral_codes, referrals, referral_earnings,
+#                    point_transactions tables)
+# ---------------------------------------------------------------------------
+
+class ReferralRepository(ABC):
+
+    @abstractmethod
+    def get_referral_code_stats(self, code: str) -> dict | None:
+        """Return clicks/signups/conversions for a referral code."""
+        ...
+
+    @abstractmethod
+    def validate_referral_code(self, code: str) -> dict | None:
+        """Return code row if active, else None."""
+        ...
+
+    @abstractmethod
+    def get_referrals_by_referrer(self, user_id: str) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_earnings_by_referrer(self, user_id: str) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_point_transactions(
+        self, user_id: str, limit: int = 50,
+    ) -> list[dict]:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Telegram (telegram_connection_tokens table)
+# ---------------------------------------------------------------------------
+
+class TelegramRepository(ABC):
+
+    @abstractmethod
+    def delete_unused_tokens(self, user_id: str) -> bool:
+        ...
+
+    @abstractmethod
+    def create_connection_token(
+        self, user_id: str, token: str, expires_at: str,
+    ) -> bool:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Diary (watchlist_diary, diary_user_salt tables)
+# ---------------------------------------------------------------------------
+
+class DiaryRepository(ABC):
+
+    @abstractmethod
+    def get_salt(self, user_id: str) -> dict | None:
+        """Return {salt_b64, verification_token} or None."""
+        ...
+
+    @abstractmethod
+    def save_salt(
+        self, user_id: str, salt_b64: str, verification_token: str,
+    ) -> dict:
+        """If salt already exists return it, else insert and return new row."""
+        ...
+
+    @abstractmethod
+    def list_notes(
+        self, user_id: str,
+        wallet_address: str | None = None,
+        note_type: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def create_note(
+        self, user_id: str,
+        encrypted_payload: str,
+        note_type: str = 'note',
+        wallet_address: str | None = None,
+    ) -> dict | None:
+        """Return the inserted row (with id) or None."""
+        ...
+
+    @abstractmethod
+    def update_note(
+        self, user_id: str, note_id: str,
+        encrypted_payload: str,
+        note_type: str | None = None,
+    ) -> bool:
+        ...
+
+    @abstractmethod
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        ...
+
+    @abstractmethod
+    def note_exists(self, user_id: str, note_id: str) -> bool:
+        ...
+
+    @abstractmethod
+    def clear_all_notes(self, user_id: str) -> bool:
         ...

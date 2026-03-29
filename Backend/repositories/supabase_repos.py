@@ -18,6 +18,10 @@ from repositories.base import (
     UserRepository,
     UserSettingsRepository,
     AnalysisHistoryRepository,
+    SupportTicketRepository,
+    ReferralRepository,
+    TelegramRepository,
+    DiaryRepository,
 )
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
@@ -469,6 +473,64 @@ class SupabaseWalletWatchlistRepo(WalletWatchlistRepository):
             logger.error("save_position_snapshot failed: %s", exc)
             return False
 
+    def wallet_exists(self, user_id: str, wallet_address: str) -> bool:
+        try:
+            result = _table('wallet_watchlist').select(
+                'wallet_address',
+            ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+            return bool(result.data)
+        except Exception as exc:
+            logger.error("wallet_exists failed: %s", exc)
+            return False
+
+    def add_wallet_raw(self, user_id: str, data: dict) -> bool:
+        try:
+            _ensure_user(user_id)
+            _table('wallet_watchlist').insert(data).execute()
+            return True
+        except Exception as exc:
+            logger.error("add_wallet_raw failed: %s", exc, exc_info=True)
+            return False
+
+    def get_wallet_watchlist_columns(
+        self, user_id: str, columns: str, tier_filter: str | None = None,
+    ) -> list[dict]:
+        try:
+            query = _table('wallet_watchlist').select(columns).eq('user_id', user_id)
+            if tier_filter:
+                query = query.eq('tier', tier_filter)
+            result = query.order('position').execute()
+            return result.data
+        except Exception as exc:
+            logger.error("get_wallet_watchlist_columns failed: %s", exc)
+            return []
+
+    def get_wallet_field(
+        self, user_id: str, wallet_address: str, field: str,
+    ) -> object | None:
+        try:
+            result = _table('wallet_watchlist').select(field).eq(
+                'user_id', user_id,
+            ).eq('wallet_address', wallet_address).execute()
+            if result.data:
+                return result.data[0].get(field)
+            return None
+        except Exception as exc:
+            logger.error("get_wallet_field failed: %s", exc)
+            return None
+
+    def update_wallet_fields(
+        self, user_id: str, wallet_address: str, data: dict,
+    ) -> bool:
+        try:
+            _table('wallet_watchlist').update(data).eq(
+                'user_id', user_id,
+            ).eq('wallet_address', wallet_address).execute()
+            return True
+        except Exception as exc:
+            logger.error("update_wallet_fields failed: %s", exc)
+            return False
+
     # -- private helpers -------------------------------------------------------
 
     @staticmethod
@@ -774,4 +836,251 @@ class SupabaseAnalysisHistoryRepo(AnalysisHistoryRepository):
             return True
         except Exception as exc:
             logger.error("clear_all failed: %s", exc)
+            return False
+
+
+# ===========================================================================
+# Support tickets
+# ===========================================================================
+
+class SupabaseSupportTicketRepo(SupportTicketRepository):
+
+    def create_ticket(
+        self, user_id: str, subject: str, message: str,
+    ) -> bool:
+        try:
+            _table('support_tickets').insert({
+                'user_id': user_id,
+                'subject': subject,
+                'message': message,
+                'status': 'open',
+                'created_at': datetime.utcnow().isoformat(),
+            }).execute()
+            return True
+        except Exception as exc:
+            logger.error("create_ticket failed: %s", exc)
+            return False
+
+
+# ===========================================================================
+# Referral & Points
+# ===========================================================================
+
+class SupabaseReferralRepo(ReferralRepository):
+
+    def get_referral_code_stats(self, code: str) -> dict | None:
+        try:
+            result = _table('referral_codes').select(
+                'clicks, signups, conversions',
+            ).eq('code', code).limit(1).execute()
+            return result.data[0] if result.data else None
+        except Exception as exc:
+            logger.error("get_referral_code_stats failed: %s", exc)
+            return None
+
+    def validate_referral_code(self, code: str) -> dict | None:
+        try:
+            result = _table('referral_codes').select(
+                'code, user_id, active',
+            ).eq('code', code).eq('active', True).limit(1).execute()
+            return result.data[0] if result.data else None
+        except Exception as exc:
+            logger.error("validate_referral_code failed: %s", exc)
+            return None
+
+    def get_referrals_by_referrer(self, user_id: str) -> list[dict]:
+        try:
+            result = _table('referrals').select('*').eq(
+                'referrer_user_id', user_id,
+            ).execute()
+            return result.data
+        except Exception as exc:
+            logger.error("get_referrals_by_referrer failed: %s", exc)
+            return []
+
+    def get_earnings_by_referrer(self, user_id: str) -> list[dict]:
+        try:
+            result = _table('referral_earnings').select('*').eq(
+                'referrer_user_id', user_id,
+            ).order('created_at', desc=True).execute()
+            return result.data
+        except Exception as exc:
+            logger.error("get_earnings_by_referrer failed: %s", exc)
+            return []
+
+    def get_point_transactions(
+        self, user_id: str, limit: int = 50,
+    ) -> list[dict]:
+        try:
+            result = _table('point_transactions').select('*').eq(
+                'user_id', user_id,
+            ).order('created_at', desc=True).limit(limit).execute()
+            return result.data
+        except Exception as exc:
+            logger.error("get_point_transactions failed: %s", exc)
+            return []
+
+
+# ===========================================================================
+# Telegram
+# ===========================================================================
+
+class SupabaseTelegramRepo(TelegramRepository):
+
+    def delete_unused_tokens(self, user_id: str) -> bool:
+        try:
+            _table('telegram_connection_tokens').delete().eq(
+                'user_id', user_id,
+            ).eq('used', False).execute()
+            return True
+        except Exception as exc:
+            logger.error("delete_unused_tokens failed: %s", exc)
+            return False
+
+    def create_connection_token(
+        self, user_id: str, token: str, expires_at: str,
+    ) -> bool:
+        try:
+            _table('telegram_connection_tokens').insert({
+                'user_id': user_id,
+                'token': token,
+                'expires_at': expires_at,
+                'used': False,
+            }).execute()
+            return True
+        except Exception as exc:
+            logger.error("create_connection_token failed: %s", exc)
+            return False
+
+
+# ===========================================================================
+# Diary
+# ===========================================================================
+
+class SupabaseDiaryRepo(DiaryRepository):
+
+    def get_salt(self, user_id: str) -> dict | None:
+        try:
+            result = _table('diary_user_salt').select(
+                'salt_b64, verification_token',
+            ).eq('user_id', user_id).execute()
+            return result.data[0] if result.data else None
+        except Exception as exc:
+            logger.error("get_salt failed: %s", exc)
+            return None
+
+    def save_salt(
+        self, user_id: str, salt_b64: str, verification_token: str,
+    ) -> dict:
+        try:
+            # Check if salt already exists
+            existing = _table('diary_user_salt').select(
+                'salt_b64, verification_token',
+            ).eq('user_id', user_id).execute()
+
+            if existing.data:
+                return existing.data[0]
+
+            _table('diary_user_salt').insert({
+                'user_id': user_id,
+                'salt_b64': salt_b64,
+                'verification_token': verification_token,
+            }).execute()
+            return {'salt_b64': salt_b64, 'verification_token': verification_token}
+        except Exception as exc:
+            logger.error("save_salt failed: %s", exc)
+            return {'salt_b64': salt_b64, 'verification_token': verification_token}
+
+    def list_notes(
+        self, user_id: str,
+        wallet_address: str | None = None,
+        note_type: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict]:
+        try:
+            query = _table('watchlist_diary').select(
+                'id, wallet_address, type, encrypted_payload, created_at, edited_at',
+            ).eq('user_id', user_id)
+
+            if wallet_address:
+                query = query.eq('wallet_address', wallet_address)
+            if note_type:
+                query = query.eq('type', note_type)
+
+            result = query.order(
+                'created_at', desc=True,
+            ).range(offset, offset + limit - 1).execute()
+            return result.data
+        except Exception as exc:
+            logger.error("list_notes failed: %s", exc)
+            return []
+
+    def create_note(
+        self, user_id: str,
+        encrypted_payload: str,
+        note_type: str = 'note',
+        wallet_address: str | None = None,
+    ) -> dict | None:
+        try:
+            result = _table('watchlist_diary').insert({
+                'user_id': user_id,
+                'wallet_address': wallet_address,
+                'type': note_type,
+                'encrypted_payload': encrypted_payload,
+            }).execute()
+            return result.data[0] if result.data else None
+        except Exception as exc:
+            logger.error("create_note failed: %s", exc)
+            return None
+
+    def update_note(
+        self, user_id: str, note_id: str,
+        encrypted_payload: str,
+        note_type: str | None = None,
+    ) -> bool:
+        try:
+            update_data: dict = {
+                'encrypted_payload': encrypted_payload,
+                'edited_at': datetime.utcnow().isoformat(),
+            }
+            if note_type:
+                update_data['type'] = note_type
+
+            _table('watchlist_diary').update(update_data).eq(
+                'id', note_id,
+            ).eq('user_id', user_id).execute()
+            return True
+        except Exception as exc:
+            logger.error("update_note failed: %s", exc)
+            return False
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        try:
+            _table('watchlist_diary').delete().eq(
+                'id', note_id,
+            ).eq('user_id', user_id).execute()
+            return True
+        except Exception as exc:
+            logger.error("delete_note failed: %s", exc)
+            return False
+
+    def note_exists(self, user_id: str, note_id: str) -> bool:
+        try:
+            result = _table('watchlist_diary').select('id').eq(
+                'id', note_id,
+            ).eq('user_id', user_id).execute()
+            return bool(result.data)
+        except Exception as exc:
+            logger.error("note_exists failed: %s", exc)
+            return False
+
+    def clear_all_notes(self, user_id: str) -> bool:
+        try:
+            _table('watchlist_diary').delete().eq(
+                'user_id', user_id,
+            ).execute()
+            return True
+        except Exception as exc:
+            logger.error("clear_all_notes failed: %s", exc)
             return False

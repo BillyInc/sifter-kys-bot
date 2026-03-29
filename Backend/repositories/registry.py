@@ -21,6 +21,10 @@ from repositories.base import (
     UserRepository,
     UserSettingsRepository,
     AnalysisHistoryRepository,
+    SupportTicketRepository,
+    ReferralRepository,
+    TelegramRepository,
+    DiaryRepository,
 )
 
 # ---------------------------------------------------------------------------
@@ -34,6 +38,10 @@ _analysis_job_repo: AnalysisJobRepository | None = None
 _user_repo: UserRepository | None = None
 _user_settings_repo: UserSettingsRepository | None = None
 _analysis_history_repo: AnalysisHistoryRepository | None = None
+_support_ticket_repo: SupportTicketRepository | None = None
+_referral_repo: ReferralRepository | None = None
+_telegram_repo: TelegramRepository | None = None
+_diary_repo: DiaryRepository | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +104,38 @@ def get_analysis_history_repo() -> AnalysisHistoryRepository:
     return _analysis_history_repo
 
 
+def get_support_ticket_repo() -> SupportTicketRepository:
+    global _support_ticket_repo
+    if _support_ticket_repo is None:
+        from repositories.supabase_repos import SupabaseSupportTicketRepo
+        _support_ticket_repo = SupabaseSupportTicketRepo()
+    return _support_ticket_repo
+
+
+def get_referral_repo() -> ReferralRepository:
+    global _referral_repo
+    if _referral_repo is None:
+        from repositories.supabase_repos import SupabaseReferralRepo
+        _referral_repo = SupabaseReferralRepo()
+    return _referral_repo
+
+
+def get_telegram_repo() -> TelegramRepository:
+    global _telegram_repo
+    if _telegram_repo is None:
+        from repositories.supabase_repos import SupabaseTelegramRepo
+        _telegram_repo = SupabaseTelegramRepo()
+    return _telegram_repo
+
+
+def get_diary_repo() -> DiaryRepository:
+    global _diary_repo
+    if _diary_repo is None:
+        from repositories.supabase_repos import SupabaseDiaryRepo
+        _diary_repo = SupabaseDiaryRepo()
+    return _diary_repo
+
+
 # ---------------------------------------------------------------------------
 # Setters (for dependency injection in tests)
 # ---------------------------------------------------------------------------
@@ -135,11 +175,32 @@ def set_analysis_history_repo(repo: AnalysisHistoryRepository) -> None:
     _analysis_history_repo = repo
 
 
+def set_support_ticket_repo(repo: SupportTicketRepository) -> None:
+    global _support_ticket_repo
+    _support_ticket_repo = repo
+
+
+def set_referral_repo(repo: ReferralRepository) -> None:
+    global _referral_repo
+    _referral_repo = repo
+
+
+def set_telegram_repo(repo: TelegramRepository) -> None:
+    global _telegram_repo
+    _telegram_repo = repo
+
+
+def set_diary_repo(repo: DiaryRepository) -> None:
+    global _diary_repo
+    _diary_repo = repo
+
+
 def reset_all() -> None:
     """Reset every slot to None. Useful in test teardown."""
     global _watchlist_repo, _wallet_watchlist_repo, _notification_repo
     global _analysis_job_repo, _user_repo, _user_settings_repo
-    global _analysis_history_repo
+    global _analysis_history_repo, _support_ticket_repo, _referral_repo
+    global _telegram_repo, _diary_repo
 
     _watchlist_repo = None
     _wallet_watchlist_repo = None
@@ -148,3 +209,7 @@ def reset_all() -> None:
     _user_repo = None
     _user_settings_repo = None
     _analysis_history_repo = None
+    _support_ticket_repo = None
+    _referral_repo = None
+    _telegram_repo = None
+    _diary_repo = None

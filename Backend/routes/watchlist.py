@@ -2,12 +2,9 @@
 from flask import Blueprint, request, jsonify
 
 from auth import require_auth
-from db import WatchlistDatabase
+from repositories.registry import get_watchlist_repo
 
 watchlist_bp = Blueprint('watchlist', __name__, url_prefix='/api/watchlist')
-
-# Initialize database (now uses Supabase)
-watchlist_db = WatchlistDatabase()
 
 
 def _get_user_id() -> str | None:
@@ -21,7 +18,7 @@ def add_to_watchlist():
     """Add account to watchlist."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     data = request.json
     user_id = request.user_id  # Auth decorator guarantees this exists
     account = data.get('account')
@@ -29,7 +26,8 @@ def add_to_watchlist():
     if not user_id or not account:
         return jsonify({'error': 'user_id and account required'}), 400
 
-    success = watchlist_db.add_to_watchlist(user_id, account)
+    repo = get_watchlist_repo()
+    success = repo.add_to_watchlist(user_id, account)
 
     if success:
         return jsonify({'success': True, 'message': 'Account added to watchlist'}), 200
@@ -42,13 +40,14 @@ def get_watchlist():
     """Get user's watchlist."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    accounts = watchlist_db.get_watchlist(user_id)
+    repo = get_watchlist_repo()
+    accounts = repo.get_watchlist(user_id)
     return jsonify({'success': True, 'accounts': accounts}), 200
 
 
@@ -58,7 +57,7 @@ def remove_from_watchlist():
     """Remove account from watchlist."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     data = request.json
     user_id = request.user_id  # Auth decorator guarantees this exists
     author_id = data.get('author_id')
@@ -66,7 +65,8 @@ def remove_from_watchlist():
     if not user_id or not author_id:
         return jsonify({'error': 'user_id and author_id required'}), 400
 
-    success = watchlist_db.remove_from_watchlist(user_id, author_id)
+    repo = get_watchlist_repo()
+    success = repo.remove_from_watchlist(user_id, author_id)
 
     if success:
         return jsonify({'success': True, 'message': 'Account removed'}), 200
@@ -79,7 +79,7 @@ def update_watchlist_account():
     """Update account notes and tags."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     data = request.json
     user_id = request.user_id  # Auth decorator guarantees this exists
     author_id = data.get('author_id')
@@ -89,7 +89,8 @@ def update_watchlist_account():
     if not user_id or not author_id:
         return jsonify({'error': 'user_id and author_id required'}), 400
 
-    success = watchlist_db.update_account_notes(user_id, author_id, notes, tags)
+    repo = get_watchlist_repo()
+    success = repo.update_account_notes(user_id, author_id, notes, tags)
 
     if success:
         return jsonify({'success': True, 'message': 'Account updated'}), 200
@@ -102,13 +103,14 @@ def get_watchlist_groups():
     """Get user's watchlist groups."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    groups = watchlist_db.get_user_groups(user_id)
+    repo = get_watchlist_repo()
+    groups = repo.get_user_groups(user_id)
     return jsonify({'success': True, 'groups': groups}), 200
 
 
@@ -118,7 +120,7 @@ def create_watchlist_group():
     """Create a new watchlist group."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     data = request.json
     user_id = request.user_id  # Auth decorator guarantees this exists
     group_name = data.get('group_name')
@@ -127,7 +129,8 @@ def create_watchlist_group():
     if not user_id or not group_name:
         return jsonify({'error': 'user_id and group_name required'}), 400
 
-    group_id = watchlist_db.create_group(user_id, group_name, description)
+    repo = get_watchlist_repo()
+    group_id = repo.create_group(user_id, group_name, description)
 
     if group_id:
         return jsonify({
@@ -144,11 +147,12 @@ def get_watchlist_stats():
     """Get watchlist statistics."""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     user_id = request.user_id  # Auth decorator guarantees this exists
 
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    stats = watchlist_db.get_watchlist_stats(user_id)
+    repo = get_watchlist_repo()
+    stats = repo.get_watchlist_stats(user_id)
     return jsonify({'success': True, 'stats': stats}), 200

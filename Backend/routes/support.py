@@ -1,8 +1,7 @@
 import logging
 from flask import Blueprint, request, jsonify
 from auth import optional_auth
-from services.supabase_client import get_supabase_client, SCHEMA_NAME
-from datetime import datetime
+from repositories.registry import get_support_ticket_repo
 from routes import anon_user_id
 
 logger = logging.getLogger(__name__)
@@ -16,7 +15,7 @@ def submit_ticket():
     """Submit support ticket"""
     if request.method == 'OPTIONS':
         return '', 204
-    
+
     try:
         data = request.json
         user_id = getattr(request, 'user_id', None)
@@ -24,25 +23,18 @@ def submit_ticket():
             user_id = anon_user_id()
         subject = data.get('subject')
         message = data.get('message')
-        
+
         if not all([user_id, subject, message]):
             return jsonify({'error': 'user_id, subject, and message required'}), 400
-        
-        supabase = get_supabase_client()
-        
-        # Insert ticket
-        supabase.schema(SCHEMA_NAME).table('support_tickets').insert({
-            'user_id': user_id,
-            'subject': subject,
-            'message': message,
-            'status': 'open',
-            'created_at': datetime.utcnow().isoformat()
-        }).execute()
+
+        repo = get_support_ticket_repo()
+        repo.create_ticket(user_id, subject, message)
+
         return jsonify({
             'success': True,
             'message': 'Ticket submitted successfully. We\'ll respond within 24 hours.'
         }), 200
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()

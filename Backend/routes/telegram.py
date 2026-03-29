@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 from auth import require_auth, optional_auth
 from services.telegram_notifier import TelegramNotifier
-from services.supabase_client import get_supabase_client, SCHEMA_NAME
+from repositories.registry import get_telegram_repo
 
 telegram_bp = Blueprint('telegram', __name__)
 
@@ -33,15 +33,15 @@ def get_telegram_status():
     """Check if user has Telegram connected."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     user_id = _get_user_id() or anon_user_id()
-    
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
-    
+
     is_connected = telegram_notifier.is_user_connected(user_id)
     chat_id = telegram_notifier.get_user_chat_id(user_id) if is_connected else None
-    
+
     return jsonify({
         'success': True,
         'connected': is_connected,
@@ -55,49 +55,41 @@ def generate_connection_link():
     """Generate Telegram deep link for one-click connection."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     data = request.json or {}
     user_id = _get_user_id() or anon_user_id()
-    
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
-    
+
     try:
         # Generate unique connection token
         connection_token = secrets.token_urlsafe(32)
-        
-        # Store token in database with 15-minute expiry
-        supabase = get_supabase_client()
         expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-        
+
+        repo = get_telegram_repo()
+
         # Clean up old unused tokens for this user
-        supabase.schema(SCHEMA_NAME).table('telegram_connection_tokens').delete().eq(
-            'user_id', user_id
-        ).eq('used', False).execute()
-        
+        repo.delete_unused_tokens(user_id)
+
         # Insert new token
-        supabase.schema(SCHEMA_NAME).table('telegram_connection_tokens').insert({
-            'user_id': user_id,
-            'token': connection_token,
-            'expires_at': expires_at,
-            'used': False
-        }).execute()
-        
+        repo.create_connection_token(user_id, connection_token, expires_at)
+
         # Get bot username from environment or config
         bot_username = os.environ.get('TELEGRAM_BOT_USERNAME', 'SifterDueDiligenceBot')
-        
+
         # Create Telegram deep link
         telegram_link = f"https://t.me/{bot_username}?start={connection_token}"
-        
+
         print(f"[TELEGRAM] Generated connection link for user {user_id[:8]}...")
-        
+
         return jsonify({
             'success': True,
             'telegram_link': telegram_link,
             'connection_token': connection_token,
             'expires_in': 900  # 15 minutes in seconds
         }), 200
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -111,15 +103,15 @@ def disconnect_telegram():
     """Disconnect Telegram account."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     data = request.json or {}
     user_id = _get_user_id() or anon_user_id()
-    
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
-    
+
     success = telegram_notifier.disconnect_user(user_id)
-    
+
     if success:
         print(f"[TELEGRAM] Disconnected user {user_id[:8]}...")
         return jsonify({
@@ -139,16 +131,16 @@ def toggle_telegram_alerts():
     """Enable/disable Telegram alerts."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     data = request.json or {}
     user_id = _get_user_id() or anon_user_id()
     enabled = data.get('enabled', True)
-    
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
-    
+
     success = telegram_notifier.toggle_alerts(user_id, enabled)
-    
+
     if success:
         return jsonify({
             'success': True,
@@ -167,20 +159,20 @@ def send_test_alert():
     """Send test alert to user's Telegram."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     data = request.json or {}
     user_id = _get_user_id() or anon_user_id()
-    
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
-    
+
     # Check if connected
     if not telegram_notifier.is_user_connected(user_id):
         return jsonify({
             'success': False,
             'error': 'Telegram not connected'
         }), 400
-    
+
     # Create test alert
     test_alert = {
         'wallet': {
@@ -205,9 +197,9 @@ def send_test_alert():
             'dexscreener': 'https://dexscreener.com'
         }
     }
-    
+
     success = telegram_notifier.send_wallet_alert(user_id, test_alert, 0)
-    
+
     if success:
         return jsonify({
             'success': True,
@@ -228,12 +220,12 @@ def telegram_webhook():
     """
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     update = request.json
-    
+
     if not update:
         return jsonify({'error': 'No update data'}), 400
-    
+
     # Verify secret token (if set)
     secret_token = os.environ.get('TELEGRAM_SECRET_TOKEN')
     if secret_token:
@@ -241,7 +233,7 @@ def telegram_webhook():
         if header_token != secret_token:
             print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
             return jsonify({'error': 'Unauthorized'}), 401
-    
+
     # Handle callback queries (button clicks)
     if 'callback_query' in update:
         threading.Thread(
@@ -250,7 +242,7 @@ def telegram_webhook():
             daemon=True
         ).start()
         return jsonify({'ok': True}), 200
-    
+
     # Handle messages
     if 'message' in update:
         # Process in background thread
@@ -260,7 +252,7 @@ def telegram_webhook():
             daemon=True
         ).start()
         print(f"[TELEGRAM WEBHOOK] ✓ Update queued")
-    
+
     # Respond immediately (Telegram requires <1s response)
     return jsonify({'ok': True}), 200
 
@@ -270,10 +262,10 @@ def get_bot_info():
     """Get information about the Telegram bot."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
-    
+
     # Get bot info from Telegram API
     result = telegram_notifier._make_request('getMe')
-    
+
     if result.get('ok'):
         bot_info = result['result']
         return jsonify({
@@ -290,7 +282,7 @@ def get_bot_info():
             'success': False,
             'error': 'Failed to fetch bot info'
         }), 500
-        
+
 @telegram_bp.route('/ping', methods=['GET'])
 def ping():
     """Simple test endpoint"""

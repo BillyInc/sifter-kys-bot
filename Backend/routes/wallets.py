@@ -8,24 +8,22 @@ logger = logging.getLogger(__name__)
 
 from config import Config
 from auth import require_auth, optional_auth
-from db.watchlist_db import WatchlistDatabase
 from collections import defaultdict
 from datetime import datetime
 import os
 import uuid
 
+from repositories.registry import (
+    get_analysis_job_repo,
+    get_analysis_history_repo,
+    get_user_repo,
+    get_wallet_watchlist_repo,
+)
+
 # Lazy imports
 _wallet_analyzer = None
 _worker_analyzer = None
 _wallet_monitor = None
-_watchlist_db = None
-
-
-def get_watchlist_db():
-    global _watchlist_db
-    if _watchlist_db is None:
-        _watchlist_db = WatchlistDatabase()
-    return _watchlist_db
 
 
 def get_wallet_analyzer():
@@ -93,19 +91,8 @@ def get_queues():
 
 def _get_job_queue(user_id, job_type='default'):
     """Select queue and priority based on user subscription tier."""
-    from services.supabase_client import get_supabase_client, SCHEMA_NAME
-
-    tier = 'free'
-    if user_id:
-        try:
-            supabase = get_supabase_client()
-            result = supabase.schema(SCHEMA_NAME).table('users').select(
-                'subscription_tier'
-            ).eq('user_id', user_id).limit(1).execute()
-            if result.data:
-                tier = result.data[0].get('subscription_tier', 'free')
-        except Exception:
-            pass
+    user_repo = get_user_repo()
+    tier = user_repo.get_subscription_tier(user_id) if user_id else 'free'
 
     q_high, q_batch, q_compute = get_queues()
 
@@ -161,20 +148,14 @@ def analyze_wallets():
         if not user_id:
             user_id = anon_user_id()
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        job_repo = get_analysis_job_repo()
         job_id   = str(uuid.uuid4())
 
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
-            'job_id':           job_id,
-            'user_id':          user_id,
-            'status':           'pending',
-            'progress':         0,
-            'phase':            'queued',
+        job_repo.create_job(job_id, user_id, {
             'tokens_total':     len(tokens),
             'tokens_completed': 0,
             'token_address':    tokens[0]['address'] if len(tokens) == 1 else None,
-        }).execute()
+        })
 
         job_type = 'single' if len(tokens) == 1 else 'batch'
         queue, at_front, timeout = _get_job_queue(user_id, job_type)
@@ -199,14 +180,12 @@ def analyze_wallets():
 
 @wallets_bp.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    from services.supabase_client import get_supabase_client, SCHEMA_NAME
-    supabase = get_supabase_client()
-    result   = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select('*').eq('job_id', job_id).execute()
+    job_repo = get_analysis_job_repo()
+    job = job_repo.get_job(job_id)
 
-    if not result.data:
+    if not job:
         return jsonify({'error': 'Job not found'}), 404
 
-    job = result.data[0]
     if job['status'] == 'completed':
         return jsonify(job.get('results', {})), 200
     elif job['status'] == 'failed':
@@ -216,14 +195,12 @@ def get_job_status(job_id):
 
 @wallets_bp.route('/jobs/<job_id>/progress', methods=['GET'])
 def get_job_progress(job_id):
-    from services.supabase_client import get_supabase_client, SCHEMA_NAME
-    supabase = get_supabase_client()
-    result   = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select('*').eq('job_id', job_id).execute()
+    job_repo = get_analysis_job_repo()
+    job = job_repo.get_job(job_id)
 
-    if not result.data:
+    if not job:
         return jsonify({'error': 'Job not found'}), 404
 
-    job = result.data[0]
     return jsonify({
         'success':          True,
         'status':           job['status'],
@@ -244,19 +221,15 @@ def stream_job_progress(job_id):
     import time as _time
 
     def generate():
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        job_repo = get_analysis_job_repo()
         attempts = 0
         max_attempts = 200
 
         while attempts < max_attempts:
             try:
-                result = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
-                    'status, progress, phase, results, tokens_completed, tokens_total'
-                ).eq('job_id', job_id).limit(1).execute()
+                job = job_repo.get_job(job_id)
 
-                if result.data:
-                    job = result.data[0]
+                if job:
                     yield f"data: {json.dumps(job)}\n\n"
 
                     if job.get('status') in ('completed', 'failed', 'error'):
@@ -300,11 +273,10 @@ def cancel_job(job_id):
                 print(f"[CANCEL] Cancelled job {job_id[:8]} from {queue_name} queue")
                 break
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+        job_repo = get_analysis_job_repo()
+        job_repo.update_job(job_id, {
             'status': 'cancelled', 'phase': 'cancelled', 'progress': 0,
-        }).eq('job_id', job_id).execute()
+        })
 
         return jsonify({'success': True, 'message': 'Job cancelled'}), 200
 
@@ -320,21 +292,16 @@ def recover_job(job_id):
         return '', 204
 
     try:
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
         from redis import Redis
 
         redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
         r         = Redis.from_url(redis_url)
-        supabase  = get_supabase_client()
 
-        job_record = supabase.schema(SCHEMA_NAME).table('analysis_jobs').select(
-            'status, results'
-        ).eq('job_id', job_id).execute()
+        job_repo = get_analysis_job_repo()
+        job = job_repo.get_job(job_id)
 
-        if not job_record.data:
+        if not job:
             return jsonify({'error': 'Job not found'}), 404
-
-        job = job_record.data[0]
 
         if job['status'] == 'completed' and job.get('results'):
             return jsonify({'recovered': False, 'message': 'Job already completed', 'results': job['results']}), 200
@@ -344,9 +311,9 @@ def recover_job(job_id):
             return jsonify({'recovered': False, 'message': 'No result found in Redis — job genuinely incomplete'}), 404
 
         result = json.loads(raw)
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').update({
+        job_repo.update_job(job_id, {
             'status': 'completed', 'phase': 'done', 'progress': 100, 'results': result,
-        }).eq('job_id', job_id).execute()
+        })
 
         print(f"[RECOVER] ✅ Recovered stuck job {job_id[:8]} from Redis → Supabase synced")
         return jsonify({'recovered': True, 'results': result}), 200
@@ -371,28 +338,8 @@ def get_analysis_history():
             user_id = anon_user_id()
         limit   = int(request.args.get('limit', 50))
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-
-        rows = supabase.schema(SCHEMA_NAME)\
-            .table('user_analysis_history')\
-            .select('id, created_at, result_type, label, sublabel, data')\
-            .eq('user_id', user_id)\
-            .order('created_at', desc=True)\
-            .limit(limit)\
-            .execute()
-
-        recents = [
-            {
-                'id':         r['id'],
-                'resultType': r['result_type'],
-                'label':      r['label'],
-                'sublabel':   r['sublabel'],
-                'timestamp':  r['created_at'],
-                'data':       r['data'],
-            }
-            for r in rows.data
-        ]
+        history_repo = get_analysis_history_repo()
+        recents = history_repo.get_history(user_id, limit)
 
         return jsonify({'success': True, 'recents': recents}), 200
 
@@ -416,16 +363,8 @@ def save_analysis_history():
         if not entry:
             return jsonify({'error': 'user_id and entry required'}), 400
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-
-        supabase.schema(SCHEMA_NAME).table('user_analysis_history').insert({
-            'user_id':     user_id,
-            'result_type': entry.get('resultType'),
-            'label':       entry.get('label'),
-            'sublabel':    entry.get('sublabel'),
-            'data':        entry.get('data'),
-        }).execute()
+        history_repo = get_analysis_history_repo()
+        history_repo.save_entry(user_id, entry)
 
         print(f"[HISTORY] ✅ Saved {entry.get('resultType')} for user {str(user_id)[:8]}")
         return jsonify({'success': True}), 200
@@ -446,14 +385,8 @@ def delete_history_entry(entry_id):
         if not user_id:
             user_id = anon_user_id()
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-
-        supabase.schema(SCHEMA_NAME).table('user_analysis_history')\
-            .delete()\
-            .eq('id', entry_id)\
-            .eq('user_id', user_id)\
-            .execute()
+        history_repo = get_analysis_history_repo()
+        history_repo.delete_entry(user_id, entry_id)
 
         return jsonify({'success': True}), 200
 
@@ -472,13 +405,8 @@ def clear_history():
         if not user_id:
             user_id = anon_user_id()
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-
-        supabase.schema(SCHEMA_NAME).table('user_analysis_history')\
-            .delete()\
-            .eq('user_id', user_id)\
-            .execute()
+        history_repo = get_analysis_history_repo()
+        history_repo.clear_all(user_id)
 
         print(f"[HISTORY] Cleared all for user {str(user_id)[:8]}")
         return jsonify({'success': True}), 200
@@ -678,15 +606,14 @@ def analyze_trending_runner():
         if not user_id:
             user_id = anon_user_id()
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase     = get_supabase_client()
-        job_id       = str(uuid.uuid4())
+        job_repo = get_analysis_job_repo()
+        job_id   = str(uuid.uuid4())
 
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
-            'job_id': job_id, 'user_id': user_id, 'status': 'pending',
-            'progress': 0, 'phase': 'queued', 'tokens_total': 1,
-            'tokens_completed': 0, 'token_address': runner['address'],
-        }).execute()
+        job_repo.create_job(job_id, user_id, {
+            'tokens_total': 1,
+            'tokens_completed': 0,
+            'token_address': runner['address'],
+        })
 
         queue, at_front, timeout = _get_job_queue(user_id, 'single')
         queue.enqueue('services.worker_tasks.perform_wallet_analysis', {
@@ -720,14 +647,13 @@ def analyze_trending_runners_batch():
         if not user_id:
             user_id = anon_user_id()
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase      = get_supabase_client()
-        job_id        = str(uuid.uuid4())
+        job_repo = get_analysis_job_repo()
+        job_id   = str(uuid.uuid4())
 
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
-            'job_id': job_id, 'user_id': user_id, 'status': 'pending',
-            'progress': 0, 'phase': 'queued', 'tokens_total': len(runners), 'tokens_completed': 0,
-        }).execute()
+        job_repo.create_job(job_id, user_id, {
+            'tokens_total': len(runners),
+            'tokens_completed': 0,
+        })
 
         queue, at_front, timeout = _get_job_queue(user_id, 'batch')
         queue.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
@@ -761,14 +687,13 @@ def auto_discover_wallets():
         min_runner_hits    = data.get('min_runner_hits', 2)
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase        = get_supabase_client()
-        job_id          = str(uuid.uuid4())
+        job_repo = get_analysis_job_repo()
+        job_id   = str(uuid.uuid4())
 
-        supabase.schema(SCHEMA_NAME).table('analysis_jobs').insert({
-            'job_id': job_id, 'user_id': user_id, 'status': 'pending',
-            'progress': 0, 'phase': 'queued', 'tokens_total': 10, 'tokens_completed': 0,
-        }).execute()
+        job_repo.create_job(job_id, user_id, {
+            'tokens_total': 10,
+            'tokens_completed': 0,
+        })
 
         # Pass is_auto_discovery=True so that the worker pipeline can tag the
         # user_analysis_history entry as result_type='discovery'.  This is what
@@ -800,11 +725,11 @@ def auto_discover_wallets():
 def add_wallet_to_watchlist():
     """
     FIX 1: Previously used WatchlistDatabase with wrong field names:
-      - 'token_list'               → doesn't exist, should be 'runners_hit'
-      - 'avg_distance_to_ath_pct'  → doesn't exist on frontend payload
-      - 'avg_roi_to_peak_pct'      → doesn't exist on frontend payload
-      - 'consistency_score'        → defaulted to 0 instead of computed value
-    Now uses direct Supabase insert mapping every field SifterKYS.jsx sends,
+      - 'token_list'               -> doesn't exist, should be 'runners_hit'
+      - 'avg_distance_to_ath_pct'  -> doesn't exist on frontend payload
+      - 'avg_roi_to_peak_pct'      -> doesn't exist on frontend payload
+      - 'consistency_score'        -> defaulted to 0 instead of computed value
+    Now uses repository pattern mapping every field SifterKYS.jsx sends,
     including Fix 6 fields (roi_30d, runners_30d, win_rate_7d) and
     Fix 7 field (consistency_score derived from runner variance).
     """
@@ -821,20 +746,15 @@ def add_wallet_to_watchlist():
         if not user_id or not wallet_data.get('wallet'):
             return jsonify({'error': 'user_id and wallet required'}), 400
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        ww_repo = get_wallet_watchlist_repo()
 
         # Duplicate check
-        existing = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-            'wallet_address'
-        ).eq('user_id', user_id).eq('wallet_address', wallet_data['wallet']).execute()
-
-        if existing.data:
+        if ww_repo.wallet_exists(user_id, wallet_data['wallet']):
             return jsonify({'success': False, 'error': 'Wallet already in watchlist'}), 400
 
         added_at = datetime.utcnow().isoformat()
 
-        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').insert({
+        ww_repo.add_wallet_raw(user_id, {
             'user_id':            user_id,
             'wallet_address':     wallet_data['wallet'],
             'tier':               wallet_data.get('tier', 'C'),
@@ -873,7 +793,7 @@ def add_wallet_to_watchlist():
             'added_at':           added_at,
             'last_updated':       added_at,
             'last_trade_time':    None,
-        }).execute()
+        })
 
         print(f"[WATCHLIST ADD] ✅ {wallet_data['wallet'][:8]}... score={wallet_data.get('professional_score', 0)} tier={wallet_data.get('tier', 'C')} consistency={wallet_data.get('consistency_score', 50)}")
 
@@ -903,10 +823,9 @@ def get_wallet_watchlist():
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        ww_repo = get_wallet_watchlist_repo()
 
-        query = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+        columns = (
             'wallet_address, tier, position, movement, positions_changed, '
             'form, status, degradation_alerts, roi_7d, roi_30d, '
             'runners_7d, runners_30d, win_rate_7d, last_trade_time, '
@@ -915,14 +834,10 @@ def get_wallet_watchlist():
             'tags, notes, alert_enabled, alert_threshold_usd, '
             'alert_on_buy, alert_on_sell, min_trade_usd, '
             'added_at, last_updated'
-        ).eq('user_id', user_id)
+        )
+        wallets = ww_repo.get_wallet_watchlist_columns(user_id, columns, tier)
 
-        if tier:
-            query = query.eq('tier', tier)
-
-        result = query.order('position').execute()
-
-        return jsonify({'success': True, 'wallets': result.data, 'count': len(result.data)}), 200
+        return jsonify({'success': True, 'wallets': wallets, 'count': len(wallets)}), 200
 
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -946,18 +861,12 @@ def remove_wallet_from_watchlist():
         if not wallet_address:
             return jsonify({'success': False, 'error': 'wallet_address required'}), 400
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        ww_repo = get_wallet_watchlist_repo()
 
-        check = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-            'wallet_address'
-        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
-
-        if not check.data:
+        if not ww_repo.wallet_exists(user_id, wallet_address):
             return jsonify({'success': False, 'error': 'Wallet not found in your watchlist'}), 404
 
-        db      = get_watchlist_db()
-        success = db.remove_wallet_from_watchlist(user_id, wallet_address)
+        success = ww_repo.remove_wallet(user_id, wallet_address)
 
         if success:
             return jsonify({'success': True, 'message': 'Wallet removed from watchlist'}), 200
@@ -983,8 +892,8 @@ def update_wallet_watchlist():
         if not data.get('wallet_address'):
             return jsonify({'error': 'wallet_address required'}), 400
 
-        db      = get_watchlist_db()
-        success = db.update_wallet_notes(user_id, data['wallet_address'], data.get('notes'), data.get('tags'))
+        ww_repo = get_wallet_watchlist_repo()
+        success = ww_repo.update_wallet_notes(user_id, data['wallet_address'], data.get('notes'), data.get('tags'))
 
         if success:
             return jsonify({'success': True, 'message': 'Wallet updated'}), 200
@@ -1006,8 +915,8 @@ def get_wallet_watchlist_stats():
         if not user_id:
             user_id = anon_user_id()
 
-        db    = get_watchlist_db()
-        stats = db.get_wallet_watchlist_stats(user_id)
+        ww_repo = get_wallet_watchlist_repo()
+        stats = ww_repo.get_wallet_watchlist_stats(user_id)
         return jsonify({'success': True, 'stats': stats}), 200
 
     except Exception as e:
@@ -1036,11 +945,8 @@ def update_wallet_alert_settings():
             if data.get(field) is not None:
                 update_data[field] = data[field]
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update(
-            update_data
-        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+        ww_repo = get_wallet_watchlist_repo()
+        ww_repo.update_wallet_fields(user_id, wallet_address, update_data)
 
         return jsonify({'success': True, 'message': 'Alert settings updated'}), 200
 
@@ -1099,7 +1005,7 @@ def get_wallet_stats(wallet_address):
 def refresh_wallet_stats(wallet_address):
     """
     FIX 2: Recomputes consistency_score from runner history variance using the
-    same formula as computeConsistency() in SifterKYS.jsx — not the stale value
+    same formula as computeConsistency() in SifterKYS.jsx -- not the stale value
     passed through from the last analysis session.
 
     Also fetches added_at from the watchlist record and passes it to
@@ -1116,17 +1022,12 @@ def refresh_wallet_stats(wallet_address):
             user_id = anon_user_id()
 
         from services.watchlist_manager import WatchlistLeagueManager
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
-        manager  = WatchlistLeagueManager()
-        supabase = get_supabase_client()
+        manager = WatchlistLeagueManager()
+        ww_repo = get_wallet_watchlist_repo()
 
         # Fetch added_at so _refresh_wallet_metrics only counts post-watchlist trades
-        record = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-            'added_at'
-        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
-
-        added_at = record.data[0]['added_at'] if record.data else None
+        added_at = ww_repo.get_wallet_field(user_id, wallet_address, 'added_at')
 
         metrics = manager._refresh_wallet_metrics(wallet_address, added_at=added_at)
 
@@ -1134,7 +1035,7 @@ def refresh_wallet_stats(wallet_address):
         other_runners     = metrics.get('other_runners', [])
         consistency_score = compute_consistency(other_runners)
 
-        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
+        ww_repo.update_wallet_fields(user_id, wallet_address, {
             'roi_7d':             metrics.get('roi_7d', 0),
             'roi_30d':            metrics.get('roi_30d', 0),
             'runners_7d':         metrics.get('runners_7d', 0),
@@ -1144,7 +1045,7 @@ def refresh_wallet_stats(wallet_address):
             'professional_score': metrics.get('professional_score', 0),
             'consistency_score':  consistency_score,
             'last_updated':       datetime.utcnow().isoformat(),
-        }).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
+        })
 
         return jsonify({'success': True, 'message': 'Stats refreshed',
                         'metrics': metrics, 'consistency_score': consistency_score}), 200
@@ -1171,17 +1072,12 @@ def add_wallet_quick():
         if not wallet_address:
             return jsonify({'error': 'wallet_address required'}), 400
 
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
+        ww_repo = get_wallet_watchlist_repo()
 
-        existing = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-            'wallet_address'
-        ).eq('user_id', user_id).eq('wallet_address', wallet_address).execute()
-
-        if existing.data:
+        if ww_repo.wallet_exists(user_id, wallet_address):
             return jsonify({'success': False, 'error': 'Wallet already in watchlist'}), 400
 
-        supabase.schema(SCHEMA_NAME).table('wallet_watchlist').insert({
+        ww_repo.add_wallet_raw(user_id, {
             'user_id':            user_id,
             'wallet_address':     wallet_address,
             'tier':               'S',
@@ -1209,7 +1105,7 @@ def add_wallet_quick():
             'added_at':           datetime.utcnow().isoformat(),
             'last_updated':       datetime.utcnow().isoformat(),
             'last_trade_time':    None,
-        }).execute()
+        })
 
         print(f"[QUICK ADD] ✅ {wallet_address[:8]}... added")
         return jsonify({'success': True, 'message': f'Wallet {wallet_address[:8]}... added'}), 200
@@ -1267,17 +1163,18 @@ def replace_wallet():
         if not all([old_wallet, new_wallet_data]):
             return jsonify({'error': 'Missing required fields'}), 400
 
-        from db.watchlist_db import WatchlistDatabase
-        db = WatchlistDatabase()
-        db.remove_wallet_from_watchlist(user_id, old_wallet)
-        db.add_wallet_to_watchlist(user_id, {
+        ww_repo = get_wallet_watchlist_repo()
+        ww_repo.remove_wallet(user_id, old_wallet)
+        ww_repo.add_wallet(user_id, {
             'wallet_address':       new_wallet_data['wallet'],
+            'wallet':               new_wallet_data['wallet'],
             'tier':                 new_wallet_data.get('tier', 'C'),
-            'avg_distance_to_peak': new_wallet_data.get('professional_score', 0),
-            'avg_roi_to_peak':      new_wallet_data.get('roi_multiplier', 0) * 100,
-            'pump_count':           new_wallet_data.get('runner_hits_30d', 0),
+            'professional_score':   new_wallet_data.get('professional_score', 0),
+            'distance_to_ath_pct':  new_wallet_data.get('professional_score', 0),
+            'roi_percent':          new_wallet_data.get('roi_multiplier', 0) * 100,
+            'runner_hits_30d':      new_wallet_data.get('runner_hits_30d', 0),
             'consistency_score':    new_wallet_data.get('consistency_score', 50),
-            'source_type': 'batch' if new_wallet_data.get('is_cross_token') else 'single',
+            'is_cross_token':       new_wallet_data.get('is_cross_token'),
         })
 
         return jsonify({'success': True, 'message': 'Wallet replaced successfully',
@@ -1300,9 +1197,8 @@ def get_watchlist_table():
         if not user_id:
             user_id = anon_user_id()
 
-        from db.watchlist_db import WatchlistDatabase
-        db         = WatchlistDatabase()
-        table_data = db.get_premier_league_table(user_id)
+        ww_repo    = get_wallet_watchlist_repo()
+        table_data = ww_repo.get_premier_league_table(user_id)
 
         return jsonify({
             'success':         True,

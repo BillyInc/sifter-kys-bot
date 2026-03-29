@@ -7,6 +7,10 @@ from repositories.base import (
     UserRepository,
     UserSettingsRepository,
     AnalysisHistoryRepository,
+    SupportTicketRepository,
+    ReferralRepository,
+    TelegramRepository,
+    DiaryRepository,
 )
 
 __all__ = [
@@ -17,4 +21,8 @@ __all__ = [
     'UserRepository',
     'UserSettingsRepository',
     'AnalysisHistoryRepository',
+    'SupportTicketRepository',
+    'ReferralRepository',
+    'TelegramRepository',
+    'DiaryRepository',
 ]
