@@ -199,7 +199,7 @@ export default function DiscoveryPanel({
 
   const handleAddAll = async () => {
     if (!discoveryResults?.length) return;
-    if (!window.confirm(`Add all ${discoveryResults.length} wallets to your watchlist?`)) return;
+    toast.info(`Adding ${discoveryResults.length} wallets to watchlist...`);
     let successCount = 0;
     for (const wallet of discoveryResults) {
       try { await handleAddWallet(wallet); successCount++; } catch { /* ignore */ }

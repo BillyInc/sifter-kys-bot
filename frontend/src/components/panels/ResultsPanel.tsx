@@ -14,6 +14,7 @@ import {
   Copy, CheckSquare, Square, TrendingUp, AlertTriangle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 const fmtMcap = (v: any) => {
@@ -269,7 +270,10 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimula
   const addSelectedToWatchlist = () => {
     const selected = allWallets.filter(w => selectedWallets.has(w.wallet || w.wallet_address));
     if (!selected.length) return;
-    if (selected.length === 1 || window.confirm(`Add ${selected.length} wallets to watchlist?`)) {
+    if (selected.length > 1) {
+      toast.info(`Adding ${selected.length} wallets to watchlist...`);
+    }
+    {
       selected.forEach(w => onAddToWatchlist({
         wallet_address:      w.wallet || w.wallet_address,
         professional_score:  w.professional_score ?? w.aggregate_score,

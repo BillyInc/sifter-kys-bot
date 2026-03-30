@@ -104,7 +104,7 @@ export default function TelegramSettings({ userId, apiUrl }) {
   };
 
   const disconnectTelegram = async () => {
-    if (!confirm('Disconnect Telegram alerts?')) return;
+    // Proceed with disconnect — toast will show result
     
     setIsLoading(true);
     try {
