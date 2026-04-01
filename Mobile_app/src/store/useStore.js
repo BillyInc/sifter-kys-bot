@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DatabaseService from '../database/DatabaseService';
+import apiClient from '../services/ApiClient';
 
 // ── Price cache (module-level, shared across store calls) ──────────────
 const priceCache = {};
@@ -40,7 +41,13 @@ const useStore = create(
       error: null,
 
       // ── User actions ──────────────────────────────────────
-      setUser: (user) => set({ user }),
+      setUser: (user) => {
+        set({ user });
+        // Pass auth token to API client when user logs in
+        if (user?.access_token) {
+          apiClient.setAuthToken(user.access_token);
+        }
+      },
 
       // Called when your web dashboard confirms upgrade
       setUserTier: (tier) => set({ userTier: tier }),
@@ -62,10 +69,41 @@ const useStore = create(
         }
       },
 
+      // Fetch fresh Elite data from the backend API and sync to local DB
+      refreshElite15: async () => {
+        set({ isLoading: true });
+        try {
+          const data = await apiClient.getElite100();
+          const wallets = data.wallets || data.elite_100 || data;
+          if (Array.isArray(wallets) && wallets.length > 0) {
+            await DatabaseService.syncElite15(wallets);
+          }
+          const elite15 = await DatabaseService.getElite15();
+          set({ elite15, isLoading: false });
+        } catch (error) {
+          // Fall back to local data on API failure
+          const elite15 = await DatabaseService.getElite15();
+          set({ elite15, error: error.message, isLoading: false });
+        }
+      },
+
       // ── Watchlist ─────────────────────────────────────────
       loadWatchlist: async () => {
         const watchlist = await DatabaseService.getWatchlist();
         set({ watchlist });
+      },
+
+      // Fetch watchlist from backend API (enriched with scoring)
+      refreshWatchlist: async () => {
+        try {
+          const data = await apiClient.getWatchlist();
+          const wallets = data.watchlist || data;
+          set({ watchlist: Array.isArray(wallets) ? wallets : [] });
+        } catch (error) {
+          // Fall back to local data
+          const watchlist = await DatabaseService.getWatchlist();
+          set({ watchlist, error: error.message });
+        }
       },
 
       addToWatchlist: async (walletAddress, autoReplace) => {
@@ -127,6 +165,19 @@ const useStore = create(
       loadNotifications: async () => {
         const notifications = await DatabaseService.getUnreadNotifications();
         set({ notifications });
+      },
+
+      // Fetch notifications from backend API
+      refreshNotifications: async () => {
+        try {
+          const data = await apiClient.getNotifications();
+          const notifications = data.notifications || data;
+          set({ notifications: Array.isArray(notifications) ? notifications : [] });
+        } catch (error) {
+          // Fall back to local data
+          const notifications = await DatabaseService.getUnreadNotifications();
+          set({ notifications, error: error.message });
+        }
       },
 
       addNotification: async (notification) => {
