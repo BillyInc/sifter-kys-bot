@@ -1,4 +1,4 @@
-import { Connection, Transaction, VersionedTransaction, PublicKey, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, VersionedTransaction, PublicKey, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import bs58 from 'bs58';
 
 // Prefer QuickNode WSS env var (converted to HTTPS), fall back to public RPC
