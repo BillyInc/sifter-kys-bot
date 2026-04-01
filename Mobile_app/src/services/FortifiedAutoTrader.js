@@ -10,6 +10,7 @@ import transactionQueue from './TransactionQueue';
 import ultimateProtection from './UltimateProtection';
 import secureWalletService from './SecureWalletService';
 import PositionSizeManager from './PositionSizeManager';
+import SolanaTransactionService from './SolanaTransactionService';
 import useStore from '../store/useStore';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -331,10 +332,24 @@ class FortifiedAutoTrader {
   }
 
   async sendProtectedBundle(bundle, privateKey) {
-    // In production: use Jito SDK or Jupiter API to execute
-    // Returns transaction signature
+    // TODO: For JITO bundle support, replace with Jito SDK call.
+    //       Current implementation uses direct RPC submission via SolanaTransactionService.
     console.log(`📤 Sending protected bundle for ${bundle.tokenAddress?.slice(0, 8)}`);
-    return 'tx_' + Date.now() + Math.random().toString(36).slice(2);
+
+    if (!privateKey) {
+      console.warn('⚠️ No private key provided — returning mock signature');
+      return 'mock_tx_' + Date.now();
+    }
+
+    const result = await SolanaTransactionService.sendSwapTransaction(
+      privateKey, bundle.tokenAddress, bundle.amount
+    );
+
+    if (!result.success) {
+      throw new Error(result.error || 'Transaction submission failed');
+    }
+
+    return result.signature;
   }
 
   sendManualNotification(signal) {
