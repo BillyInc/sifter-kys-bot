@@ -88,8 +88,9 @@ class SolanaTransactionService {
    * Execute a token buy (SOL → Token) via Jupiter.
    */
   async buyToken(privateKeyBase58: string, tokenAddress: string, amountSol: number): Promise<SwapResult> {
+    let keypair: Keypair | null = null;
     try {
-      const keypair = Keypair.fromSecretKey(bs58.decode(privateKeyBase58));
+      keypair = Keypair.fromSecretKey(bs58.decode(privateKeyBase58));
       const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
 
       // 1. Get quote
@@ -117,6 +118,8 @@ class SolanaTransactionService {
     } catch (error: any) {
       console.error('buyToken failed:', error);
       return { success: false, error: error.message };
+    } finally {
+      keypair = null;
     }
   }
 
@@ -124,8 +127,9 @@ class SolanaTransactionService {
    * Execute a token sell (Token → SOL) via Jupiter.
    */
   async sellToken(privateKeyBase58: string, tokenAddress: string, tokenAmount: number): Promise<SwapResult> {
+    let keypair: Keypair | null = null;
     try {
-      const keypair = Keypair.fromSecretKey(bs58.decode(privateKeyBase58));
+      keypair = Keypair.fromSecretKey(bs58.decode(privateKeyBase58));
 
       const quote = await this.getSwapQuote(tokenAddress, SOL_MINT, tokenAmount);
       const { swapTransaction } = await this.getSwapTransaction(quote, keypair.publicKey);
@@ -147,6 +151,8 @@ class SolanaTransactionService {
     } catch (error: any) {
       console.error('sellToken failed:', error);
       return { success: false, error: error.message };
+    } finally {
+      keypair = null;
     }
   }
 

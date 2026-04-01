@@ -133,7 +133,7 @@ class FortifiedAutoTrader {
   async executeAutoTrade(signal: any): Promise<void> {
     try {
       console.log('\n🚨 AUTO-TRADE SIGNAL');
-      console.log(`Token: ${signal.token?.slice(0, 8)} | Wallets: ${signal.walletCount} | $${signal.totalUsd}`);
+      if (__DEV__) console.log(`Token: ${signal.token?.slice(0, 8)} | Wallets: ${signal.walletCount} | $${signal.totalUsd}`);
 
       // LAYER 1: Kill switch
       if (await killSwitch.isEnabled()) {
@@ -200,9 +200,18 @@ class FortifiedAutoTrader {
       }
 
       // LAYER 9: Sign + send
-      const wallet = await secureWalletService.retrieveWallet();
-      const txid = await this.sendProtectedBundle(protectionResult.bundle, wallet.privateKey);
-      (wallet as any).privateKey = null; // Zero out immediately
+      let wallet: any = null;
+      let txid: string;
+      try {
+        wallet = await secureWalletService.retrieveWallet();
+        txid = await this.sendProtectedBundle(protectionResult.bundle, wallet.privateKey);
+      } finally {
+        // Zero out private key material
+        if (wallet?.privateKey) {
+          wallet.privateKey = '\0'.repeat(wallet.privateKey.length);
+          wallet.privateKey = null;
+        }
+      }
 
       // LAYER 10: Record purchase (hard duplicate lock)
       await duplicatePrevention.recordBuy(signal.token, signal.wallets[0], txid);
@@ -227,7 +236,7 @@ class FortifiedAutoTrader {
       });
 
       // LAYER 12: Success notification
-      console.log(`\n✅ TRADE EXECUTED | txid: ${txid} | size: $${size}`);
+      if (__DEV__) console.log(`\n✅ TRADE EXECUTED | txid: ${txid.slice(0, 8)}... | size: $${size}`);
       PushNotification.localNotification({
         channelId: 'trades',
         title: '✅ Trade Executed',
@@ -350,7 +359,7 @@ class FortifiedAutoTrader {
   }
 
   async sendProtectedBundle(bundle: any, privateKey: string | null): Promise<string> {
-    console.log(`📤 Sending protected bundle for ${bundle.tokenAddress?.slice(0, 8)}`);
+    if (__DEV__) console.log(`📤 Sending protected bundle for ${bundle.tokenAddress?.slice(0, 8)}`);
 
     if (!privateKey) {
       console.warn('⚠️ No private key provided — returning mock signature');

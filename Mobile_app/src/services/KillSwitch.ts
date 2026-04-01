@@ -3,11 +3,15 @@ import * as SecureStore from 'expo-secure-store';
 import PushNotification from 'react-native-push-notification';
 import DatabaseService from '../database/DatabaseService';
 
+const FAIL_CLOSED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 class KillSwitch {
   private checkInterval: ReturnType<typeof setInterval> | null;
+  private lastSuccessfulCheck: number;
 
   constructor() {
     this.checkInterval = null;
+    this.lastSuccessfulCheck = Date.now();
   }
 
   async start(): Promise<void> {
