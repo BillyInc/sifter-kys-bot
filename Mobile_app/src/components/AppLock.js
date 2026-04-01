@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, TextInput, StyleSheet } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const hashPin = async (pin) => {
+  return await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, pin);
+};
 
 const AppLock = ({ children }) => {
   const [isLocked, setIsLocked] = useState(true);
@@ -47,17 +52,18 @@ const AppLock = ({ children }) => {
       return;
     }
 
-    const storedPin = await AsyncStorage.getItem('user_pin');
+    const storedPinHash = await AsyncStorage.getItem('user_pin_hash');
+    const pinHash = await hashPin(pin);
 
-    if (!storedPin) {
-      // No PIN set — first time, save this as the PIN
-      await AsyncStorage.setItem('user_pin', pin);
+    if (!storedPinHash) {
+      // No PIN set — first time, save the hash of this PIN
+      await AsyncStorage.setItem('user_pin_hash', pinHash);
       setIsLocked(false);
       await AsyncStorage.setItem('app_locked', 'false');
       return;
     }
 
-    if (pin === storedPin) {
+    if (pinHash === storedPinHash) {
       setIsLocked(false);
       setAttempts(0);
       setLockoutUntil(null);
