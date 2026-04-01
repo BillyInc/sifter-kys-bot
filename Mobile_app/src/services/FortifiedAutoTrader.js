@@ -332,8 +332,6 @@ class FortifiedAutoTrader {
   }
 
   async sendProtectedBundle(bundle, privateKey) {
-    // TODO: For JITO bundle support, replace with Jito SDK call.
-    //       Current implementation uses direct RPC submission via SolanaTransactionService.
     console.log(`📤 Sending protected bundle for ${bundle.tokenAddress?.slice(0, 8)}`);
 
     if (!privateKey) {
@@ -341,8 +339,9 @@ class FortifiedAutoTrader {
       return 'mock_tx_' + Date.now();
     }
 
-    const result = await SolanaTransactionService.sendSwapTransaction(
-      privateKey, bundle.tokenAddress, bundle.amount
+    // Use Jupiter DEX swap with JITO MEV protection fallback
+    const result = await SolanaTransactionService.buyToken(
+      privateKey, bundle.tokenAddress, bundle.amount || bundle.amountSol
     );
 
     if (!result.success) {
