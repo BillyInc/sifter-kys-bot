@@ -8,7 +8,7 @@ class HeartbeatMonitor {
     this.lastHeartbeat = Date.now();
     this.heartbeatInterval = 300000; // 5 min
     this.missedBeats = 0;
-    this.healthCheckUrl = 'https://your-api.com/health';
+    this.healthCheckUrl = `${process.env.API_BASE_URL || 'https://sifter-kys.duckdns.org'}/health`;
     this.intervalId = null;
   }
 

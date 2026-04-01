@@ -20,7 +20,8 @@ class KillSwitch {
     try {
       const userId = await AsyncStorage.getItem('user_id');
       const deviceId = await this.getDeviceId();
-      const response = await fetch('https://your-api.com/kill-switch/status', {
+      const baseUrl = process.env.API_BASE_URL || 'https://sifter-kys.duckdns.org';
+      const response = await fetch(`${baseUrl}/kill-switch/status`, {
         headers: { 'device-id': deviceId, 'user-id': userId }
       });
       const { killEnabled, reason } = await response.json();
