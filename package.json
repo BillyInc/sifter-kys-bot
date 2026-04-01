@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "cors": "^2.8.6"
+  },
+  "devDependencies": {
+    "supabase": "^2.84.4"
   }
 }
