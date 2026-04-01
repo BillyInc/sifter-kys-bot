@@ -10,16 +10,6 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // JITO block engine for MEV-protected bundle submission
 const JITO_BLOCK_ENGINE = 'https://mainnet.block-engine.jito.wtf';
-const JITO_TIP_ACCOUNTS = [
-  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
-  'HFqU5x63VTqvQss8hp11i4bVqkfRtQ7NmXwkiNPLniLE',
-  'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
-  'ADaUMid9yfUytqMBgopwjb2DTLSLOxkAMFn8BnUAss9B',
-  'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
-  'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
-  'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
-  '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
-];
 
 interface SwapResult {
   success: boolean;

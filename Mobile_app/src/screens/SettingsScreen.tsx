@@ -5,7 +5,6 @@ import useStore from '../store/useStore';
 import DatabaseService from '../database/DatabaseService';
 import ModeSwitcher from '../components/ModeSwitcher';
 import killSwitch from '../services/KillSwitch';
-import SafeButton from '../components/SafeButton';
 
 interface SettingsScreenProps {
   navigation: any;

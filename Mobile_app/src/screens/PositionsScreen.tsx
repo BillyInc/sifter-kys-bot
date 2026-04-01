@@ -2,7 +2,6 @@ import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import useStore from '../store/useStore';
-import SafeButton from '../components/SafeButton';
 import fortifiedAutoTrader from '../services/FortifiedAutoTrader';
 import duplicatePrevention from '../services/DuplicatePrevention';
 
