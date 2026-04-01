@@ -1,8 +1,26 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const POSITIONS_KEY = 'kys_positions';
+
 class PositionSizeManager {
   constructor(portfolioTotal) {
     this.portfolioTotal = portfolioTotal;
     this.maxPositionSize = portfolioTotal * 0.40; // Hard cap per token
     this.positions = new Map(); // token -> current size
+    this.loadPositions();
+  }
+
+  async loadPositions() {
+    try {
+      const saved = await AsyncStorage.getItem(POSITIONS_KEY);
+      if (saved) this.positions = new Map(JSON.parse(saved));
+    } catch {}
+  }
+
+  async savePositions() {
+    try {
+      await AsyncStorage.setItem(POSITIONS_KEY, JSON.stringify([...this.positions]));
+    } catch {}
   }
 
   calculatePosition(signal) {
@@ -40,8 +58,8 @@ class PositionSizeManager {
     return total;
   }
 
-  updatePosition(token, size) { this.positions.set(token, size); }
-  closePosition(token) { this.positions.delete(token); }
+  updatePosition(token, size) { this.positions.set(token, size); this.savePositions(); }
+  closePosition(token) { this.positions.delete(token); this.savePositions(); }
 }
 
 export default PositionSizeManager;
