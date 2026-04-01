@@ -200,6 +200,14 @@ class FortifiedAutoTrader {
       }
 
       // LAYER 9: Sign + send
+      // Wallet adapter users must approve each transaction in their wallet app,
+      // which is incompatible with automated trading. Only manual-import wallets
+      // can auto-trade because the private key is available on-device.
+      const walletType = await DatabaseService.getSetting('wallet_type');
+      if (walletType === 'mobile-adapter') {
+        throw new Error('Auto-trading requires manual key import for automated signing. Wallet adapter connections require user approval per transaction.');
+      }
+
       let wallet: any = null;
       let txid: string;
       try {
