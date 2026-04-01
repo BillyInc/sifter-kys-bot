@@ -10,6 +10,7 @@ import transactionQueue from './TransactionQueue';
 import ultimateProtection from './UltimateProtection';
 import secureWalletService from './SecureWalletService';
 import PositionSizeManager from './PositionSizeManager';
+import useStore from '../store/useStore';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // SIGNAL ROUTING
@@ -325,11 +326,8 @@ class FortifiedAutoTrader {
   }
 
   async getCurrentPrice(token) {
-    try {
-      const res = await fetch(`https://api.solana-tracker.io/tokens/${token}/price`);
-      const data = await res.json();
-      return data.price || Math.random() * 0.0001;
-    } catch { return Math.random() * 0.0001; }
+    // Delegate to the store's price oracle (shared cache, SolanaTracker + Birdeye fallback)
+    return useStore.getState().getCurrentPrice(token);
   }
 
   async sendProtectedBundle(bundle, privateKey) {
