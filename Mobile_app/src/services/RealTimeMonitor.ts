@@ -190,7 +190,7 @@ class RealTimeMonitor {
 
   handleNewTrade(trade: Trade): void {
     const { token, wallet, usdValue } = trade;
-    console.log(`💰 Buy: ${wallet.slice(0, 8)} bought $${usdValue} of ${token.slice(0, 8)}`);
+    if (__DEV__) console.log(`💰 Buy: ${wallet.slice(0, 8)} bought $${usdValue} of ${token.slice(0, 8)}`);
 
     let buffer = this.signalBuffer.get(token);
 

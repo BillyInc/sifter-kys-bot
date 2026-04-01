@@ -112,7 +112,7 @@ class DatabaseService {
         );
       }
       await db.executeSql('COMMIT');
-      console.log(`✅ Synced ${wallets.length} Elite 15 wallets`);
+      if (__DEV__) console.log(`✅ Synced ${wallets.length} Elite 15 wallets`);
     } catch (error) {
       await db.executeSql('ROLLBACK');
       throw error;

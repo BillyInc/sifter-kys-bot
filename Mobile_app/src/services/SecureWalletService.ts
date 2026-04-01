@@ -17,7 +17,7 @@ class SecureWalletService {
     const compatible = await LocalAuthentication.hasHardwareAsync();
     const enrolled = await LocalAuthentication.isEnrolledAsync();
     this.biometricAvailable = compatible && enrolled;
-    console.log(`Biometric available: ${this.biometricAvailable}`);
+    if (__DEV__) console.log(`Biometric available: ${this.biometricAvailable}`);
   }
 
   async storeWallet(privateKey: string, walletAddress: string): Promise<void> {

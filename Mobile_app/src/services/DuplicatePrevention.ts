@@ -33,13 +33,13 @@ class DuplicatePrevention {
     if (exists) {
       if (isManualOverride) {
         // User clicked "Buy Again" and confirmed — allow it this once
-        console.log(`👤 Manual override: user approved re-buy of ${tokenAddress.slice(0, 8)}`);
+        if (__DEV__) console.log(`👤 Manual override: user approved re-buy of ${tokenAddress.slice(0, 8)}`);
         this.userApprovedTokens.add(tokenAddress);
         return true;
       }
 
       // Auto-trade path → BLOCK
-      console.log(`🚫 BLOCKED: already bought ${tokenAddress.slice(0, 8)} — auto-trade will not buy twice`);
+      if (__DEV__) console.log(`🚫 BLOCKED: already bought ${tokenAddress.slice(0, 8)} — auto-trade will not buy twice`);
       this.suggestManualRebuy(tokenAddress);
       return false;
     }
@@ -47,13 +47,13 @@ class DuplicatePrevention {
     // Track wallet activity for monitoring (doesn't block different-token buys)
     const lastWalletBuy = this.walletLastBuy.get(walletAddress);
     if (lastWalletBuy && (Date.now() - lastWalletBuy) < this.WALLET_COOLDOWN) {
-      console.log(`⚡ Wallet ${walletAddress.slice(0, 8)} buying rapidly — OK, different token`);
+      if (__DEV__) console.log(`⚡ Wallet ${walletAddress.slice(0, 8)} buying rapidly — OK, different token`);
     }
 
     // Check local blacklist
     const blacklisted = await this.checkBlacklist(tokenAddress);
     if (blacklisted) {
-      console.log(`⛔ Token ${tokenAddress.slice(0, 8)} is blacklisted`);
+      if (__DEV__) console.log(`⛔ Token ${tokenAddress.slice(0, 8)} is blacklisted`);
       return false;
     }
 
@@ -66,13 +66,13 @@ class DuplicatePrevention {
     this.walletLastBuy.set(walletAddress, Date.now());
 
     await DatabaseService.recordPurchasedToken(tokenAddress, walletAddress, txId, 0);
-    console.log(`📝 Recorded purchase of ${tokenAddress.slice(0, 8)} — will NEVER auto-buy again`);
+    if (__DEV__) console.log(`📝 Recorded purchase of ${tokenAddress.slice(0, 8)} — will NEVER auto-buy again`);
   }
 
   async approveRebuy(tokenAddress: string): Promise<void> {
     // Called when user taps "Buy Again" and confirms the dialog
     this.userApprovedTokens.add(tokenAddress);
-    console.log(`✅ User approved re-buy of ${tokenAddress.slice(0, 8)}`);
+    if (__DEV__) console.log(`✅ User approved re-buy of ${tokenAddress.slice(0, 8)}`);
   }
 
   suggestManualRebuy(tokenAddress: string): void {

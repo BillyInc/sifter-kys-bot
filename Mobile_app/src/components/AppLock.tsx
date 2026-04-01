@@ -18,6 +18,26 @@ const AppLock: React.FC<AppLockProps> = ({ children }) => {
   const [attempts, setAttempts] = useState<number>(0);
   const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
 
+  // Load persisted lockout state on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedAttempts = await AsyncStorage.getItem('pin_attempts');
+        const savedLockout = await AsyncStorage.getItem('pin_lockout_until');
+        if (savedAttempts) setAttempts(parseInt(savedAttempts, 10));
+        if (savedLockout) {
+          const until = parseInt(savedLockout, 10);
+          if (Date.now() < until) {
+            setLockoutUntil(until);
+          } else {
+            // Lockout expired — clear persisted state
+            await AsyncStorage.multiRemove(['pin_attempts', 'pin_lockout_until']);
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
   useEffect(() => {
     checkLockStatus();
   }, []);
@@ -71,6 +91,7 @@ const AppLock: React.FC<AppLockProps> = ({ children }) => {
       setIsLocked(false);
       setAttempts(0);
       setLockoutUntil(null);
+      await AsyncStorage.multiRemove(['pin_attempts', 'pin_lockout_until']);
       await AsyncStorage.setItem('app_locked', 'false');
     } else {
       const newAttempts = attempts + 1;
@@ -80,8 +101,11 @@ const AppLock: React.FC<AppLockProps> = ({ children }) => {
         const until = Date.now() + 15 * 60000;
         setLockoutUntil(until);
         setAttempts(0);
+        await AsyncStorage.setItem('pin_lockout_until', until.toString());
+        await AsyncStorage.setItem('pin_attempts', '0');
         alert('Too many failed attempts. Locked for 15 minutes.');
       } else {
+        await AsyncStorage.setItem('pin_attempts', newAttempts.toString());
         alert(`Incorrect PIN. ${5 - newAttempts} attempt(s) remaining.`);
       }
     }

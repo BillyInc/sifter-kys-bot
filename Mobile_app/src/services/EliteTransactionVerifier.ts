@@ -51,14 +51,14 @@ class EliteTransactionVerifier {
     const usdSpent = solSpent * await this.getSolPrice();
 
     if (usdSpent < this.MIN_SPEND_USD) {
-      console.log(`❌ FAIL: Only spent $${usdSpent.toFixed(2)} (need $${this.MIN_SPEND_USD})`);
+      if (__DEV__) console.log(`❌ FAIL: Only spent $${usdSpent.toFixed(2)} (need $${this.MIN_SPEND_USD})`);
       return {
         valid: false,
         reason: 'low_spend',
         message: `Only spent $${usdSpent.toFixed(2)} — minimum is $${this.MIN_SPEND_USD}`
       };
     }
-    console.log(`✅ Wallet spent $${usdSpent.toFixed(2)}`);
+    if (__DEV__) console.log(`✅ Wallet spent $${usdSpent.toFixed(2)}`);
 
     return {
       valid: true,

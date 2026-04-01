@@ -31,9 +31,13 @@ class KillSwitch {
         headers: { 'device-id': deviceId, 'user-id': userId || '' }
       });
       const { killEnabled, reason } = await response.json();
+      this.lastSuccessfulCheck = Date.now();
       if (killEnabled) await this.activateKillSwitch(reason);
     } catch {
-      // Server unreachable — don't stop trading on network errors
+      // Fail-closed: if we haven't reached the server in 5+ minutes, activate kill switch
+      if (Date.now() - this.lastSuccessfulCheck > FAIL_CLOSED_TIMEOUT_MS) {
+        await this.activateKillSwitch('Kill switch server unreachable for 5+ minutes — fail-closed');
+      }
     }
   }
 
@@ -51,7 +55,7 @@ class KillSwitch {
       importance: 'high', priority: 'high'
     } as any);
     await AsyncStorage.multiRemove(['user_token', 'session_id']);
-    console.log(`🚨 Kill switch activated: ${reason}`);
+    if (__DEV__) console.log(`🚨 Kill switch activated: ${reason}`);
   }
 
   async deactivate(): Promise<void> {

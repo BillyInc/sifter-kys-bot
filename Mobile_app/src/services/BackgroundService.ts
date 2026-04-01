@@ -47,7 +47,7 @@ export const syncElite15 = async (): Promise<void> => {
     const wallets = data.wallets || data.elite_100 || data;
     if (Array.isArray(wallets) && wallets.length > 0) {
       await DatabaseService.syncElite15(wallets);
-      console.log(`✅ Synced Elite 15 via API (${wallets.length} wallets)`);
+      if (__DEV__) console.log(`✅ Synced Elite 15 via API (${wallets.length} wallets)`);
     } else {
       console.log('⚠️ Elite 100 API returned no wallets');
     }
@@ -75,7 +75,7 @@ export const syncElite15 = async (): Promise<void> => {
       if (response.ok) {
         const fallbackData = await response.json();
         await DatabaseService.syncElite15(fallbackData);
-        console.log(`✅ Synced Elite 15 via Supabase fallback (${fallbackData.length} wallets)`);
+        if (__DEV__) console.log(`✅ Synced Elite 15 via Supabase fallback (${fallbackData.length} wallets)`);
       }
     } catch (fallbackErr) {
       console.error('Elite 15 fallback sync also failed:', fallbackErr);

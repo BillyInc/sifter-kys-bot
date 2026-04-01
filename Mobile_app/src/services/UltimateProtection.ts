@@ -129,9 +129,9 @@ class UltimateProtection {
     try {
       // Primary: Helius simulation API
       const apiKey = await DatabaseService.getSetting('api_key_helius');
-      const res = await fetch(`https://api.helius.xyz/v0/simulate?api-key=${apiKey}`, {
+      const res = await fetch(`https://api.helius.xyz/v0/simulate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify({ tokenAddress, amount, slippage })
       });
       const result = await res.json();
@@ -168,9 +168,10 @@ class UltimateProtection {
   async analyzeTradeAfterExecution(txHash: string, tokenAddress: string): Promise<any[]> {
     console.log('🔎 Post-trade analysis...');
     try {
+      const apiKey = await DatabaseService.getSetting('api_key_helius');
       const res = await fetch(
-        `https://api.helius.xyz/v0/transactions/${txHash}?api-key=` +
-        (await DatabaseService.getSetting('api_key_helius'))
+        `https://api.helius.xyz/v0/transactions/${txHash}`,
+        { headers: { 'Authorization': `Bearer ${apiKey}` } }
       );
       const tx = await res.json();
 
