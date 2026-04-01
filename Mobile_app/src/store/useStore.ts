@@ -168,12 +168,16 @@ const useStore = create<StoreState>()(
         const trades = await DatabaseService.getActiveTrades();
         let totalPnl = 0;
         for (const trade of trades) {
-          const currentPrice = await get().getCurrentPrice(trade.token_address);
-          if (currentPrice) {
+          try {
+            const currentPrice = await get().getCurrentPrice(trade.token_address);
             const currentValue = trade.remaining_size * (currentPrice / trade.entry_price);
             trade.currentValue = currentValue;
             trade.pnl = currentValue - trade.entry_size;
             totalPnl += trade.pnl;
+          } catch {
+            // Price unavailable — skip PnL calculation for this trade
+            trade.currentValue = null;
+            trade.pnl = null;
           }
         }
         set({ activeTrades: trades, totalPnl });
@@ -249,6 +253,7 @@ const useStore = create<StoreState>()(
           const res = await fetch(`https://data.solanatracker.io/tokens/${tokenAddress}`, {
             headers: { 'x-api-key': process.env.SOLANATRACKER_API_KEY || '' }
           });
+          if (!res.ok) throw new Error(`API ${res.status}`);
           const data = await res.json();
           const price = data?.pools?.[0]?.price?.usd || 0;
           if (price > 0) {
@@ -265,6 +270,7 @@ const useStore = create<StoreState>()(
             `https://public-api.birdeye.so/defi/price?address=${tokenAddress}`,
             { headers: { 'X-API-KEY': process.env.BIRDEYE_API_KEY || '' } }
           );
+          if (!res.ok) throw new Error(`API ${res.status}`);
           const data = await res.json();
           const price = data?.data?.value || 0;
           if (price > 0) {
@@ -275,8 +281,9 @@ const useStore = create<StoreState>()(
           // fall through to cached
         }
 
-        // Fallback: return stale cache or 0
-        return cached?.price || 0;
+        // Fallback: return stale cache or throw
+        if (cached?.price) return cached.price;
+        throw new Error(`No price available for ${tokenAddress}`);
       },
 
       // ── Batch refresh prices for all active positions ─────

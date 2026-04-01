@@ -64,9 +64,9 @@ class DatabaseService {
     const result = await this.db.executeSql(
       "SELECT value FROM user_settings WHERE key = 'db_version'"
     );
-    const version = result[0]?.rows?.item(0)?.value || '0';
+    const version = parseInt(result[0]?.rows?.item(0)?.value || '0', 10);
 
-    if (version < '2') {
+    if (version < 2) {
       // Create purchased_tokens table for duplicate prevention
       await this.db.executeSql(`
         CREATE TABLE IF NOT EXISTS purchased_tokens (

@@ -16,8 +16,13 @@ LogBox.ignoreLogs(['new NativeEventEmitter']);
 export default function App(): React.JSX.Element {
   useEffect(() => {
     const initialize = async () => {
-      await initBackgroundServices();
-      await setupNotifications();
+      try {
+        await initBackgroundServices();
+        await setupNotifications();
+      } catch (error) {
+        console.error('App initialization failed:', error);
+        // App still renders — services will retry on next background fetch
+      }
     };
     initialize();
   }, []);

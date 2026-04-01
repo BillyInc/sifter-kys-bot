@@ -9,6 +9,7 @@ class HeartbeatMonitor {
   private missedBeats: number;
   private healthCheckUrl: string;
   private intervalId: ReturnType<typeof setInterval> | null;
+  private connectivityCheckId: ReturnType<typeof setInterval> | null;
 
   constructor() {
     this.lastHeartbeat = Date.now();
@@ -16,11 +17,12 @@ class HeartbeatMonitor {
     this.missedBeats = 0;
     this.healthCheckUrl = `${process.env.API_BASE_URL || 'https://sifter-kys.duckdns.org'}/health`;
     this.intervalId = null;
+    this.connectivityCheckId = null;
   }
 
   async start(): Promise<void> {
     this.intervalId = setInterval(() => this.sendHeartbeat(), this.heartbeatInterval);
-    setInterval(() => this.checkConnectivity(), 60000);
+    this.connectivityCheckId = setInterval(() => this.checkConnectivity(), 60000);
 
     BackgroundFetch.configure(
       { minimumFetchInterval: 15, stopOnTerminate: false, startOnBoot: true },
@@ -33,6 +35,7 @@ class HeartbeatMonitor {
 
   stop(): void {
     if (this.intervalId) clearInterval(this.intervalId);
+    if (this.connectivityCheckId) clearInterval(this.connectivityCheckId);
   }
 
   async sendHeartbeat(): Promise<void> {

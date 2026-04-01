@@ -50,6 +50,8 @@ class RealTimeMonitor {
   private MIN_BUY_USD: number;
   private onSignalCallback: OnSignalCallback | null;
   private isRunning: boolean;
+  private reconnectAttempts: number;
+  private maxReconnectAttempts: number;
 
   constructor() {
     this.ws = null;
@@ -61,6 +63,8 @@ class RealTimeMonitor {
     this.MIN_BUY_USD = 100;
     this.onSignalCallback = null;
     this.isRunning = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 20;
   }
 
   async start(wallets: any[], onSignal: OnSignalCallback): Promise<void> {
@@ -96,6 +100,7 @@ class RealTimeMonitor {
 
       this.ws.onopen = () => {
         console.log('🔌 WebSocket connected');
+        this.reconnectAttempts = 0;
         this.top15Wallets.forEach((wallet: any) => {
           if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
@@ -130,7 +135,11 @@ class RealTimeMonitor {
 
       this.ws.onerror = () => console.log('WebSocket error');
       this.ws.onclose = () => {
-        if (this.isRunning) setTimeout(() => this.connectWebSocket(), 5000);
+        if (this.isRunning && this.reconnectAttempts < this.maxReconnectAttempts) {
+          const delay = Math.min(5000 * Math.pow(1.5, this.reconnectAttempts), 60000);
+          this.reconnectAttempts++;
+          setTimeout(() => this.connectWebSocket(), delay);
+        }
       };
     } catch (e) {
       console.log('WebSocket failed, polling only:', e);

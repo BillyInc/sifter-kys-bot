@@ -27,8 +27,10 @@ class DuplicatePrevention {
   async canBuy(tokenAddress: string, walletAddress: string, signal: any, isManualOverride: boolean = false): Promise<boolean> {
     // ── HARD RULE ──────────────────────────────────────────────────────────────
     // Never auto-buy the same token twice regardless of how many wallets signal
+    // Check database (source of truth) instead of in-memory Set to avoid race conditions
     // ──────────────────────────────────────────────────────────────────────────
-    if (this.purchasedTokens.has(tokenAddress)) {
+    const exists = await DatabaseService.hasBeenPurchased(tokenAddress);
+    if (exists) {
       if (isManualOverride) {
         // User clicked "Buy Again" and confirmed — allow it this once
         console.log(`👤 Manual override: user approved re-buy of ${tokenAddress.slice(0, 8)}`);
