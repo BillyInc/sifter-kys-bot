@@ -2119,14 +2119,20 @@ def preload_trending_cache():
              time_limit=JT_WARMUP + 60,
              acks_late=True, reject_on_worker_lost=True)
 def warm_cache_runners(self, data):
-    from routes.wallets import get_worker_analyzer
+    from services.wallet_analyzer import WalletPumpAnalyzer
+    from config import Config
     days_back = data['days_back']
     heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
         print(f"[WARMUP {days_back}D] Finding runners…")
-        analyzer = get_worker_analyzer()
+        analyzer = WalletPumpAnalyzer(
+            solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
+            birdeye_api_key=Config.BIRDEYE_API_KEY,
+            debug_mode=True,
+            read_only=True
+        )
         runners  = analyzer.find_trending_runners_enhanced(
             days_back=days_back, min_multiplier=5.0, min_liquidity=50000
         )
