@@ -115,17 +115,18 @@ const AppLock: React.FC<AppLockProps> = ({ children }) => {
 
   return (
     <Modal visible={isLocked} animationType="slide">
-      <View style={styles.container}>
+      <View testID="applock-screen" style={styles.container}>
         <Text style={styles.icon}>🔒</Text>
-        <Text style={styles.title}>Sifter Locked</Text>
+        <Text testID="applock-title" style={styles.title}>Sifter Locked</Text>
 
-        <TouchableOpacity style={styles.biometricButton} onPress={handleBiometricAuth}>
+        <TouchableOpacity testID="biometric-auth-btn" style={styles.biometricButton} onPress={handleBiometricAuth}>
           <Text style={styles.biometricText}>Use Face ID / Fingerprint</Text>
         </TouchableOpacity>
 
         <Text style={styles.or}>or</Text>
 
         <TextInput
+          testID="pin-input"
           style={styles.pinInput}
           placeholder="Enter PIN"
           value={pin}
@@ -135,7 +136,7 @@ const AppLock: React.FC<AppLockProps> = ({ children }) => {
           keyboardType="numeric"
         />
 
-        <TouchableOpacity style={styles.pinButton} onPress={handlePinAuth}>
+        <TouchableOpacity testID="pin-unlock-btn" style={styles.pinButton} onPress={handlePinAuth}>
           <Text style={styles.pinButtonText}>Unlock with PIN</Text>
         </TouchableOpacity>
 

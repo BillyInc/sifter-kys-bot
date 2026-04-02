@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import WatchlistExpandedCard from '../WatchlistExpandedCard';
 import DiaryUnlock from '../DiaryUnlock';
 import { useGlobalDiary } from "../hooks/Usediary";
+import { useWatchlist, useRefreshWallet, useDeleteWallet } from '../../hooks/useApi';
 
 // ─── Note type config ──────────────────────────────────────────────────────────
 const NOTE_TYPES = [
@@ -322,55 +323,18 @@ interface WatchlistPanelProps {
 
 export default function WatchlistPanel({ userId, apiUrl }: WatchlistPanelProps) {
   const { getAccessToken } = useAuth();
-  const [wallets, setWallets]           = useState<any[]>([]);
-  const [lastUpdate, setLastUpdate]     = useState<Date | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [activeTab, setActiveTab]       = useState<string>('wallets');
+  const authToken = getAccessToken();
+  const [activeTab, setActiveTab] = useState<string>('wallets');
 
-  useEffect(() => { loadWatchlist(); }, [userId]); // eslint-disable-line
+  const { data: watchlistData, isLoading: isRefreshing, dataUpdatedAt, refetch: loadWatchlist } = useWatchlist(userId, authToken);
+  const wallets: any[] = watchlistData?.wallets || [];
+  const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
-  const loadWatchlist = async () => {
-    setIsRefreshing(true);
-    try {
-      const authToken = getAccessToken();
-      const headers = { 'Accept': 'application/json' };
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/table`, { headers });
-      const data = await res.json();
-      if (data.success) { setWallets(data.wallets || []); setLastUpdate(new Date()); }
-    } catch (err) { console.error('Error loading watchlist:', err); }
-    setIsRefreshing(false);
-  };
+  const refreshMutation = useRefreshWallet(authToken);
+  const deleteMutation = useDeleteWallet(authToken);
 
-  const getAuthHeaders = (contentType = false): Record<string, string> => {
-    const authToken = getAccessToken();
-    const h: Record<string, string> = {};
-    if (authToken) h['Authorization'] = `Bearer ${authToken}`;
-    if (contentType) h['Content-Type'] = 'application/json';
-    return h;
-  };
-
-  const handleRefreshWallet = async (addr: string) => {
-    try {
-      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/${addr}/refresh`, {
-        method: 'POST', headers: getAuthHeaders(true),
-        body: JSON.stringify({ wallet_address: addr }),
-      });
-      const data = await res.json();
-      if (data.success) await loadWatchlist();
-    } catch (err) { console.error('Error refreshing wallet:', err); }
-  };
-
-  const handleDeleteWallet = async (addr: string) => {
-    try {
-      const res  = await fetch(`${apiUrl}/api/wallets/watchlist/remove`, {
-        method: 'POST', headers: getAuthHeaders(true),
-        body: JSON.stringify({ wallet_address: addr }),
-      });
-      const data = await res.json();
-      if (data.success) setWallets(prev => prev.filter(w => w.wallet_address !== addr));
-    } catch (err) { console.error('Error deleting wallet:', err); }
-  };
+  const handleRefreshWallet = async (addr: string) => { refreshMutation.mutate(addr); };
+  const handleDeleteWallet = async (addr: string) => { deleteMutation.mutate(addr); };
 
   const healthyCount  = wallets.filter(w => !w.degradation_alerts?.length).length;
   const warningCount  = wallets.filter(w => w.degradation_alerts?.some(a => a.severity === 'yellow')).length;
@@ -384,7 +348,7 @@ export default function WatchlistPanel({ userId, apiUrl }: WatchlistPanelProps) 
           <h3 style={{ color: 'var(--text-primary)' }} className="font-bold text-lg">🏆 Your Watchlist</h3>
           <p style={{ color: 'var(--text-secondary)' }} className="text-xs">Last updated: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : 'Never'}</p>
         </div>
-        <button onClick={loadWatchlist} disabled={isRefreshing} style={{ color: 'var(--text-secondary)' }} className="p-2 hover:opacity-70 rounded-lg transition disabled:opacity-50">
+        <button onClick={() => loadWatchlist()} disabled={isRefreshing} style={{ color: 'var(--text-secondary)' }} className="p-2 hover:opacity-70 rounded-lg transition disabled:opacity-50">
           <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>

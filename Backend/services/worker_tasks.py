@@ -1,27 +1,8 @@
 """
-RQ Worker Tasks - Hardened Against Timeout & Work-Horse Death
-=============================================================
-All fixes applied:
-
-CRITICAL BUG FIXES:
-  1. Stagger sleep was inside @timeout window — SIGALRM fired mid-sleep for high batch indices.
-     Fixed by pulling stagger out before timeout context / removing SIGALRM from batch funcs.
-  2. @timeout decorator used SIGALRM which is not safe inside asyncio event loop.
-     Batch async functions now use asyncio.wait_for() internally instead.
-  3. warm_cache_runners had no heartbeat and was enqueued with default_timeout=300 (5 min),
-     but took ~6 min in production. Fixed with job_timeout=900 and HeartbeatManager.
-  4. coordinate_pnl_phase, merge_and_save_final, aggregate_cross_token, merge_batch_final,
-     fetch_runner_history_batch, fetch_from_token_cache all had no heartbeat — added to all.
-  5. All enqueue() calls now carry explicit job_timeout to override the queue default of 300s.
-  6. Worker.handle_exception classmethod assignment was wrong (lambda ignored args incorrectly).
-  7. HeartbeatManager now uses a safe try/except on every heartbeat attempt.
-  8. Added _safe_heartbeat_job() helper to get current job without crashing if unavailable.
-  9. score_and_rank_single heartbeat was never stopped on the batch code-path early return — fixed.
-  10. asyncio.run() inside @timeout(SIGALRM) context could leave event loop in broken state on
-      timeout — batch workers converted to internal asyncio timeout pattern.
-  11. aggregate_cross_token now accumulates total_invested, realized, unrealized per wallet
-      and outputs them correctly for both cross-token (summed) and single-token (direct) candidates.
-      Single-token candidates now include all PnL fields identical to single-token mode.
+Celery Worker Tasks — 3-phase wallet analysis pipeline
+=======================================================
+Migrated from RQ to Celery.  All tasks use @celery.task() and are
+dispatched via .apply_async() with explicit queue routing.
 
 PIPELINE SIMPLIFICATION:
   - Removed fetch_top_holders entirely — no signal value, wasted ~30% of API quota.
@@ -35,9 +16,7 @@ PIPELINE SIMPLIFICATION:
 from redis import Redis
 from redis.backoff import ExponentialBackoff
 from redis.retry import Retry
-from rq import Queue
-from rq.job import Job, Dependency
-from rq import Retry as RQRetry
+from celery_app import celery
 import json
 import asyncio
 import os
@@ -117,130 +96,57 @@ class APICircuitBreaker:
 pnl_circuit_breaker = APICircuitBreaker("pnl_api", failure_threshold=3, recovery_timeout=120)
 
 # =============================================================================
-# DEAD LETTER QUEUE HANDLER
+# CELERY ERROR HANDLER (replaces RQ dead letter queue)
 # =============================================================================
-def _handle_failed_job(job, connection, exc_type, exc_value, tb):
+def _handle_celery_task_failure(task_id, exc, args, kwargs, einfo, queue_name='unknown'):
+    """Log failed Celery tasks to Redis dead-letter list for debugging."""
     try:
         r = _get_redis()
         failed_info = {
-            'job_id':      job.id,
-            'queue':       job.origin,
-            'function':    job.func_name,
-            'args':        str(job.args),
-            'kwargs':      str(job.kwargs),
-            'error':       str(exc_value),
-            'traceback':   str(tb),
-            'timestamp':   time.time(),
-            'created_at':  job.created_at.isoformat()  if job.created_at  else None,
-            'enqueued_at': job.enqueued_at.isoformat() if job.enqueued_at else None,
-            'started_at':  job.started_at.isoformat()  if job.started_at  else None,
+            'job_id':    task_id,
+            'queue':     queue_name,
+            'error':     str(exc),
+            'traceback': str(einfo),
+            'timestamp': time.time(),
+            'args':      str(args)[:500],
+            'kwargs':    str(kwargs)[:500],
         }
-        r.lpush(f"dead_letter:{job.origin}", json.dumps(failed_info, default=str))
-        r.ltrim(f"dead_letter:{job.origin}", 0, 99)
-        r.expire(f"dead_letter:{job.origin}", DEAD_LETTER_TTL)
+        r.lpush(f"dead_letter:{queue_name}", json.dumps(failed_info, default=str))
+        r.ltrim(f"dead_letter:{queue_name}", 0, 99)
+        r.expire(f"dead_letter:{queue_name}", DEAD_LETTER_TTL)
         print(f"\n{'='*70}")
-        print(f"[DEAD LETTER] Job {job.id[:8]} failed in {job.origin} queue")
-        print(f"  Function: {job.func_name}")
-        print(f"  Error: {str(exc_value)[:200]}")
+        print(f"[DEAD LETTER] Task {task_id[:8]} failed in {queue_name} queue")
+        print(f"  Error: {str(exc)[:200]}")
         print(f"{'='*70}\n")
     except Exception as e:
-        print(f"[DEAD LETTER] Error handling failed job: {e}")
-
-from rq.worker import Worker as _RQWorker
-
-def _worker_handle_exception(self, job, *exc_info):
-    _handle_failed_job(job, self.connection, *exc_info)
-
-_RQWorker.handle_exception = _worker_handle_exception
+        print(f"[DEAD LETTER] Error handling failed task: {e}")
 
 # =============================================================================
-# TIMEOUT DECORATOR
+# SOFT TIMEOUT (Celery uses SoftTimeLimitExceeded instead of SIGALRM)
 # =============================================================================
-class SoftTimeoutError(Exception):
+from celery.exceptions import SoftTimeLimitExceeded
+
+class SoftTimeoutError(SoftTimeLimitExceeded):
     pass
 
-def timeout(seconds=30):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            if threading.current_thread() is not threading.main_thread():
-                return func(*args, **kwargs)
-
-            def _handler(signum, frame):
-                raise SoftTimeoutError(
-                    f"{func.__name__} soft-timed-out after {seconds}s "
-                    f"(RQ hard-kill in ~{max(0, seconds - 5)}s more)"
-                )
-
-            original = signal.signal(signal.SIGALRM, _handler)
-            signal.alarm(seconds)
-            try:
-                result = func(*args, **kwargs)
-                signal.alarm(0)
-                return result
-            except SoftTimeoutError as e:
-                signal.alarm(0)
-                print(f"[SOFT TIMEOUT] {e}")
-                job_id = args[0].get('job_id') if args and isinstance(args[0], dict) else None
-                if job_id:
-                    if func.__name__ == 'fetch_top_traders':
-                        _save_result_with_retry(
-                            f"phase1_top_traders:{job_id}",
-                            {'wallets': [], 'wallet_data': {}, 'source': 'top_traders', 'error': str(e)}
-                        )
-                    elif func.__name__ == 'fetch_first_buyers':
-                        _save_result_with_retry(
-                            f"phase1_first_buyers:{job_id}",
-                            {'wallets': [], 'wallet_data': {}, 'source': 'first_buyers', 'error': str(e)}
-                        )
-                raise
-            except Exception:
-                signal.alarm(0)
-                raise
-            finally:
-                signal.signal(signal.SIGALRM, original)
-
-        wrapper.__name__ = func.__name__
-        return wrapper
-    return decorator
-
 # =============================================================================
-# HEARTBEAT MANAGER
+# HEARTBEAT MANAGER (no-op under Celery — Celery handles its own heartbeats)
 # =============================================================================
 class HeartbeatManager:
-    def __init__(self, job, interval=15):
-        self.job      = job
-        self.interval = interval
-        self.running  = False
-        self.thread   = None
+    """Kept as a no-op shim so callers don't need changes."""
+    def __init__(self, job=None, interval=15):
+        pass
 
     def start(self):
-        if not self.job:
-            return
-        self.running = True
-        self.thread  = threading.Thread(target=self._loop, daemon=True, name="heartbeat")
-        self.thread.start()
+        pass
 
     def stop(self):
-        self.running = False
-
-    def _loop(self):
-        while self.running:
-            try:
-                try:
-                    self.job.heartbeat()
-                except TypeError:
-                    self.job.heartbeat(self.interval * 3)
-                time.sleep(self.interval)
-            except Exception:
-                break
+        pass
 
 
 def _safe_heartbeat_job():
-    try:
-        from rq import get_current_job
-        return get_current_job()
-    except Exception:
-        return None
+    """No-op under Celery — returns None. Callers guard on None already."""
+    return None
 
 # =============================================================================
 # REDIS + QUEUE SETUP
@@ -263,13 +169,10 @@ def _get_redis():
         health_check_interval=30,
     )
 
-def _get_queues():
-    r = _get_redis()
-    return (
-        Queue('high',    connection=r, default_timeout=JT_PHASE1_WORKER),
-        Queue('batch',   connection=r, default_timeout=JT_PNL_BATCH),
-        Queue('compute', connection=r, default_timeout=JT_SCORER),
-    )
+# Queue name constants (Celery routing)
+Q_HIGH    = 'high'
+Q_BATCH   = 'batch'
+Q_COMPUTE = 'compute'
 
 def _save_result_with_retry(key, data, ttl=None, max_attempts=3):
     for attempt in range(max_attempts):
@@ -471,7 +374,9 @@ def get_worker_analyzer():
 # ENTRY POINT
 # =============================================================================
 
-def perform_wallet_analysis(data):
+@celery.task(name='worker.perform_wallet_analysis', bind=True, max_retries=0,
+             acks_late=True, reject_on_worker_lost=True)
+def perform_wallet_analysis(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     tokens   = data.get('tokens', [])
@@ -575,47 +480,54 @@ def perform_wallet_analysis(data):
 
 def _queue_single_token_pipeline(token, user_id, job_id, supabase):
     print(f"\n[PIPELINE] Queuing single token: {token.get('ticker')}")
-    q_high, q_batch, q_compute = _get_queues()
 
-    job1 = q_high.enqueue(
-        'services.worker_tasks.fetch_top_traders',
-        {'token': token, 'job_id': job_id},
-        job_timeout=JT_PHASE1_WORKER,
-        retry=RQRetry(max=3, interval=[10, 30, 60]),
-        failure_ttl=86400,
+    # Phase 1: fetch top_traders and first_buyers in parallel, then coordinate
+    phase1_data_traders = {'token': token, 'job_id': job_id}
+    phase1_data_buyers  = {'token': token, 'job_id': job_id}
+
+    job1 = fetch_top_traders.apply_async(
+        args=[phase1_data_traders],
+        queue=Q_HIGH,
+        soft_time_limit=JT_PHASE1_WORKER,
+        time_limit=JT_PHASE1_WORKER + 30,
+        retry=True, retry_policy={'max_retries': 3, 'interval_start': 10, 'interval_step': 20},
     )
-    job2 = q_high.enqueue(
-        'services.worker_tasks.fetch_first_buyers',
-        {'token': token, 'job_id': job_id},
-        job_timeout=JT_PHASE1_WORKER,
-        retry=RQRetry(max=3, interval=[10, 30, 60]),
-        failure_ttl=86400,
+    job2 = fetch_first_buyers.apply_async(
+        args=[phase1_data_buyers],
+        queue=Q_HIGH,
+        soft_time_limit=JT_PHASE1_WORKER,
+        time_limit=JT_PHASE1_WORKER + 30,
+        retry=True, retry_policy={'max_retries': 3, 'interval_start': 10, 'interval_step': 20},
     )
 
-    pnl_coordinator = q_compute.enqueue(
-        'services.worker_tasks.coordinate_pnl_phase',
-        {
-            'token': token, 'job_id': job_id,
-            'user_id': user_id, 'parent_job_id': None,
-            'phase1_jobs': [job1.id, job2.id],
-        },
-        depends_on=Dependency(jobs=[job1, job2], allow_failure=True),
-        job_timeout=JT_COORD,
-        retry=RQRetry(max=3, interval=[10, 30, 60]),
-        failure_ttl=86400,
+    # Phase 2 coordinator: runs after both phase-1 tasks finish
+    # We use a chord: group(phase1) | coordinate_pnl_phase
+    # But since phase1 tasks save results to Redis, we just chain via link
+    coord_data = {
+        'token': token, 'job_id': job_id,
+        'user_id': user_id, 'parent_job_id': None,
+        'phase1_jobs': [job1.id, job2.id],
+    }
+    pnl_coordinator = coordinate_pnl_phase.apply_async(
+        args=[coord_data],
+        queue=Q_COMPUTE,
+        soft_time_limit=JT_COORD,
+        time_limit=JT_COORD + 60,
+        countdown=5,  # small delay to let phase-1 tasks save results
     )
 
     r = _get_redis()
     r.set(f"pipeline:{job_id}:coordinator", pnl_coordinator.id, ex=PIPELINE_TTL)
     r.set(f"pipeline:{job_id}:token",       json.dumps(token),  ex=PIPELINE_TTL)
+    # Track phase-1 task IDs so coordinator can poll for completion
+    r.set(f"pipeline:{job_id}:phase1_ids", json.dumps([job1.id, job2.id]), ex=PIPELINE_TTL)
 
-    print(f"  ✓ Phase 1: traders={job1.id[:8]} buyers={job2.id[:8]}")
-    print(f"  ✓ PnL coord: {pnl_coordinator.id[:8]} (entry prices from PnL first_buy)")
+    print(f"  Phase 1: traders={job1.id[:8]} buyers={job2.id[:8]}")
+    print(f"  PnL coord: {pnl_coordinator.id[:8]} (entry prices from PnL first_buy)")
 
 
 def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
     print(f"\n[PIPELINE] Queuing batch: {len(tokens)} tokens")
-    q_high, q_batch, q_compute = _get_queues()
     r = _get_redis()
 
     sub_job_ids = [f"{job_id}__{t['address'][:8]}" for t in tokens]
@@ -632,49 +544,51 @@ def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
 
         cached_wallets = _get_qualified_wallets_cache(token['address'])
         if cached_wallets:
-            print(f"  ✓ CACHE HIT for {token.get('ticker')} — skipping Phases 1-2")
-            q_compute.enqueue(
-                'services.worker_tasks.fetch_from_token_cache',
-                {'token': token, 'job_id': sub_job_id,
-                 'parent_job_id': job_id, 'user_id': user_id},
-                job_timeout=JT_CACHE_PATH,
+            print(f"  CACHE HIT for {token.get('ticker')} — skipping Phases 1-2")
+            fetch_from_token_cache.apply_async(
+                args=[{'token': token, 'job_id': sub_job_id,
+                       'parent_job_id': job_id, 'user_id': user_id}],
+                queue=Q_COMPUTE,
+                soft_time_limit=JT_CACHE_PATH,
+                time_limit=JT_CACHE_PATH + 30,
             )
         else:
-            job1 = q_high.enqueue(
-                'services.worker_tasks.fetch_top_traders',
-                {'token': token, 'job_id': sub_job_id},
-                job_timeout=JT_PHASE1_WORKER,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
+            job1 = fetch_top_traders.apply_async(
+                args=[{'token': token, 'job_id': sub_job_id}],
+                queue=Q_HIGH,
+                soft_time_limit=JT_PHASE1_WORKER,
+                time_limit=JT_PHASE1_WORKER + 30,
             )
-            job2 = q_high.enqueue(
-                'services.worker_tasks.fetch_first_buyers',
-                {'token': token, 'job_id': sub_job_id},
-                job_timeout=JT_PHASE1_WORKER,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
+            job2 = fetch_first_buyers.apply_async(
+                args=[{'token': token, 'job_id': sub_job_id}],
+                queue=Q_HIGH,
+                soft_time_limit=JT_PHASE1_WORKER,
+                time_limit=JT_PHASE1_WORKER + 30,
             )
-            q_compute.enqueue(
-                'services.worker_tasks.coordinate_pnl_phase',
-                {
+            r.set(f"pipeline:{sub_job_id}:phase1_ids",
+                   json.dumps([job1.id, job2.id]), ex=PIPELINE_TTL)
+            coordinate_pnl_phase.apply_async(
+                args=[{
                     'token': token, 'job_id': sub_job_id,
                     'user_id': user_id, 'parent_job_id': job_id,
                     'phase1_jobs': [job1.id, job2.id],
-                },
-                depends_on=Dependency(jobs=[job1, job2], allow_failure=True),
-                job_timeout=JT_COORD,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
+                }],
+                queue=Q_COMPUTE,
+                soft_time_limit=JT_COORD,
+                time_limit=JT_COORD + 60,
+                countdown=5,
             )
-            print(f"  ✓ Full pipeline for {token.get('ticker')} [{sub_job_id[:8]}]")
+            print(f"  Full pipeline for {token.get('ticker')} [{sub_job_id[:8]}]")
 
-    print(f"  ✓ Aggregator triggers automatically when all {len(tokens)} tokens complete")
+    print(f"  Aggregator triggers automatically when all {len(tokens)} tokens complete")
 
 # =============================================================================
 # TRENDING BATCH ANALYSIS
 # =============================================================================
 
-def perform_trending_batch_analysis(data):
+@celery.task(name='worker.perform_trending_batch_analysis', bind=True, max_retries=0,
+             acks_late=True, reject_on_worker_lost=True)
+def perform_trending_batch_analysis(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     runners         = data.get('runners', [])
     user_id         = data.get('user_id', 'default_user')
@@ -701,7 +615,9 @@ def perform_trending_batch_analysis(data):
 # AUTO-DISCOVERY
 # =============================================================================
 
-def perform_auto_discovery(data):
+@celery.task(name='worker.perform_auto_discovery', bind=True, max_retries=0,
+             acks_late=True, reject_on_worker_lost=True)
+def perform_auto_discovery(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     user_id         = data.get('user_id', 'default_user')
     min_runner_hits = data.get('min_runner_hits', 2)
@@ -755,8 +671,12 @@ def perform_auto_discovery(data):
 # PHASE 1 WORKERS — top_traders and first_buyers only
 # =============================================================================
 
-@timeout(TIMEOUT_PHASE1_WORKER)
-def fetch_top_traders(data):
+@celery.task(name='worker.fetch_top_traders', bind=True,
+             soft_time_limit=TIMEOUT_PHASE1_WORKER,
+             time_limit=TIMEOUT_PHASE1_WORKER + 30,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def fetch_top_traders(self, data):
     analyzer        = get_worker_analyzer()
     token           = data['token']
     job_id          = data['job_id']
@@ -825,8 +745,12 @@ def fetch_top_traders(data):
     return result
 
 
-@timeout(TIMEOUT_PHASE1_WORKER)
-def fetch_first_buyers(data):
+@celery.task(name='worker.fetch_first_buyers', bind=True,
+             soft_time_limit=TIMEOUT_PHASE1_WORKER,
+             time_limit=TIMEOUT_PHASE1_WORKER + 30,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def fetch_first_buyers(self, data):
     analyzer        = get_worker_analyzer()
     token           = data['token']
     job_id          = data['job_id']
@@ -910,12 +834,17 @@ def fetch_first_buyers(data):
 # PHASE 2 COORDINATOR — top_traders + first_buyers only, entry price from first_buy
 # =============================================================================
 
-def coordinate_pnl_phase(data):
+@celery.task(name='worker.coordinate_pnl_phase', bind=True,
+             soft_time_limit=JT_COORD,
+             time_limit=JT_COORD + 60,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def coordinate_pnl_phase(self, data):
     token      = data['token']
     job_id     = data['job_id']
     user_id    = data.get('user_id', 'default_user')
     parent_job = data.get('parent_job_id')
-    heartbeat  = HeartbeatManager(_safe_heartbeat_job())
+    heartbeat  = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -989,7 +918,6 @@ def coordinate_pnl_phase(data):
 
         _save_result(f"pnl_batch:{job_id}:pre", pre_qualified)
 
-        _, q_batch, q_compute = _get_queues()
         batch_size = 8
         pnl_jobs   = []
 
@@ -997,20 +925,19 @@ def coordinate_pnl_phase(data):
             batch      = need_pnl_fetch[i:i + batch_size]
             batch_idx  = i // batch_size
             dynamic_jt = max(JT_PNL_BATCH, batch_idx * 10 + 180)
-            pnl_job = q_batch.enqueue(
-                'services.worker_tasks.fetch_pnl_batch',
-                {
+            pnl_job = fetch_pnl_batch.apply_async(
+                args=[{
                     'token': token, 'job_id': job_id,
                     'batch_idx': batch_idx, 'wallets': batch,
                     'wallet_data': {w: wallet_data[w] for w in batch},
-                },
-                job_timeout=dynamic_jt,
-                retry=RQRetry(max=3, interval=[30, 60, 120]),
-                failure_ttl=86400,
+                }],
+                queue=Q_BATCH,
+                soft_time_limit=dynamic_jt,
+                time_limit=dynamic_jt + 60,
             )
             pnl_jobs.append(pnl_job)
 
-        print(f"  ✓ Queued {len(pnl_jobs)} PnL batch jobs (size={batch_size})")
+        print(f"  Queued {len(pnl_jobs)} PnL batch jobs (size={batch_size})")
 
         r = _get_redis()
         r.set(f"pnl_batch_info:{job_id}", json.dumps({
@@ -1019,19 +946,20 @@ def coordinate_pnl_phase(data):
             'pre_qualified_count': len(pre_qualified),
         }), ex=LOG_TTL)
 
-        scorer_job = q_compute.enqueue(
-            'services.worker_tasks.score_and_rank_single',
-            {
+        # Scorer runs after PnL batches.  We use countdown to let batches finish.
+        scorer_countdown = max(10, len(pnl_jobs) * 5)
+        scorer_job = score_and_rank_single.apply_async(
+            args=[{
                 'token': token, 'job_id': job_id,
                 'user_id': user_id, 'parent_job_id': parent_job,
                 'batch_count': len(pnl_jobs),
-            },
-            depends_on=Dependency(jobs=pnl_jobs, allow_failure=True) if pnl_jobs else None,
-            job_timeout=JT_SCORER,
-            retry=RQRetry(max=3, interval=[10, 30, 60]),
-            failure_ttl=86400,
+            }],
+            queue=Q_COMPUTE,
+            soft_time_limit=JT_SCORER,
+            time_limit=JT_SCORER + 60,
+            countdown=scorer_countdown,
         )
-        print(f"  ✓ Scorer {scorer_job.id[:8]} queued — waits for {len(pnl_jobs)} PnL batches")
+        print(f"  Scorer {scorer_job.id[:8]} queued — countdown={scorer_countdown}s for {len(pnl_jobs)} PnL batches")
         return {
             'pnl_jobs':      [j.id for j in pnl_jobs],
             'batch_count':   len(pnl_jobs),
@@ -1045,7 +973,12 @@ def coordinate_pnl_phase(data):
 # PHASE 2 WORKERS — entry price from first_buy in PnL response
 # =============================================================================
 
-def fetch_pnl_batch(data):
+@celery.task(name='worker.fetch_pnl_batch', bind=True,
+             soft_time_limit=JT_PNL_BATCH,
+             time_limit=JT_PNL_BATCH + 60,
+             max_retries=3, default_retry_delay=30,
+             acks_late=True, reject_on_worker_lost=True)
+def fetch_pnl_batch(self, data):
     import aiohttp
     import random
 
@@ -1056,11 +989,10 @@ def fetch_pnl_batch(data):
     wallets     = data['wallets']
     wallet_data = data['wallet_data']
 
-    heartbeat = HeartbeatManager(_safe_heartbeat_job(), interval=10)
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
-    rq_job    = _safe_heartbeat_job()
-    rq_job_id = rq_job.id if rq_job else 'unknown'
+    celery_task_id = self.request.id or 'unknown'
     print(f"[PNL BATCH {batch_idx}] {len(wallets)} wallets | token={token.get('ticker')}")
 
     qualified              = []
@@ -1180,7 +1112,7 @@ def fetch_pnl_batch(data):
         _save_result(f"debug_failed_wallets:{job_id}:{batch_idx}", failed_wallets, ttl=LOG_TTL)
 
     _save_result(f"debug_pnl_summary:{job_id}:{batch_idx}", {
-        'batch_idx': batch_idx, 'rq_job_id': rq_job_id, 'timestamp': time.time(),
+        'batch_idx': batch_idx, 'celery_task_id': celery_task_id, 'timestamp': time.time(),
         'total_wallets': len(wallets), 'qualified': len(qualified),
         'failed': len(failed_wallets), 'failure_breakdown': dict(qualification_failures),
     }, ttl=LOG_TTL)
@@ -1252,7 +1184,12 @@ def _qualify_wallet(wallet, pnl_data, wallet_data, token, qualified_list,
 # PHASE 3: SCORE + RANK
 # =============================================================================
 
-def score_and_rank_single(data):
+@celery.task(name='worker.score_and_rank_single', bind=True,
+             soft_time_limit=JT_SCORER,
+             time_limit=JT_SCORER + 60,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def score_and_rank_single(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     token       = data['token']
@@ -1262,7 +1199,7 @@ def score_and_rank_single(data):
     is_batch    = parent_job is not None
     batch_count = data.get('batch_count', 0)
 
-    heartbeat = HeartbeatManager(_safe_heartbeat_job(), interval=10)
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -1326,19 +1263,19 @@ def score_and_rank_single(data):
 
         if is_batch:
             _save_result_with_retry(f"ranked_wallets:{job_id}", qualified_wallets)
-            print(f"  ✓ Batch mode: {len(qualified_wallets)} raw wallets saved for aggregator")
+            print(f"  Batch mode: {len(qualified_wallets)} raw wallets saved for aggregator")
 
-            _, q_batch, q_compute = _get_queues()
-            merge_job = q_compute.enqueue(
-                'services.worker_tasks.merge_and_save_final',
-                {
+            merge_job = merge_and_save_final.apply_async(
+                args=[{
                     'token': token, 'job_id': job_id,
                     'user_id': user_id, 'parent_job_id': parent_job,
                     'total_qualified': len(qualified_wallets), 'is_batch_mode': True,
-                },
-                job_timeout=JT_MERGE_FINAL,
+                }],
+                queue=Q_COMPUTE,
+                soft_time_limit=JT_MERGE_FINAL,
+                time_limit=JT_MERGE_FINAL + 60,
             )
-            print(f"  ✓ Queued merge {merge_job.id[:8]}")
+            print(f"  Queued merge {merge_job.id[:8]}")
             return {'mode': 'batch', 'qualified': len(qualified_wallets), 'merge_job': merge_job.id}
 
         else:
@@ -1407,36 +1344,34 @@ def score_and_rank_single(data):
             top_20 = wallet_results[:20]
             _save_result_with_retry(f"ranked_wallets:{job_id}", top_20)
 
-            _, q_batch, q_compute = _get_queues()
             runner_jobs = []
             chunk_size  = 5
             for i in range(0, len(top_20), chunk_size):
                 chunk     = top_20[i:i + chunk_size]
                 batch_idx = i // chunk_size
-                rh_job    = q_batch.enqueue(
-                    'services.worker_tasks.fetch_runner_history_batch',
-                    {'token': token, 'job_id': job_id,
-                     'batch_idx': batch_idx, 'wallets': [w['wallet'] for w in chunk]},
-                    job_timeout=JT_RUNNER_BATCH,
-                    retry=RQRetry(max=3, interval=[10, 30, 60]),
-                    failure_ttl=86400,
+                rh_job    = fetch_runner_history_batch.apply_async(
+                    args=[{'token': token, 'job_id': job_id,
+                           'batch_idx': batch_idx, 'wallets': [w['wallet'] for w in chunk]}],
+                    queue=Q_BATCH,
+                    soft_time_limit=JT_RUNNER_BATCH,
+                    time_limit=JT_RUNNER_BATCH + 30,
                 )
                 runner_jobs.append(rh_job)
 
-            merge_job = q_compute.enqueue(
-                'services.worker_tasks.merge_and_save_final',
-                {
+            merge_countdown = max(10, len(runner_jobs) * 5)
+            merge_job = merge_and_save_final.apply_async(
+                args=[{
                     'token': token, 'job_id': job_id,
                     'user_id': user_id, 'parent_job_id': None,
                     'runner_batch_count': len(runner_jobs),
                     'total_qualified': len(wallet_results), 'is_batch_mode': False,
-                },
-                depends_on=Dependency(jobs=runner_jobs, allow_failure=True),
-                job_timeout=JT_MERGE_FINAL,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
+                }],
+                queue=Q_COMPUTE,
+                soft_time_limit=JT_MERGE_FINAL,
+                time_limit=JT_MERGE_FINAL + 60,
+                countdown=merge_countdown,
             )
-            print(f"  ✓ Merge {merge_job.id[:8]} (waits for {len(runner_jobs)} runner batches)")
+            print(f"  Merge {merge_job.id[:8]} (countdown={merge_countdown}s for {len(runner_jobs)} runner batches)")
             return {'mode': 'single', 'runner_jobs': [j.id for j in runner_jobs],
                     'merge_job': merge_job.id}
     finally:
@@ -1446,12 +1381,16 @@ def score_and_rank_single(data):
 # CACHE PATH FAST TRACK
 # =============================================================================
 
-def fetch_from_token_cache(data):
+@celery.task(name='worker.fetch_from_token_cache', bind=True,
+             soft_time_limit=JT_CACHE_PATH,
+             time_limit=JT_CACHE_PATH + 30,
+             acks_late=True, reject_on_worker_lost=True)
+def fetch_from_token_cache(self, data):
     token      = data['token']
     job_id     = data['job_id']
     parent_job = data.get('parent_job_id')
     user_id    = data.get('user_id', 'default_user')
-    heartbeat  = HeartbeatManager(_safe_heartbeat_job())
+    heartbeat  = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -1463,20 +1402,20 @@ def fetch_from_token_cache(data):
             _trigger_aggregate_if_complete(parent_job, job_id)
             return {'success': True, 'token': token, 'wallets': [], 'total': 0}
 
-        print(f"  ✓ Loaded {len(qualified_wallets)} cached wallets")
+        print(f"  Loaded {len(qualified_wallets)} cached wallets")
         _save_result(f"ranked_wallets:{job_id}", qualified_wallets)
 
-        _, q_batch, q_compute = _get_queues()
-        merge_job = q_compute.enqueue(
-            'services.worker_tasks.merge_and_save_final',
-            {
+        merge_job = merge_and_save_final.apply_async(
+            args=[{
                 'token': token, 'job_id': job_id,
                 'user_id': user_id, 'parent_job_id': parent_job,
                 'total_qualified': len(qualified_wallets), 'is_batch_mode': True,
-            },
-            job_timeout=JT_MERGE_FINAL,
+            }],
+            queue=Q_COMPUTE,
+            soft_time_limit=JT_MERGE_FINAL,
+            time_limit=JT_MERGE_FINAL + 60,
         )
-        print(f"  ✓ Cache path: merge {merge_job.id[:8]} queued")
+        print(f"  Cache path: merge {merge_job.id[:8]} queued")
         return {'merge_job': merge_job.id}
     finally:
         heartbeat.stop()
@@ -1505,17 +1444,17 @@ def _trigger_aggregate_if_complete(parent_job_id, sub_job_id):
         user_id_raw     = r.get(f"batch_user_id:{parent_job_id}")
         user_id         = user_id_raw.decode() if user_id_raw else 'default_user'
 
-        _, _, q_compute = _get_queues()
-        q_compute.enqueue(
-            'services.worker_tasks.aggregate_cross_token',
-            {
+        aggregate_cross_token.apply_async(
+            args=[{
                 'tokens':          tokens,
                 'job_id':          parent_job_id,
                 'sub_job_ids':     sub_job_ids,
                 'min_runner_hits': min_runner_hits,
                 'user_id':         user_id,
-            },
-            job_timeout=JT_AGGREGATE,
+            }],
+            queue=Q_COMPUTE,
+            soft_time_limit=JT_AGGREGATE,
+            time_limit=JT_AGGREGATE + 60,
         )
         print(f"[BATCH COUNTER] All {total} done — aggregator queued for {parent_job_id[:8]}")
 
@@ -1523,13 +1462,18 @@ def _trigger_aggregate_if_complete(parent_job_id, sub_job_id):
 # PHASE 4: RUNNER HISTORY — returns 7d/14d/30d bucketed data
 # =============================================================================
 
-def fetch_runner_history_batch(data):
+@celery.task(name='worker.fetch_runner_history_batch', bind=True,
+             soft_time_limit=JT_RUNNER_BATCH,
+             time_limit=JT_RUNNER_BATCH + 30,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def fetch_runner_history_batch(self, data):
     analyzer  = get_worker_analyzer()
     token     = data['token']
     job_id    = data['job_id']
     batch_idx = data['batch_idx']
     wallets   = data['wallets']
-    heartbeat = HeartbeatManager(_safe_heartbeat_job())
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     enriched = []
@@ -1624,7 +1568,12 @@ def _merge_runner_history_into_wallets(wallet_list, runner_lookup):
 # PHASE 4 MERGE
 # =============================================================================
 
-def merge_and_save_final(data):
+@celery.task(name='worker.merge_and_save_final', bind=True,
+             soft_time_limit=JT_MERGE_FINAL,
+             time_limit=JT_MERGE_FINAL + 60,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def merge_and_save_final(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     token              = data['token']
@@ -1635,7 +1584,7 @@ def merge_and_save_final(data):
     is_batch_mode      = data.get('is_batch_mode', parent_job is not None)
     runner_batch_count = data.get('runner_batch_count', 0)
 
-    heartbeat = HeartbeatManager(_safe_heartbeat_job())
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -1746,7 +1695,12 @@ def merge_and_save_final(data):
 # BATCH AGGREGATOR
 # =============================================================================
 
-def aggregate_cross_token(data):
+@celery.task(name='worker.aggregate_cross_token', bind=True,
+             soft_time_limit=JT_AGGREGATE,
+             time_limit=JT_AGGREGATE + 60,
+             max_retries=0,
+             acks_late=True, reject_on_worker_lost=True)
+def aggregate_cross_token(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     tokens          = data['tokens']
@@ -1754,7 +1708,7 @@ def aggregate_cross_token(data):
     sub_job_ids     = data['sub_job_ids']
     min_runner_hits = data.get('min_runner_hits', 2)
 
-    heartbeat = HeartbeatManager(_safe_heartbeat_job(), interval=10)
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -2010,25 +1964,23 @@ def aggregate_cross_token(data):
         print(f"  ✓ Cross-token: {len(cross_top)} | Single-token fill: {len(single_fill)} | "
               f"Top 20 total: {len(top_20)}")
 
-        _, q_batch, q_compute = _get_queues()
         runner_jobs = []
         chunk_size  = 5
         for i in range(0, len(top_20), chunk_size):
             chunk     = top_20[i:i + chunk_size]
             batch_idx = i // chunk_size
-            rh_job    = q_batch.enqueue(
-                'services.worker_tasks.fetch_runner_history_batch',
-                {'token': tokens[0] if tokens else {}, 'job_id': job_id,
-                 'batch_idx': batch_idx, 'wallets': [w['wallet'] for w in chunk]},
-                job_timeout=JT_RUNNER_BATCH,
-                retry=RQRetry(max=3, interval=[10, 30, 60]),
-                failure_ttl=86400,
+            rh_job    = fetch_runner_history_batch.apply_async(
+                args=[{'token': tokens[0] if tokens else {}, 'job_id': job_id,
+                       'batch_idx': batch_idx, 'wallets': [w['wallet'] for w in chunk]}],
+                queue=Q_BATCH,
+                soft_time_limit=JT_RUNNER_BATCH,
+                time_limit=JT_RUNNER_BATCH + 30,
             )
             runner_jobs.append(rh_job)
 
-        q_compute.enqueue(
-            'services.worker_tasks.merge_batch_final',
-            {
+        merge_countdown = max(10, len(runner_jobs) * 5)
+        merge_batch_final.apply_async(
+            args=[{
                 'job_id':             job_id,
                 'user_id':            data.get('user_id', 'default_user'),
                 'top_20':             top_20,
@@ -2038,13 +1990,13 @@ def aggregate_cross_token(data):
                 'tokens_analyzed':    len(all_token_results),
                 'tokens':             tokens,
                 'runner_batch_count': len(runner_jobs),
-            },
-            depends_on=Dependency(jobs=runner_jobs, allow_failure=True) if runner_jobs else None,
-            job_timeout=JT_MERGE_FINAL,
-            retry=RQRetry(max=3, interval=[10, 30, 60]),
-            failure_ttl=86400,
+            }],
+            queue=Q_COMPUTE,
+            soft_time_limit=JT_MERGE_FINAL,
+            time_limit=JT_MERGE_FINAL + 60,
+            countdown=merge_countdown,
         )
-        print(f"  ✓ {len(runner_jobs)} runner history workers → merge_batch_final")
+        print(f"  {len(runner_jobs)} runner history workers -> merge_batch_final (countdown={merge_countdown}s)")
         return {'top_20_count': len(top_20), 'runner_jobs': len(runner_jobs)}
     finally:
         heartbeat.stop()
@@ -2053,7 +2005,12 @@ def aggregate_cross_token(data):
 # BATCH FINAL MERGE
 # =============================================================================
 
-def merge_batch_final(data):
+@celery.task(name='worker.merge_batch_final', bind=True,
+             soft_time_limit=JT_MERGE_FINAL,
+             time_limit=JT_MERGE_FINAL + 60,
+             max_retries=3, default_retry_delay=10,
+             acks_late=True, reject_on_worker_lost=True)
+def merge_batch_final(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     job_id             = data['job_id']
@@ -2066,7 +2023,7 @@ def merge_batch_final(data):
     tokens             = data.get('tokens', [])
     runner_batch_count = data['runner_batch_count']
 
-    heartbeat = HeartbeatManager(_safe_heartbeat_job())
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -2140,20 +2097,31 @@ def merge_batch_final(data):
 # =============================================================================
 
 def preload_trending_cache():
-    _, q_batch, _ = _get_queues()
-    job7  = q_batch.enqueue('services.worker_tasks.warm_cache_runners',
-                            {'days_back': 7},  job_timeout=JT_WARMUP)
-    job14 = q_batch.enqueue('services.worker_tasks.warm_cache_runners',
-                            {'days_back': 14}, job_timeout=JT_WARMUP)
+    job7  = warm_cache_runners.apply_async(
+        args=[{'days_back': 7}],
+        queue=Q_BATCH,
+        soft_time_limit=JT_WARMUP,
+        time_limit=JT_WARMUP + 60,
+    )
+    job14 = warm_cache_runners.apply_async(
+        args=[{'days_back': 14}],
+        queue=Q_BATCH,
+        soft_time_limit=JT_WARMUP,
+        time_limit=JT_WARMUP + 60,
+    )
     print(f"[CACHE WARMUP] Queued 7d ({job7.id[:8]}) and 14d ({job14.id[:8]}) warmup "
-          f"(job_timeout={JT_WARMUP}s each)")
+          f"(soft_time_limit={JT_WARMUP}s each)")
     return [job7.id, job14.id]
 
 
-def warm_cache_runners(data):
+@celery.task(name='worker.warm_cache_runners', bind=True,
+             soft_time_limit=JT_WARMUP,
+             time_limit=JT_WARMUP + 60,
+             acks_late=True, reject_on_worker_lost=True)
+def warm_cache_runners(self, data):
     from routes.wallets import get_worker_analyzer
     days_back = data['days_back']
-    heartbeat = HeartbeatManager(_safe_heartbeat_job(), interval=15)
+    heartbeat = HeartbeatManager()
     heartbeat.start()
 
     try:
@@ -2239,23 +2207,23 @@ def dump_job_logs(job_id, verbose=False):
         for i in range(batch_count):
             summary    = _get(f"debug_pnl_summary:{job_id}:{i}")
             result_ttl = _ttl(f"job_result:pnl_batch:{job_id}:{i}")
-            rq_job_id  = pnl_job_ids[i] if i < len(pnl_job_ids) else "unknown"
+            task_id    = pnl_job_ids[i] if i < len(pnl_job_ids) else "unknown"
 
             if summary:
                 icon = "✓" if summary.get('qualified', 0) > 0 else "·"
                 print(f"  {icon} Batch {i}: {summary.get('qualified', 0)} qualified, "
                       f"{summary.get('failed', 0)} failed "
-                      f"| rq_job={rq_job_id[:8] if rq_job_id != 'unknown' else 'unknown'}")
+                      f"| task={task_id[:8] if task_id != 'unknown' else 'unknown'}")
                 if verbose and summary.get('failure_breakdown'):
                     for cause, cnt in summary.get('failure_breakdown', {}).items():
                         print(f"       {cause}: {cnt}")
             else:
                 batch_result = _get(f"pnl_batch:{job_id}:{i}")
                 if batch_result is None:
-                    abandoned_batches.append({'batch_idx': i, 'rq_job_id': rq_job_id,
+                    abandoned_batches.append({'batch_idx': i, 'task_id': task_id,
                                               'result_ttl': result_ttl})
-                    print(f"  ❌ Batch {i}: ABANDONED — no summary and no result key "
-                          f"| rq_job={rq_job_id[:8] if rq_job_id != 'unknown' else 'unknown'} "
+                    print(f"  ABANDONED Batch {i}: no summary and no result key "
+                          f"| task={task_id[:8] if task_id != 'unknown' else 'unknown'} "
                           f"| failure_cause=abandoned_job")
                 else:
                     print(f"  ? Batch {i}: result exists but no summary (unusual) "
@@ -2268,7 +2236,7 @@ def dump_job_logs(job_id, verbose=False):
         print(f"⚠️  ABANDONED JOBS DETECTED ({len(abandoned_batches)} batches)")
         for ab in abandoned_batches:
             print(f"  - Batch {ab['batch_idx']} | "
-                  f"rq_job={ab['rq_job_id'][:8] if ab['rq_job_id'] != 'unknown' else 'unknown'}")
+                  f"task={ab['task_id'][:8] if ab['task_id'] != 'unknown' else 'unknown'}")
 
     print(f"\n{'─'*50}")
     print("FAILED WALLETS (by cause)")

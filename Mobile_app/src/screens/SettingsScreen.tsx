@@ -88,7 +88,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   );
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView testID="settings-screen" style={styles.container}>
 
       {/* Account */}
       <Section title="Account">
@@ -101,11 +101,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
           {walletConnected
             ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={styles.addr}>{walletAddress.slice(0, 8)}…{walletAddress.slice(-6)}</Text>
-                <TouchableOpacity onPress={() => navigation.navigate('ConnectWallet')} style={styles.smallBtn}>
+                <TouchableOpacity testID="settings-connect-wallet-btn" onPress={() => navigation.navigate('ConnectWallet')} style={styles.smallBtn}>
                   <Text style={styles.smallBtnText}>Change</Text>
                 </TouchableOpacity>
               </View>
-            : <TouchableOpacity style={styles.connectBtn} onPress={() => navigation.navigate('ConnectWallet')}>
+            : <TouchableOpacity testID="settings-connect-wallet-btn" style={styles.connectBtn} onPress={() => navigation.navigate('ConnectWallet')}>
                 <Text style={styles.connectBtnText}>Connect Wallet</Text>
               </TouchableOpacity>
           }
@@ -124,8 +124,8 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       <Section title="Portfolio">
         <Row label="Total Portfolio">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TextInput style={styles.input} value={portfolio} onChangeText={setPortfolio} keyboardType="numeric" />
-            <TouchableOpacity onPress={handleSavePortfolio} style={styles.saveBtn}><Text style={styles.saveBtnText}>Save</Text></TouchableOpacity>
+            <TextInput testID="portfolio-input" style={styles.input} value={portfolio} onChangeText={setPortfolio} keyboardType="numeric" />
+            <TouchableOpacity testID="portfolio-save-btn" onPress={handleSavePortfolio} style={styles.saveBtn}><Text style={styles.saveBtnText}>Save</Text></TouchableOpacity>
           </View>
         </Row>
         <Row label="Trading Balance (10%)" borderBottom={false}>
@@ -136,10 +136,10 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       {/* Trade settings */}
       <Section title="Trade Settings">
         <Row label="Min signal amount ($)">
-          <TextInput style={styles.input} value={minBuy} onChangeText={setMinBuy} keyboardType="numeric" onBlur={() => updateSettings({ minBuyUsd: parseFloat(minBuy) || 100 })} />
+          <TextInput testID="min-buy-input" style={styles.input} value={minBuy} onChangeText={setMinBuy} keyboardType="numeric" onBlur={() => updateSettings({ minBuyUsd: parseFloat(minBuy) || 100 })} />
         </Row>
         <Row label="Auto-replace wallets" borderBottom={false}>
-          <Switch value={autoReplace} onValueChange={(v: boolean) => { setAutoReplace(v); updateSettings({ autoReplaceWallets: v }); }} trackColor={{ true: '#6366f1', false: '#e5e7eb' }} />
+          <Switch testID="auto-replace-switch" value={autoReplace} onValueChange={(v: boolean) => { setAutoReplace(v); updateSettings({ autoReplaceWallets: v }); }} trackColor={{ true: '#6366f1', false: '#e5e7eb' }} />
         </Row>
       </Section>
 
@@ -155,11 +155,11 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 
       {/* Danger zone */}
       <Section title="⚠️ Danger Zone">
-        <TouchableOpacity style={styles.dangerBtn} onPress={handleKillSwitch}>
+        <TouchableOpacity testID="kill-switch-btn" style={styles.dangerBtn} onPress={handleKillSwitch}>
           <Icon name="power-settings-new" size={18} color="white" />
           <Text style={styles.dangerBtnText}>Emergency Kill Switch</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.dangerBtn, { backgroundColor: '#7f1d1d', marginTop: 8, marginBottom: 0 }]} onPress={handleSelfDestruct}>
+        <TouchableOpacity testID="self-destruct-btn" style={[styles.dangerBtn, { backgroundColor: '#7f1d1d', marginTop: 8, marginBottom: 0 }]} onPress={handleSelfDestruct}>
           <Icon name="delete-forever" size={18} color="white" />
           <Text style={styles.dangerBtnText}>Self-Destruct (Delete All Data)</Text>
         </TouchableOpacity>

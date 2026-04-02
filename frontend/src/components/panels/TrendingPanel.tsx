@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTrendingRunners } from '../../hooks/useApi';
 import {
   TrendingUp, Filter, Sparkles, ChevronDown, CheckSquare, Square,
   BarChart3, Shield, RefreshCw, XCircle, ChevronUp, AlertTriangle,
@@ -982,35 +983,20 @@ interface TrendingPanelProps extends Omit<TrendingPanelCoreProps, 'preloadedRunn
 }
 
 export default function TrendingPanel({ cachedRunners = [], onRunnersLoaded, ...coreProps }: TrendingPanelProps) {
-  const [runners, setRunners]               = useState<any[]>(cachedRunners);
-  const [isRefreshing, setIsRefreshing]     = useState<boolean>(false);
-  const [lastRefreshed, setLastRefreshed]   = useState<number | null>(null);
-  const fetchedRef = useRef<boolean>(false);
+  const { data, isFetching, dataUpdatedAt } = useTrendingRunners();
+  const runners = data?.runners ?? cachedRunners;
+  const lastRefreshed = dataUpdatedAt || null;
+  const notifiedRef = useRef<number>(0);
 
-  const fetchRunners = useCallback(async () => {
-    setIsRefreshing(true);
-    try {
-      const res  = await fetch(`${coreProps.apiUrl}/api/wallets/trending/runners`);
-      const data = await res.json();
-      if (data.success && data.runners) {
-        setRunners(data.runners);
-        setLastRefreshed(Date.now());
-        onRunnersLoaded?.(data.runners);
-      }
-    } catch (e) { console.error('[TrendingPanel wrapper] fetch error:', e); }
-    finally { setIsRefreshing(false); }
-  }, [coreProps.apiUrl, onRunnersLoaded]); // eslint-disable-line
-
+  // Notify parent when fresh runners arrive
   useEffect(() => {
-    if (!fetchedRef.current) {
-      fetchedRef.current = true;
-      setTimeout(() => fetchRunners(), cachedRunners.length > 0 ? 500 : 0);
+    if (data?.runners && dataUpdatedAt && dataUpdatedAt !== notifiedRef.current) {
+      notifiedRef.current = dataUpdatedAt;
+      onRunnersLoaded?.(data.runners);
     }
-  }, []); // eslint-disable-line
+  }, [data, dataUpdatedAt, onRunnersLoaded]);
 
   const handleRunnersLoaded = useCallback((freshRunners?: any[]) => {
-    if (freshRunners) setRunners(freshRunners);
-    setLastRefreshed(Date.now());
     if (freshRunners) onRunnersLoaded?.(freshRunners);
   }, [onRunnersLoaded]);
 
@@ -1018,7 +1004,7 @@ export default function TrendingPanel({ cachedRunners = [], onRunnersLoaded, ...
     <TrendingPanelCore
       {...coreProps}
       preloadedRunners={runners}
-      isRefreshingRunners={isRefreshing}
+      isRefreshingRunners={isFetching}
       lastRefreshed={lastRefreshed}
       onRefreshRunners={handleRunnersLoaded}
     />

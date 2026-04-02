@@ -1,8 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { BarChart3, TrendingUp, Target, Award, Calendar, Activity, X } from 'lucide-react';
-
-// Simple in-memory cache so re-opening the panel feels instant
-const statsCache: Record<string, any> = {};
+import { useDashboardStats } from '../../hooks/useApi';
 
 interface SkeletonBoxProps {
   className?: string;
@@ -21,8 +19,8 @@ interface Props {
 }
 
 export default function MyDashboardPanel({ userId, apiUrl, refreshKey }: Props) {
-  const [stats, setStats] = useState<any>(statsCache[userId] || null);
-  const [isLoading, setIsLoading] = useState<boolean>(!statsCache[userId]);
+  const { data: dashData, isLoading } = useDashboardStats(userId);
+  const stats = dashData?.stats || null;
 
   // Dismissible welcome banner (per user)
   const storageKey = `dash_welcome_dismissed_${userId}`;
@@ -33,40 +31,6 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }: Props) 
   const dismissWelcome = () => {
     setShowWelcome(false);
     try { localStorage.setItem(storageKey, 'true'); } catch {}
-  };
-
-  // Track if this is the first load to prevent double loading
-  const initialLoadDone = useRef<boolean>(false);
-
-  useEffect(() => {
-    // If we already have cached data, show it immediately and refresh silently
-    if (statsCache[userId]) {
-      setStats(statsCache[userId]);
-      setIsLoading(false);
-      loadStats(true); // silent background refresh
-    } else {
-      loadStats(false);
-    }
-  }, [userId, refreshKey]); // ← add refreshKey dependency
-
-  const loadStats = async (silent: boolean = false) => {
-    // On explicit refresh (non-silent), bust the cache
-    if (!silent) {
-      delete statsCache[userId]; // bust on foreground load
-      setIsLoading(true);
-    }
-
-    try {
-      const response = await fetch(`${apiUrl}/api/user/dashboard-stats?user_id=${userId}`);
-      const data = await response.json();
-      if (data.success) {
-        statsCache[userId] = data.stats; // cache it
-        setStats(data.stats);
-      }
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-    if (!silent) setIsLoading(false);
   };
 
   // ── Skeleton UI (first load only) ────────────────────────────────────────

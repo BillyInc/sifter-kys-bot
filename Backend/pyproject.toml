@@ -21,7 +21,6 @@ dependencies = [
     "supabase>=2.27.0",
     # Redis & Celery
     "redis>=5.0.0,<6.0.0",
-    "rq>=1.16.0,<2.0.0",
     "celery[redis]>=5.3.0,<6.0.0",
     "apscheduler>=3.10.0,<4.0.0",
     # Twitter
@@ -37,6 +36,15 @@ dependencies = [
     "rich>=13.0.0,<14.0.0",
     "markdown-it-py>=3.0.0,<4.0.0",
     "structlog>=25.5.0",
+    # OpenTelemetry (opt-in via OTEL_ENABLED=true)
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation-flask>=0.41b0",
+    "opentelemetry-instrumentation-requests>=0.41b0",
+    "opentelemetry-instrumentation-redis>=0.41b0",
+    "opentelemetry-instrumentation-celery>=0.41b0",
+    "opentelemetry-instrumentation-logging>=0.41b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
 ]
 
 [project.optional-dependencies]

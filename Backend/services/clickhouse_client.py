@@ -7,7 +7,10 @@ import logging
 import os
 import clickhouse_connect
 
+from services.telemetry import get_tracer
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("clickhouse")
 
 _client = None
 CH_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'kys')
@@ -47,15 +50,16 @@ def insert_token_scans(rows: list[dict]):
     """Bulk insert token scan records."""
     if not rows:
         return
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
-            logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
-            return
-        data, columns = _dicts_to_rows(rows)
-        ch.insert(table='token_scans', data=data, database=CH_DATABASE, column_names=columns)
-    except Exception as e:
-        logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
+    with _tracer.start_as_current_span("clickhouse.insert", attributes={"db.table": "token_scans", "db.row_count": len(rows)}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
+                return
+            data, columns = _dicts_to_rows(rows)
+            ch.insert(table='token_scans', data=data, database=CH_DATABASE, column_names=columns)
+        except Exception as e:
+            logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
         # Don't crash — data can be re-inserted on next pipeline run
 
 
@@ -63,144 +67,151 @@ def insert_wallet_token_stats(rows: list[dict]):
     """Bulk insert wallet-token stats. Fires mv_wallet_aggregate materialized view."""
     if not rows:
         return
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
-            logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
-            return
-        data, columns = _dicts_to_rows(rows)
-        ch.insert(table='wallet_token_stats', data=data, database=CH_DATABASE, column_names=columns)
-    except Exception as e:
-        logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
+    with _tracer.start_as_current_span("clickhouse.insert", attributes={"db.table": "wallet_token_stats", "db.row_count": len(rows)}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
+                return
+            data, columns = _dicts_to_rows(rows)
+            ch.insert(table='wallet_token_stats', data=data, database=CH_DATABASE, column_names=columns)
+        except Exception as e:
+            logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
 
 
 def insert_weekly_snapshots(rows: list[dict]):
     """Bulk insert weekly snapshot rows."""
     if not rows:
         return
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
-            logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
-            return
-        data, columns = _dicts_to_rows(rows)
-        ch.insert(table='wallet_weekly_snapshots', data=data, database=CH_DATABASE, column_names=columns)
-    except Exception as e:
-        logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
+    with _tracer.start_as_current_span("clickhouse.insert", attributes={"db.table": "wallet_weekly_snapshots", "db.row_count": len(rows)}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
+                return
+            data, columns = _dicts_to_rows(rows)
+            ch.insert(table='wallet_weekly_snapshots', data=data, database=CH_DATABASE, column_names=columns)
+        except Exception as e:
+            logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
 
 
 def insert_leaderboard_results(rows: list[dict]):
     """Bulk insert leaderboard result rows."""
     if not rows:
         return
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
-            logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
-            return
-        data, columns = _dicts_to_rows(rows)
-        ch.insert(table='leaderboard_results', data=data, database=CH_DATABASE, column_names=columns)
-    except Exception as e:
-        logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
+    with _tracer.start_as_current_span("clickhouse.insert", attributes={"db.table": "leaderboard_results", "db.row_count": len(rows)}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                logger.error(f"ClickHouse insert failed ({len(rows)} rows): client unavailable")
+                return
+            data, columns = _dicts_to_rows(rows)
+            ch.insert(table='leaderboard_results', data=data, database=CH_DATABASE, column_names=columns)
+        except Exception as e:
+            logger.error(f"ClickHouse insert failed ({len(rows)} rows): {e}")
 
 
 def get_wallet_stats(wallet_address: str) -> dict | None:
     """Read deduplicated aggregate stats for a wallet."""
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
+    with _tracer.start_as_current_span("clickhouse.query", attributes={"db.table": "wallet_aggregate_stats", "wallet_address": wallet_address}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                return None
+            result = ch.query(
+                "SELECT * FROM wallet_aggregate_stats FINAL WHERE wallet_address = {addr:String}",
+                parameters={'addr': wallet_address}
+            )
+            return result.first_row if result.result_rows else None
+        except Exception as e:
+            logger.warning(f"ClickHouse unavailable: {e}")
             return None
-        result = ch.query(
-            "SELECT * FROM wallet_aggregate_stats FINAL WHERE wallet_address = {addr:String}",
-            parameters={'addr': wallet_address}
-        )
-        return result.first_row if result.result_rows else None
-    except Exception as e:
-        logger.warning(f"ClickHouse unavailable: {e}")
-        return None
 
 
 def get_wallet_token_stats_for_token(wallet_address: str, token_address: str) -> dict | None:
     """Read a specific wallet-token stat row."""
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
+    with _tracer.start_as_current_span("clickhouse.query", attributes={"db.table": "wallet_token_stats", "wallet_address": wallet_address}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                return None
+            result = ch.query(
+                """SELECT * FROM wallet_token_stats FINAL
+                   WHERE wallet_address = {wallet:String}
+                     AND token_address = {token:String}""",
+                parameters={'wallet': wallet_address, 'token': token_address}
+            )
+            return result.first_row if result.result_rows else None
+        except Exception as e:
+            logger.warning(f"ClickHouse unavailable: {e}")
             return None
-        result = ch.query(
-            """SELECT * FROM wallet_token_stats FINAL
-               WHERE wallet_address = {wallet:String}
-                 AND token_address = {token:String}""",
-            parameters={'wallet': wallet_address, 'token': token_address}
-        )
-        return result.first_row if result.result_rows else None
-    except Exception as e:
-        logger.warning(f"ClickHouse unavailable: {e}")
-        return None
 
 
 def query_top20_for_tokens(token_list: list[str]) -> list:
     """Top 20 wallets for a user-selected set of tokens (Section 8.1)."""
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
-            return []
-        result = ch.query(
-            """SELECT
-                wallet_address,
-                count(DISTINCT token_address) AS tokens_hit,
-                avg(avg_entry_to_ath_mult) AS avg_entry_to_ath_mult,
-                avg(total_roi_mult) AS avg_roi_mult,
-                greatest(0, 100 - (
-                    stddevPop(entry_price_to_launch_mult)
-                    / nullIf(avg(entry_price_to_launch_mult), 0)
-                ) * 100) AS consistency_score,
-                (
-                    least(1000, log(1 + avg(avg_entry_to_ath_mult)) * 100) * 0.60 +
-                    least(1000, log(1 + avg(total_roi_mult)) * 100) * 0.30 +
+    with _tracer.start_as_current_span("clickhouse.query", attributes={"db.table": "wallet_token_stats", "db.operation": "top20_for_tokens", "token_count": len(token_list)}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                return []
+            result = ch.query(
+                """SELECT
+                    wallet_address,
+                    count(DISTINCT token_address) AS tokens_hit,
+                    avg(avg_entry_to_ath_mult) AS avg_entry_to_ath_mult,
+                    avg(total_roi_mult) AS avg_roi_mult,
                     greatest(0, 100 - (
                         stddevPop(entry_price_to_launch_mult)
                         / nullIf(avg(entry_price_to_launch_mult), 0)
-                    ) * 100) * 0.10
-                ) AS professional_score
-            FROM wallet_token_stats FINAL
-            WHERE token_address IN ({token_list:Array(String)})
-              AND qualifies = 1
-            GROUP BY wallet_address
-            HAVING tokens_hit >= 1
-            ORDER BY professional_score DESC
-            LIMIT 20""",
-            parameters={'token_list': token_list}
-        )
-        return result.named_results()
-    except Exception as e:
-        logger.warning(f"ClickHouse unavailable: {e}")
-        return []
+                    ) * 100) AS consistency_score,
+                    (
+                        least(1000, log(1 + avg(avg_entry_to_ath_mult)) * 100) * 0.60 +
+                        least(1000, log(1 + avg(total_roi_mult)) * 100) * 0.30 +
+                        greatest(0, 100 - (
+                            stddevPop(entry_price_to_launch_mult)
+                            / nullIf(avg(entry_price_to_launch_mult), 0)
+                        ) * 100) * 0.10
+                    ) AS professional_score
+                FROM wallet_token_stats FINAL
+                WHERE token_address IN ({token_list:Array(String)})
+                  AND qualifies = 1
+                GROUP BY wallet_address
+                HAVING tokens_hit >= 1
+                ORDER BY professional_score DESC
+                LIMIT 20""",
+                parameters={'token_list': token_list}
+            )
+            return result.named_results()
+        except Exception as e:
+            logger.warning(f"ClickHouse unavailable: {e}")
+            return []
 
 
 def query_elite_100() -> list:
     """Elite 100 wallets across ALL tokens (Section 8.2)."""
-    try:
-        ch = get_clickhouse_client()
-        if ch is None:
+    with _tracer.start_as_current_span("clickhouse.query", attributes={"db.table": "wallet_aggregate_stats", "db.operation": "elite_100"}):
+        try:
+            ch = get_clickhouse_client()
+            if ch is None:
+                return []
+            result = ch.query(
+                """SELECT
+                    wallet_address,
+                    professional_score,
+                    tier,
+                    avg_entry_to_ath_mult,
+                    avg_roi_mult,
+                    consistency_score,
+                    tokens_qualified,
+                    win_rate,
+                    total_pnl_usd,
+                    last_active_at
+                FROM wallet_aggregate_stats FINAL
+                WHERE tokens_qualified >= 1
+                ORDER BY professional_score DESC
+                LIMIT 100"""
+            )
+            return result.named_results()
+        except Exception as e:
+            logger.warning(f"ClickHouse unavailable: {e}")
             return []
-        result = ch.query(
-            """SELECT
-                wallet_address,
-                professional_score,
-                tier,
-                avg_entry_to_ath_mult,
-                avg_roi_mult,
-                consistency_score,
-                tokens_qualified,
-                win_rate,
-                total_pnl_usd,
-                last_active_at
-            FROM wallet_aggregate_stats FINAL
-            WHERE tokens_qualified >= 1
-            ORDER BY professional_score DESC
-            LIMIT 100"""
-        )
-        return result.named_results()
-    except Exception as e:
-        logger.warning(f"ClickHouse unavailable: {e}")
-        return []

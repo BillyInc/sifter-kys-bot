@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/sifter-backend
 Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
 EnvironmentFile=/home/ubuntu/sifter-backend/.env
-ExecStart=/bin/bash -c 'exec /home/ubuntu/sifter-backend/.venv/bin/celery -A celery_app worker --loglevel=info -Q default,stats,rankings,discovery --concurrency=2'
+ExecStart=/bin/bash -c 'exec /home/ubuntu/sifter-backend/.venv/bin/celery -A celery_app worker --loglevel=info -Q default,high,batch,compute,stats,rankings,discovery --concurrency=3'
 Restart=on-failure
 RestartSec=10
 KillSignal=SIGTERM

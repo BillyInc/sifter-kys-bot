@@ -6,6 +6,8 @@ from services.log import setup_logging
 
 logger = logging.getLogger(__name__)
 setup_logging()
+from services.telemetry import init_telemetry
+init_telemetry()
 from flask import Flask, request, jsonify
 from flask_compress import Compress
 from flask_cors import CORS
@@ -13,7 +15,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from config import Config
 from routes import analyze_bp, watchlist_bp, health_bp, wallets_bp, telegram_bp
-from rq import Queue
 from redis import Redis
 from routes import support_bp
 from routes import user_settings_bp
@@ -156,7 +157,7 @@ def create_app() -> Flask:
     app.register_blueprint(abm_state_bp)
 
     redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
-    app.config['RQ_QUEUE'] = Queue(connection=redis_conn, default_timeout=600)
+    app.config['REDIS_CONN'] = redis_conn  # Keep for other Redis uses
 
     app.config['SCHEDULER'] = init_scheduler(app)
 

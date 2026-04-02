@@ -17,6 +17,9 @@ import os
 import random
 from utils import _roi_to_score
 from services.http_session import get_http_session
+from services.telemetry import get_tracer
+
+_tracer = get_tracer("wallet_analyzer")
 
 
 class _TokenBucket:
@@ -1394,6 +1397,16 @@ class WalletPumpAnalyzer:
 
     def analyze_token_professional(self, token_address, token_symbol="UNKNOWN",
                                    min_roi_multiplier=3.0, user_id='default_user'):
+        with _tracer.start_as_current_span(
+            "wallet_analyzer.analyze_token_professional",
+            attributes={"token_address": token_address, "token_symbol": token_symbol, "user_id": user_id},
+        ):
+            return self._analyze_token_professional_impl(
+                token_address, token_symbol, min_roi_multiplier, user_id
+            )
+
+    def _analyze_token_professional_impl(self, token_address, token_symbol="UNKNOWN",
+                                         min_roi_multiplier=3.0, user_id='default_user'):
         self._log(f"\n{'='*80}")
         self._log(f"2-SOURCE ANALYSIS: {token_symbol}")
         self._log(f"{'='*80}")

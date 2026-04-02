@@ -57,6 +57,7 @@ const AppNavigator = (): React.JSX.Element => (
       },
       tabBarActiveTintColor: '#6366f1',
       tabBarInactiveTintColor: 'gray',
+      tabBarTestID: `tab-${route.name.toLowerCase()}`,
     })}
   >
     <Tab.Screen name="Dashboard" component={DashboardStack} options={{ headerShown: false }} />

@@ -39,7 +39,7 @@ const PositionsScreen: React.FC<PositionsScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+    <ScrollView testID="positions-screen" style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
       {activeTrades.length === 0 ? (
         <View style={styles.empty}>
           <Icon name="trending-up" size={60} color="#ccc" />

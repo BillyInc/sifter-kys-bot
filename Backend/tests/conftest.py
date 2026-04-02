@@ -39,7 +39,6 @@ def app():
     from app import create_app
     with patch('app.init_scheduler', return_value=MagicMock()), \
          patch('app.Redis.from_url', return_value=MagicMock()), \
-         patch('app.Queue', return_value=MagicMock()), \
          patch('app.preload_trending_cache'), \
          patch('app.start_wallet_monitoring'):
         app = create_app()

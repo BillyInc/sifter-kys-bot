@@ -5,6 +5,9 @@ from celery import Celery
 from celery.schedules import crontab
 import os
 
+from services.telemetry import init_telemetry
+init_telemetry()
+
 # Initialize Celery
 celery = Celery(
     'sifter_tasks',
@@ -12,6 +15,7 @@ celery = Celery(
     backend=os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
     include=[
         'services.tasks',
+        'services.worker_tasks',
         'tasks.token_discovery',
         'tasks.wallet_qualification',
     ],
@@ -112,6 +116,7 @@ celery.conf.beat_schedule = {
 
 # Task routes
 celery.conf.task_routes = {
+    # ── Scheduled / cron tasks ──────────────────────────────────
     'tasks.discover_new_tokens':         {'queue': 'discovery'},
     'tasks.wallet_qualification_scan':   {'queue': 'discovery'},
     'tasks.second_pass_patch':           {'queue': 'discovery'},
@@ -124,6 +129,21 @@ celery.conf.task_routes = {
     'tasks.invalidate_stale_ath_caches': {'queue': 'stats'},
     'tasks.purge_stale_analysis_cache':  {'queue': 'stats'},
     'tasks.purge_old_notifications':     {'queue': 'stats'},
+    # ── Analysis pipeline tasks (migrated from RQ) ──────────────
+    'worker.perform_wallet_analysis':           {'queue': 'high'},
+    'worker.perform_trending_batch_analysis':   {'queue': 'batch'},
+    'worker.perform_auto_discovery':            {'queue': 'compute'},
+    'worker.fetch_top_traders':                 {'queue': 'high'},
+    'worker.fetch_first_buyers':                {'queue': 'high'},
+    'worker.coordinate_pnl_phase':              {'queue': 'compute'},
+    'worker.fetch_pnl_batch':                   {'queue': 'batch'},
+    'worker.score_and_rank_single':             {'queue': 'compute'},
+    'worker.fetch_from_token_cache':            {'queue': 'compute'},
+    'worker.fetch_runner_history_batch':         {'queue': 'batch'},
+    'worker.merge_and_save_final':              {'queue': 'compute'},
+    'worker.aggregate_cross_token':             {'queue': 'compute'},
+    'worker.merge_batch_final':                 {'queue': 'compute'},
+    'worker.warm_cache_runners':                {'queue': 'batch'},
 }
 
 print("""
@@ -141,6 +161,6 @@ print("""
   🗑️  Notification TTL purge:    Daily 2:30am UTC
 
   Start with:
-    celery -A celery_app worker --loglevel=info -Q default,stats,rankings,discovery
+    celery -A celery_app worker --loglevel=info -Q default,high,batch,compute,stats,rankings,discovery
     celery -A celery_app beat --loglevel=info
 """)

@@ -78,36 +78,26 @@ wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 # HELPERS
 # =============================================================================
 
-def get_queues():
-    from redis import Redis
-    from rq import Queue
-    redis_url  = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-    redis_conn = Redis.from_url(redis_url)
-    return (
-        Queue('high',    connection=redis_conn),
-        Queue('batch',   connection=redis_conn),
-        Queue('compute', connection=redis_conn),
-    )
+def _get_job_queue_info(user_id, job_type='default'):
+    """Select Celery queue name and priority based on user subscription tier.
 
-
-def _get_job_queue(user_id, job_type='default'):
-    """Select queue and priority based on user subscription tier."""
+    Returns (queue_name, priority, soft_time_limit).
+    Lower priority number = higher priority in Celery.
+    """
     user_repo = get_user_repo()
     tier = user_repo.get_subscription_tier(user_id) if user_id else 'free'
 
-    q_high, q_batch, q_compute = get_queues()
-
     if tier in ('pro', 'elite'):
-        return q_high, True, 120  # high queue, at_front, 2min timeout
+        return 'high', 1, 120
 
     if job_type == 'single':
-        return q_high, False, 120
+        return 'high', 5, 120
     elif job_type == 'batch':
-        return q_batch, False, 600
+        return 'batch', 5, 600
     elif job_type == 'discovery':
-        return q_compute, False, 600
+        return 'compute', 5, 600
 
-    return q_high, False, 300
+    return 'high', 5, 300
 
 
 def compute_consistency(other_runners: list) -> int:
@@ -191,19 +181,22 @@ def analyze_wallets():
             'token_address':    tokens[0]['address'] if len(tokens) == 1 else None,
         })
 
+        from services.worker_tasks import perform_wallet_analysis
+
         job_type = 'single' if len(tokens) == 1 else 'batch'
-        queue, at_front, timeout = _get_job_queue(user_id, job_type)
-        queue.enqueue(
-            'services.worker_tasks.perform_wallet_analysis',
-            {
+        queue_name, priority, stl = _get_job_queue_info(user_id, job_type)
+        perform_wallet_analysis.apply_async(
+            args=[{
                 'tokens': tokens, 'user_id': user_id,
                 'global_settings': data.get('global_settings', {}), 'job_id': job_id,
-            },
-            job_timeout=timeout,
-            at_front=at_front,
+            }],
+            queue=queue_name,
+            priority=priority,
+            soft_time_limit=stl,
+            time_limit=stl + 60,
         )
         _set_dedup(dedup_key, job_id)
-        print(f"[ANALYZE] Queued {job_type} job {job_id[:8]} to {queue.name} queue (at_front={at_front}, timeout={timeout}s)")
+        print(f"[ANALYZE] Queued {job_type} job {job_id[:8]} to {queue_name} queue (priority={priority}, stl={stl}s)")
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -295,18 +288,11 @@ def cancel_job(job_id):
         return '', 204
 
     try:
-        from redis import Redis
-        from rq import Queue
-        redis_url  = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-        redis_conn = Redis.from_url(redis_url)
+        from celery_app import celery as celery_app_instance
 
-        for queue_name in ['high', 'batch', 'compute']:
-            queue = Queue(queue_name, connection=redis_conn)
-            job   = queue.fetch_job(job_id)
-            if job:
-                job.cancel()
-                print(f"[CANCEL] Cancelled job {job_id[:8]} from {queue_name} queue")
-                break
+        # Revoke the Celery task (terminates if running)
+        celery_app_instance.control.revoke(job_id, terminate=True, signal='SIGTERM')
+        print(f"[CANCEL] Revoked Celery task {job_id[:8]}")
 
         job_repo = get_analysis_job_repo()
         job_repo.update_job(job_id, {
@@ -651,11 +637,16 @@ def analyze_trending_runner():
             'token_address': runner['address'],
         })
 
-        queue, at_front, timeout = _get_job_queue(user_id, 'single')
-        queue.enqueue('services.worker_tasks.perform_wallet_analysis', {
-            'tokens': [{'address': runner['address'], 'ticker': runner.get('symbol', 'UNKNOWN'), 'chain': runner.get('chain', 'solana')}],
-            'user_id': user_id, 'global_settings': {'min_roi_multiplier': min_roi_multiplier}, 'job_id': job_id,
-        }, job_timeout=timeout, at_front=at_front)
+        from services.worker_tasks import perform_wallet_analysis
+        queue_name, priority, stl = _get_job_queue_info(user_id, 'single')
+        perform_wallet_analysis.apply_async(
+            args=[{
+                'tokens': [{'address': runner['address'], 'ticker': runner.get('symbol', 'UNKNOWN'), 'chain': runner.get('chain', 'solana')}],
+                'user_id': user_id, 'global_settings': {'min_roi_multiplier': min_roi_multiplier}, 'job_id': job_id,
+            }],
+            queue=queue_name, priority=priority,
+            soft_time_limit=stl, time_limit=stl + 60,
+        )
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -697,11 +688,16 @@ def analyze_trending_runners_batch():
             'tokens_completed': 0,
         })
 
-        queue, at_front, timeout = _get_job_queue(user_id, 'batch')
-        queue.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
-            'runners': runners, 'user_id': user_id,
-            'min_runner_hits': min_runner_hits, 'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
-        }, job_timeout=timeout, at_front=at_front)
+        from services.worker_tasks import perform_trending_batch_analysis
+        queue_name, priority, stl = _get_job_queue_info(user_id, 'batch')
+        perform_trending_batch_analysis.apply_async(
+            args=[{
+                'runners': runners, 'user_id': user_id,
+                'min_runner_hits': min_runner_hits, 'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
+            }],
+            queue=queue_name, priority=priority,
+            soft_time_limit=stl, time_limit=stl + 60,
+        )
         _set_dedup(dedup_key, job_id)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
@@ -747,14 +743,19 @@ def auto_discover_wallets():
         # user_analysis_history entry as result_type='discovery'.  This is what
         # allows _get_history_cache_discovery() in worker_tasks.py to distinguish
         # a cached discovery run from a cached manual batch analysis.
-        queue, at_front, timeout = _get_job_queue(user_id, 'discovery')
-        queue.enqueue('services.worker_tasks.perform_auto_discovery', {
-            'user_id':            user_id,
-            'min_runner_hits':    min_runner_hits,
-            'min_roi_multiplier': min_roi_multiplier,
-            'job_id':             job_id,
-            'is_auto_discovery':  True,
-        }, job_timeout=timeout, at_front=at_front)
+        from services.worker_tasks import perform_auto_discovery
+        queue_name, priority, stl = _get_job_queue_info(user_id, 'discovery')
+        perform_auto_discovery.apply_async(
+            args=[{
+                'user_id':            user_id,
+                'min_runner_hits':    min_runner_hits,
+                'min_roi_multiplier': min_roi_multiplier,
+                'job_id':             job_id,
+                'is_auto_discovery':  True,
+            }],
+            queue=queue_name, priority=priority,
+            soft_time_limit=stl, time_limit=stl + 60,
+        )
         _set_dedup(dedup_key, job_id)
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202

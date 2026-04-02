@@ -105,10 +105,10 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView testID="connect-wallet-screen" style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.icon}>🔐</Text>
-        <Text style={styles.title}>Connect Wallet</Text>
+        <Text testID="connect-wallet-title" style={styles.title}>Connect Wallet</Text>
         <Text style={styles.subtitle}>
           Connect your Solana wallet to start trading. Use your preferred wallet app for the most secure experience.
         </Text>
@@ -129,6 +129,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
           Opens Phantom, Solflare, or another installed Solana wallet. Your private keys stay in your wallet app.
         </Text>
         <SafeButton
+          testID="wallet-adapter-connect-btn"
           onPress={handleWalletAdapterConnect}
           title={isConnecting ? 'Connecting...' : 'Connect Wallet'}
           loadingTitle="Connecting..."
@@ -144,6 +145,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
 
       {/* Advanced: Manual import (collapsible) */}
       <TouchableOpacity
+        testID="advanced-toggle-btn"
         style={styles.advancedToggle}
         onPress={() => setShowAdvanced(!showAdvanced)}
       >
@@ -158,7 +160,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
           {/* Mode tabs */}
           <View style={styles.tabs}>
             {(['import', 'create'] as const).map((m) => (
-              <TouchableOpacity key={m} style={[styles.tab, mode === m && styles.activeTab]} onPress={() => setMode(m)}>
+              <TouchableOpacity key={m} testID={`tab-${m}`} style={[styles.tab, mode === m && styles.activeTab]} onPress={() => setMode(m)}>
                 <Text style={[styles.tabText, mode === m && styles.activeTabText]}>
                   {m === 'import' ? 'Import Existing' : 'Create New'}
                 </Text>
@@ -170,6 +172,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
             <View style={styles.card}>
               <Text style={styles.label}>Private Key (base58)</Text>
               <TextInput
+                testID="private-key-input"
                 style={styles.keyInput}
                 value={privateKey}
                 onChangeText={setPrivateKey}
@@ -181,6 +184,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
                 autoCorrect={false}
               />
               <SafeButton
+                testID="import-wallet-btn"
                 onPress={handleImport}
                 title="Import Wallet"
                 loadingTitle="Encrypting..."
@@ -199,6 +203,7 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
                 A new Solana wallet will be created and stored securely on this device. You will receive your private key — write it down somewhere safe.
               </Text>
               <SafeButton
+                testID="generate-wallet-btn"
                 onPress={handleCreate}
                 title="Generate New Wallet"
                 loadingTitle="Generating..."
@@ -212,12 +217,12 @@ const ConnectWalletScreen: React.FC<ConnectWalletScreenProps> = ({ navigation })
 
       {/* Disconnect */}
       {connectedAddress && (
-        <TouchableOpacity style={styles.disconnectBtn} onPress={handleDisconnect}>
+        <TouchableOpacity testID="disconnect-wallet-btn" style={styles.disconnectBtn} onPress={handleDisconnect}>
           <Text style={styles.disconnectText}>Disconnect Wallet</Text>
         </TouchableOpacity>
       )}
 
-      <View style={styles.securityNote}>
+      <View testID="security-note" style={styles.securityNote}>
         <Text style={styles.noteIcon}>🛡️</Text>
         <Text style={styles.noteText}>
           Your wallet connection is managed by your wallet app. Private keys never touch Sifter KYS.

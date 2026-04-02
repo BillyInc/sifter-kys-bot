@@ -5,7 +5,9 @@
   "scripts": {
     "start": "expo start",
     "ios": "expo start --ios",
-    "android": "expo start --android"
+    "android": "expo start --android",
+    "test:e2e:build": "detox build --configuration android.emu.debug",
+    "test:e2e": "detox test --configuration android.emu.debug"
   },
   "dependencies": {
     "expo": "~54.0.0",
@@ -48,6 +50,8 @@
   "devDependencies": {
     "@babel/core": "7.23.0",
     "@types/jest": "^29.0.0",
+    "detox": "^20.27.0",
+    "jest-circus": "^29.0.0",
     "typescript": "^5.7.0"
   }
 }

@@ -9,7 +9,7 @@ import { initBackgroundServices } from './src/services/BackgroundService';
 import { setupNotifications } from './src/services/NotificationService';
 import AppLock from './src/components/AppLock';
 import ErrorBoundary from './src/components/ErrorBoundary';
-import { LogBox } from 'react-native';
+import { LogBox, View } from 'react-native';
 
 LogBox.ignoreLogs(['new NativeEventEmitter']);
 
@@ -34,9 +34,11 @@ export default function App(): React.JSX.Element {
           <DatabaseProvider>
             <StoreProvider>
               <AppLock>
-                <NavigationContainer>
-                  <AppNavigator />
-                </NavigationContainer>
+                <View testID="app-navigator" style={{ flex: 1 }}>
+                  <NavigationContainer>
+                    <AppNavigator />
+                  </NavigationContainer>
+                </View>
               </AppLock>
             </StoreProvider>
           </DatabaseProvider>

@@ -2,6 +2,11 @@
 
 Using a single ``requests.Session`` across modules keeps TCP connections
 alive and avoids the overhead of a fresh TLS handshake on every request.
+
+Note: The ``requests`` library is auto-instrumented by OpenTelemetry when
+``OTEL_ENABLED=true``.  The ``RequestsInstrumentor`` hooks into
+``Session.send()`` so every outbound HTTP call made through this session
+automatically gets a child span — no manual wrapping needed here.
 """
 
 import requests

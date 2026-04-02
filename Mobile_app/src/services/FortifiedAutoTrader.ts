@@ -10,7 +10,7 @@ import transactionQueue from './TransactionQueue';
 import ultimateProtection from './UltimateProtection';
 import secureWalletService from './SecureWalletService';
 import PositionSizeManager from './PositionSizeManager';
-import SolanaTransactionService from './SolanaTransactionService';
+import SolanaTransactionService, { SwapErrorCode } from './SolanaTransactionService';
 import useStore from '../store/useStore';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -337,9 +337,32 @@ class FortifiedAutoTrader {
       token, amount, { type: 'sell', tpLevel }, extremeAnalysis
     );
 
-    const txid = protection.success
-      ? await this.sendProtectedBundle(protection.bundle, null)
-      : 'mock_sell_' + Date.now();
+    let txid: string;
+    if (protection.success) {
+      // Retrieve wallet for signing (same pattern as executeAutoTrade)
+      let wallet: any = null;
+      try {
+        wallet = await secureWalletService.retrieveWallet();
+        // Convert slippage from decimal to basis points for Jupiter
+        const slippageBps = protection.slippage ? Math.round(protection.slippage * 10000) : 150;
+        const result = await SolanaTransactionService.sellToken(
+          wallet.privateKey, token, amount, slippageBps
+        );
+        if (!result.success) {
+          console.warn(`TP${tpLevel} sell failed: ${result.error} — recording as mock`);
+          txid = 'failed_sell_' + Date.now();
+        } else {
+          txid = result.signature!;
+        }
+      } finally {
+        if (wallet?.privateKey) {
+          wallet.privateKey = '\0'.repeat(wallet.privateKey.length);
+          wallet.privateKey = null;
+        }
+      }
+    } else {
+      txid = 'mock_sell_' + Date.now();
+    }
 
     PushNotification.localNotification({
       channelId: 'trades', title: `🎯 TP${tpLevel} Hit!`,
@@ -374,13 +397,35 @@ class FortifiedAutoTrader {
       return 'mock_tx_' + Date.now();
     }
 
+    // Convert slippage from decimal (0.15) to basis points (1500) for Jupiter
+    const slippageBps = bundle.slippage ? Math.round(bundle.slippage * 10000) : 100;
+
     // Use Jupiter DEX swap with JITO MEV protection fallback
     const result = await SolanaTransactionService.buyToken(
-      privateKey, bundle.tokenAddress, bundle.amount || bundle.amountSol
+      privateKey, bundle.tokenAddress, bundle.amount || bundle.amountSol, slippageBps
     );
 
     if (!result.success) {
-      throw new Error(result.error || 'Transaction submission failed');
+      // Provide actionable error messages based on error code
+      const prefix = result.errorCode ? `[${result.errorCode}] ` : '';
+      let userMessage = result.error || 'Transaction submission failed';
+
+      switch (result.errorCode) {
+        case SwapErrorCode.SLIPPAGE_EXCEEDED:
+          userMessage = 'Price moved too fast — slippage tolerance exceeded. Retrying with higher slippage may help.';
+          break;
+        case SwapErrorCode.INSUFFICIENT_BALANCE:
+          userMessage = `Not enough SOL to complete the trade. ${result.error}`;
+          break;
+        case SwapErrorCode.TRANSACTION_EXPIRED:
+          userMessage = 'Transaction expired before confirmation — network may be congested. Will retry.';
+          break;
+        case SwapErrorCode.RPC_ERROR:
+          userMessage = 'RPC node error — may be rate-limited or unavailable. Will retry.';
+          break;
+      }
+
+      throw new Error(`${prefix}${userMessage}`);
     }
 
     return result.signature!;

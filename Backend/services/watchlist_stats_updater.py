@@ -304,18 +304,14 @@ class WatchlistStatsUpdater:
     def _send_replacement_alerts(self, alerts: List[Dict]):
         """Send replacement suggestion alerts to users."""
         try:
-            from redis import Redis
-            from rq import Queue
-
-            redis = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
-            q     = Queue(connection=redis)
+            from services.tasks import send_telegram_alert_async
 
             for alert in alerts:
-                q.enqueue('tasks.send_telegram_alert_async', alert['user_id'], 'replacement', alert)
+                send_telegram_alert_async.delay(alert['user_id'], 'replacement', alert)
 
-            print(f"  ✓ Queued {len(alerts)} replacement alerts")
+            print(f"  Queued {len(alerts)} replacement alerts via Celery")
         except Exception as e:
-            print(f"  ⚠️ Failed to queue alerts: {e}")
+            print(f"  Failed to queue alerts: {e}")
 
 
 # Singleton instance

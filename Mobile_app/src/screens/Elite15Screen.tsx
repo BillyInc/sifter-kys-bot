@@ -33,7 +33,7 @@ const Elite15Screen: React.FC<Elite15ScreenProps> = ({ navigation }) => {
   const tierColor: Record<string, string> = { S: '#fee2e2', A: '#cffafe', B: '#e0f2fe', C: '#f3e8ff', F: '#f5f5f5' };
 
   return (
-    <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+    <ScrollView testID="elite-screen" style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
       <View style={styles.header}>
         <Text style={styles.title}>Elite 15 Wallets</Text>
         <Text style={styles.subtitle}>These wallets feed the auto-trader</Text>

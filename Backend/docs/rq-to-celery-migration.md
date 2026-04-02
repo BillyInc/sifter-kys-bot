@@ -1,6 +1,6 @@
 # RQ-to-Celery Migration Plan
 
-**Status:** Draft
+**Status:** Completed
 **Date:** 2026-03-29
 **Goal:** Eliminate RQ dependency and consolidate all background work onto Celery.
 

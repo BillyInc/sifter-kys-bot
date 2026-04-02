@@ -1,1 +1,17 @@
 logs/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.db
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage

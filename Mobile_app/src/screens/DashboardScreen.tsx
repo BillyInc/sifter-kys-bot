@@ -49,7 +49,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) => {
   const pnlPercent = tradingBalance > 0 ? (totalPnl / tradingBalance) * 100 : 0;
 
   return (
-    <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+    <ScrollView testID="dashboard-screen" style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
 
       {/* Portfolio card */}
       <View style={styles.portfolioCard}>

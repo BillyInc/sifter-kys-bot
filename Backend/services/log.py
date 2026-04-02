@@ -8,6 +8,17 @@ import logging
 import sys
 
 import structlog
+from opentelemetry import trace
+
+
+def _add_otel_context(logger, method_name, event_dict):
+    """Inject trace_id and span_id from the current OTel span into every log line."""
+    span = trace.get_current_span()
+    ctx = span.get_span_context()
+    if ctx and ctx.trace_id:
+        event_dict["trace_id"] = format(ctx.trace_id, "032x")
+        event_dict["span_id"] = format(ctx.span_id, "016x")
+    return event_dict
 
 
 def setup_logging(log_level: str = "INFO"):
@@ -18,6 +29,7 @@ def setup_logging(log_level: str = "INFO"):
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
+        _add_otel_context,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),
     ]
