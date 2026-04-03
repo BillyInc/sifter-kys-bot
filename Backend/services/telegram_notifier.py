@@ -6,6 +6,7 @@ Handles bot commands, user linking, and message formatting.
 """
 
 import html
+import os
 import requests
 import time
 import secrets
@@ -297,6 +298,7 @@ class TelegramNotifier:
                 "<b>Commands:</b>\n"
                 "/start - Start the bot\n"
                 "/settings - Configure alerts\n"
+                "/killswitch - Emergency trading stop (admin)\n"
                 "/help - Show this message\n\n"
                 "<b>Features:</b>\n"
                 "• Real-time wallet activity alerts\n"
@@ -307,6 +309,55 @@ class TelegramNotifier:
             ))
             return
         
+        # Handle /killswitch (admin only)
+        if text.startswith('/killswitch'):
+            admin_ids = os.environ.get('TELEGRAM_ADMIN_CHAT_IDS', '').split(',')
+            if chat_id not in admin_ids or not admin_ids[0]:
+                self.send_message(chat_id, "❌ <b>Unauthorized.</b> Admin only.")
+                return
+
+            try:
+                from services.redis_pool import get_redis
+                r = get_redis()
+                parts = text.split(maxsplit=1)
+
+                if len(parts) == 1 or parts[1].strip() == 'status':
+                    # /killswitch or /killswitch status
+                    raw = r.get('mobile:kill_switch')
+                    if raw:
+                        import json
+                        data = json.loads(raw)
+                        status = "🔴 ACTIVE" if data.get('active') else "🟢 Inactive"
+                        reason = data.get('reason', 'N/A')
+                    else:
+                        status = "🟢 Inactive"
+                        reason = "N/A"
+                    self.send_message(chat_id, f"🛑 <b>Kill Switch</b>\nStatus: {status}\nReason: {reason}")
+
+                elif parts[1].strip() == 'on' or parts[1].strip().startswith('on '):
+                    # /killswitch on [reason]
+                    reason = parts[1].strip()[3:].strip() or 'Activated via Telegram'
+                    import json
+                    r.set('mobile:kill_switch', json.dumps({'active': True, 'reason': reason}))
+                    self.send_message(chat_id, f"🔴 <b>Kill Switch ACTIVATED</b>\nReason: {reason}\n\nAll mobile auto-trading is now paused.")
+
+                elif parts[1].strip() == 'off':
+                    # /killswitch off
+                    r.delete('mobile:kill_switch')
+                    self.send_message(chat_id, "🟢 <b>Kill Switch DEACTIVATED</b>\n\nMobile auto-trading resumed.")
+
+                else:
+                    self.send_message(chat_id, (
+                        "🛑 <b>Kill Switch Commands:</b>\n\n"
+                        "/killswitch — Check status\n"
+                        "/killswitch on [reason] — Activate\n"
+                        "/killswitch off — Deactivate"
+                    ))
+            except Exception as e:
+                logger.error(f"[TELEGRAM] Kill switch error: {e}")
+                self.send_message(chat_id, f"❌ <b>Error:</b> {e}")
+            return
+
         # Handle /settings
         if text == '/settings':
             # Get user_id from telegram_chat_id
