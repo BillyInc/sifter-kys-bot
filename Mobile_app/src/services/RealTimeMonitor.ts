@@ -1,7 +1,7 @@
 import WebSocket from 'react-native-websocket';
 import BackgroundTimer from 'react-native-background-timer';
 import DatabaseService from '../database/DatabaseService';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 
 interface Trade {
   wallet: string;
@@ -307,12 +307,12 @@ class RealTimeMonitor {
       body = `1 wallet bought $${signal.totalUsd.toFixed(0)} - 30% initial`;
     }
 
-    PushNotification.localNotification({
-      channelId: 'signals', title, message: body,
-      playSound: true, soundName: 'default',
-      importance: 'high', priority: 'high',
-      data: { type: 'signal', signal }
-    } as any);
+    notificationService.showSignalNotification({
+      token: signal.token,
+      walletCount: signal.walletCount,
+      totalUsd: signal.totalUsd,
+      signal,
+    });
 
     DatabaseService.addNotification({ type: 'signal', title, body: body, data: signal });
   }

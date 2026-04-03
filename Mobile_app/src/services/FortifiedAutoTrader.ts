@@ -1,4 +1,4 @@
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 import NetInfo from '@react-native-community/netinfo';
 import DatabaseService from '../database/DatabaseService';
 import duplicatePrevention from './DuplicatePrevention';
@@ -84,14 +84,11 @@ class FortifiedAutoTrader {
     if (mode !== 'auto' && mode !== 'manual') return;
     this.tradingMode = mode;
     await DatabaseService.saveUserPreference('trading_mode', mode);
-    PushNotification.localNotification({
-      channelId: 'system',
-      title: '⚙️ Trading Mode Changed',
-      message: mode === 'auto'
-        ? '🤖 Auto-trader ACTIVE — watching Elite 15'
-        : '👤 Manual mode ACTIVE — you control all trades',
-      importance: 'high'
-    } as any);
+    notificationService.showTradeNotification('mode_changed', {
+      reason: mode === 'auto'
+        ? 'Auto-trader ACTIVE -- watching Elite 15'
+        : 'Manual mode ACTIVE -- you control all trades',
+    });
   }
 
   getCurrentMode(): { mode: string; tier: string; watching: string } {
@@ -161,10 +158,9 @@ class FortifiedAutoTrader {
       );
       console.log(`📊 Extreme score: ${extremeAnalysis.extremeScore}/100 | ${extremeAnalysis.recommendedAction}`);
       if (extremeAnalysis.isPanic) {
-        PushNotification.localNotification({
-          channelId: 'trades', title: '🚨 PANIC MODE',
-          message: `Executing with ${(extremeAnalysis.slippage * 100).toFixed(0)}% slippage`, importance: 'high'
-        } as any);
+        notificationService.showTradeNotification('panic_mode', {
+          slippage: extremeAnalysis.slippage,
+        });
       }
 
       // LAYER 5: Position sizing
@@ -177,10 +173,7 @@ class FortifiedAutoTrader {
       );
       if (!protectionResult.success) {
         console.log('❌ Protection blocked:', protectionResult.reason);
-        PushNotification.localNotification({
-          channelId: 'security', title: '🚨 PROTECTION BLOCKED TRADE',
-          message: protectionResult.reason || '', importance: 'high'
-        } as any);
+        notificationService.showSecurityAlert(protectionResult.reason || 'Protection blocked trade');
         return;
       }
 
@@ -245,12 +238,12 @@ class FortifiedAutoTrader {
 
       // LAYER 12: Success notification
       if (__DEV__) console.log(`\n✅ TRADE EXECUTED | txid: ${txid.slice(0, 8)}... | size: $${size}`);
-      PushNotification.localNotification({
-        channelId: 'trades',
-        title: '✅ Trade Executed',
-        message: `${tradeData.token_symbol}: $${size.toFixed(0)} | ${signal.walletCount} wallets | Protected`,
-        importance: 'high', data: { type: 'trade', txid }
-      } as any);
+      notificationService.showTradeNotification('buy_executed', {
+        tokenSymbol: tradeData.token_symbol,
+        amount: size,
+        walletCount: signal.walletCount,
+        txid,
+      });
 
       // LAYER 13: Post-trade sniper analysis (background, 5s delay)
       setTimeout(() => {
@@ -262,10 +255,7 @@ class FortifiedAutoTrader {
 
     } catch (error: any) {
       console.error('❌ Auto-trade failed:', error);
-      PushNotification.localNotification({
-        channelId: 'trades', title: '❌ Trade Failed',
-        message: error.message, importance: 'high'
-      } as any);
+      notificationService.showTradeNotification('trade_failed', { reason: error.message });
     }
   }
 
@@ -364,11 +354,11 @@ class FortifiedAutoTrader {
       txid = 'mock_sell_' + Date.now();
     }
 
-    PushNotification.localNotification({
-      channelId: 'trades', title: `🎯 TP${tpLevel} Hit!`,
-      message: `${token.slice(0, 8)}: sold at ${tpLevel === 1 ? '5x' : tpLevel === 2 ? '10x' : tpLevel === 3 ? '20x' : '30x'}`,
-      importance: 'high'
-    } as any);
+    notificationService.showTradeNotification('tp_hit', {
+      tokenAddress: token,
+      tpLevel,
+      multiplier: tpLevel === 1 ? '5x' : tpLevel === 2 ? '10x' : tpLevel === 3 ? '20x' : '30x',
+    });
     return txid;
   }
 
@@ -440,12 +430,13 @@ class FortifiedAutoTrader {
     const title = signal.walletCount >= 3 ? '🔥🔥🔥 MEGA SIGNAL'
       : signal.walletCount === 2 ? '🚀 DOUBLE SIGNAL' : '🔔 SIGNAL';
 
-    PushNotification.localNotification({
-      channelId: 'signals', title,
-      message: `${signal.token?.slice(0, 8)}: $${suggestedAmount.toFixed(0)} suggested${signal.note ? ' — ' + signal.note : ''}`,
-      playSound: true, soundName: 'default', importance: 'high', priority: 'high',
-      data: { type: 'manual_signal', signal, suggestedAmount }
-    } as any);
+    notificationService.showSignalNotification({
+      token: signal.token,
+      walletCount: signal.walletCount,
+      suggestedAmount,
+      note: signal.note,
+      signal,
+    });
 
     DatabaseService.addNotification({
       type: 'manual_signal', title,

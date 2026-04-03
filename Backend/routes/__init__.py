@@ -21,6 +21,7 @@ from .recents import recents_bp
 from .diary_routes import diary_bp
 from .simulator_routes import simulator_bp
 from .abm_state_route import abm_state_bp
+from .kill_switch import kill_switch_bp
 __all__ = [
     'analyze_bp',
     'watchlist_bp',
@@ -37,4 +38,5 @@ __all__ = [
     'diary_bp',
     'simulator_bp', 
     'abm_state_bp',
+    'kill_switch_bp',
 ]

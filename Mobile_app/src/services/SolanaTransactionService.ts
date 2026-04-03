@@ -1,9 +1,11 @@
 import { Connection, VersionedTransaction, PublicKey, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { resolvedNetwork } from '../config/env';
 
 // ─── Network Configuration ─────────────────────────────────────────────────────
 // Supports mainnet and devnet. Call SolanaTransactionService.setNetwork('devnet')
 // before any transactions to switch (e.g., for testing).
+// The default network is read from config/env.ts at startup.
 
 export type SolanaNetwork = 'mainnet-beta' | 'devnet';
 
@@ -140,8 +142,9 @@ class SolanaTransactionService {
   private config: NetworkConfig;
 
   constructor() {
-    this.network = 'mainnet-beta';
-    this.config = NETWORK_CONFIGS['mainnet-beta'];
+    const defaultNetwork = resolvedNetwork();
+    this.network = defaultNetwork;
+    this.config = NETWORK_CONFIGS[defaultNetwork];
     this.connection = new Connection(this.config.rpcUrl, 'confirmed');
   }
 

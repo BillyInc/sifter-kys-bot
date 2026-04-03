@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 import DatabaseService from '../database/DatabaseService';
 
 // HARD RULE: The auto-trader NEVER buys the same token twice.
@@ -76,12 +76,11 @@ class DuplicatePrevention {
   }
 
   suggestManualRebuy(tokenAddress: string): void {
-    PushNotification.localNotification({
-      channelId: 'trades',
-      title: '🔄 Already Own This Token',
-      message: 'You already bought this token. Tap to manually buy again if you want.',
-      data: { type: 'manual_rebuy', token: tokenAddress }
-    } as any);
+    notificationService.showSystemNotification(
+      'Already Own This Token',
+      'You already bought this token. Tap to manually buy again if you want.',
+      { type: 'manual_rebuy', token: tokenAddress },
+    );
   }
 
   async checkBlacklist(tokenAddress: string): Promise<boolean> {

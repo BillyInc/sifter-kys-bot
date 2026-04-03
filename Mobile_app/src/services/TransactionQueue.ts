@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 
 interface QueuedTransaction {
   id: number;
@@ -45,12 +45,9 @@ class TransactionQueue {
         if (tx.attempts >= this.maxRetries) {
           await this.moveToDeadLetter(tx);
           this.queue.shift();
-          PushNotification.localNotification({
-            channelId: 'trades',
-            title: '❌ Transaction Failed',
-            message: `${tx.token}: Failed after ${this.maxRetries} attempts`,
-            importance: 'high'
-          } as any);
+          notificationService.showTradeNotification('trade_failed', {
+            reason: `${tx.token}: Failed after ${this.maxRetries} attempts`,
+          });
         } else {
           this.queue.shift();
           this.queue.push(tx);

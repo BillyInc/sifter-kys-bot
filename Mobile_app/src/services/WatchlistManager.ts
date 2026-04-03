@@ -1,5 +1,5 @@
 import DatabaseService from '../database/DatabaseService';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 
 interface DegradationRules {
   days: number;
@@ -89,12 +89,11 @@ class WatchlistManager {
       await DatabaseService.removeFromWatchlist(degradedWallet.wallet_address);
       await DatabaseService.addToWatchlist(replacement.wallet_address, true);
 
-      PushNotification.localNotification({
-        channelId: 'watchlist',
-        title: '🔄 Wallet Auto-Replaced',
-        message: `${degradedWallet.wallet_address.slice(0, 8)} → ${replacement.wallet_address.slice(0, 8)}`,
-        data: { type: 'replacement', degraded: degradedWallet.wallet_address, replacement: replacement.wallet_address }
-      } as any);
+      notificationService.showWatchlistNotification(
+        'Wallet Auto-Replaced',
+        `${degradedWallet.wallet_address.slice(0, 8)} -> ${replacement.wallet_address.slice(0, 8)}`,
+        { type: 'replacement', degraded: degradedWallet.wallet_address, replacement: replacement.wallet_address },
+      );
 
       DatabaseService.addNotification({
         type: 'replacement',
@@ -115,12 +114,11 @@ class WatchlistManager {
       .slice(0, 3);
 
     if (candidates.length > 0) {
-      PushNotification.localNotification({
-        channelId: 'watchlist',
-        title: '⚠️ Wallet Degraded',
-        message: `${degradedWallet.wallet_address.slice(0, 8)} needs replacement`,
-        data: { type: 'replacement_suggestion', degraded: degradedWallet.wallet_address, candidates: candidates.map((c: any) => c.wallet_address) }
-      } as any);
+      notificationService.showWatchlistNotification(
+        'Wallet Degraded',
+        `${degradedWallet.wallet_address.slice(0, 8)} needs replacement`,
+        { type: 'replacement_suggestion', degraded: degradedWallet.wallet_address, candidates: candidates.map((c: any) => c.wallet_address) },
+      );
     }
   }
 }

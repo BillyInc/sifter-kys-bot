@@ -28,6 +28,7 @@ from routes.recents import recents_bp
 from routes import diary_bp # ✅ NEW
 from routes import simulator_bp
 from routes import abm_state_bp
+from routes import kill_switch_bp
 
 
 telegram_polling_started = False
@@ -155,6 +156,7 @@ def create_app() -> Flask:
     app.register_blueprint(diary_bp) # ✅ NEW
     app.register_blueprint(simulator_bp)
     app.register_blueprint(abm_state_bp)
+    app.register_blueprint(kill_switch_bp)
 
     redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
     app.config['REDIS_CONN'] = redis_conn  # Keep for other Redis uses

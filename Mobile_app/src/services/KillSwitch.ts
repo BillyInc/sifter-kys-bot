@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 import DatabaseService from '../database/DatabaseService';
+import config from '../config/env';
 
 const FAIL_CLOSED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -26,7 +27,7 @@ class KillSwitch {
     try {
       const userId = await AsyncStorage.getItem('user_id');
       const deviceId = await this.getDeviceId();
-      const baseUrl = process.env.API_BASE_URL || 'https://sifter-kys.duckdns.org';
+      const baseUrl = config.API_URL;
       const response = await fetch(`${baseUrl}/kill-switch/status`, {
         headers: { 'device-id': deviceId, 'user-id': userId || '' }
       });
@@ -48,12 +49,7 @@ class KillSwitch {
 
   async activateKillSwitch(reason?: string): Promise<void> {
     await AsyncStorage.setItem('trading_paused', 'true');
-    PushNotification.localNotification({
-      channelId: 'security',
-      title: '🚨 EMERGENCY KILL SWITCH ACTIVATED',
-      message: reason || 'Trading paused for security',
-      importance: 'high', priority: 'high'
-    } as any);
+    notificationService.showSecurityAlert(reason || 'Trading paused for security');
     await AsyncStorage.multiRemove(['user_token', 'session_id']);
     if (__DEV__) console.log(`🚨 Kill switch activated: ${reason}`);
   }

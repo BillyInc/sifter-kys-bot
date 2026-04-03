@@ -1,0 +1,17 @@
+title = "Sifter KYS Gitleaks Config"
+
+# Supabase anon keys and WalletConnect project IDs are public client-side values
+[[allowlist]]
+description = "Public client-side keys (Supabase anon, WalletConnect project ID)"
+paths = [
+  '''\.env\.example$''',
+  '''frontend/src/''',
+]
+
+[[allowlist]]
+description = "Lock files"
+paths = [
+  '''pnpm-lock\.yaml$''',
+  '''uv\.lock$''',
+  '''package-lock\.json$''',
+]

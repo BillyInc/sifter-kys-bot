@@ -1,4 +1,6 @@
-const API_BASE = process.env.API_BASE_URL || 'https://sifter-kys.duckdns.org';
+import config from '../config/env';
+
+const API_BASE = config.API_URL;
 
 class ApiClient {
   private baseUrl: string;

@@ -1,7 +1,7 @@
 import BackgroundFetch from 'react-native-background-fetch';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 
 class HeartbeatMonitor {
   private lastHeartbeat: number;
@@ -66,17 +66,11 @@ class HeartbeatMonitor {
   }
 
   handleOffline(): void {
-    PushNotification.localNotification({
-      channelId: 'system', title: '📡 Offline Mode',
-      message: 'No internet. Trades will queue locally.', importance: 'low'
-    } as any);
+    notificationService.showSystemNotification('Offline Mode', 'No internet. Trades will queue locally.');
   }
 
   async triggerDowntimeAlert(reason: string): Promise<void> {
-    PushNotification.localNotification({
-      channelId: 'system', title: '⚠️ SYSTEM ALERT',
-      message: `Monitor may be down: ${reason}`, importance: 'high', ongoing: true
-    } as any);
+    notificationService.showSecurityAlert(`Monitor may be down: ${reason}`);
     await this.restartServices();
   }
 

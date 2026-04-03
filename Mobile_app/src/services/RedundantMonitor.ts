@@ -1,4 +1,4 @@
-import PushNotification from 'react-native-push-notification';
+import notificationService from './NotificationService';
 import DatabaseService from '../database/DatabaseService';
 
 interface Provider {
@@ -70,17 +70,11 @@ class RedundantMonitor {
 
   switchProvider(newIndex: number): void {
     this.currentProvider = newIndex;
-    PushNotification.localNotification({
-      channelId: 'system', title: '🔄 Provider Switched',
-      message: `Now using ${this.providers[newIndex].name}`, importance: 'low'
-    } as any);
+    notificationService.showSystemNotification('Provider Switched', `Now using ${this.providers[newIndex].name}`);
   }
 
   triggerTotalFailure(): void {
-    PushNotification.localNotification({
-      channelId: 'system', title: '🚨 ALL PROVIDERS DOWN',
-      message: 'No data feeds available — trading paused', importance: 'high'
-    } as any);
+    notificationService.showSecurityAlert('No data feeds available -- trading paused');
   }
 
   checkProviderHealth(): void {
