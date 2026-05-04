@@ -774,67 +774,83 @@ def purge_stale_analysis_cache():
 @celery.task(name='tasks.send_telegram_alert_async')
 def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
     """
-    Async Telegram alert sender.
-    Called by wallet monitor for background alert delivery.
+    Async Telegram notification with Elite 15 auto-trade queueing.
     """
     try:
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
         if not bot_token:
-            print(f"[TELEGRAM TASK] Notifier not configured")
-            return {'status': 'skipped', 'reason': 'no_notifier'}
+            return {'status': 'skipped', 'reason': 'no_token'}
 
         from services.telegram_notifier import TelegramNotifier
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
         telegram_notifier = TelegramNotifier(bot_token)
+        supabase = get_supabase_client()
 
-        if alert_type == 'trade':
-            from services.supabase_client import get_supabase_client, SCHEMA_NAME
-            supabase = get_supabase_client()
+        wallet_address = alert_data.get('wallet_address', '')
+        wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'tier, consistency_score'
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).limit(1).execute()
 
-            wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-                'tier, consistency_score'
-            ).eq('user_id', user_id).eq(
-                'wallet_address', alert_data.get('wallet_address')
-            ).limit(1).execute()
+        wallet_info = wallet_result.data[0] if wallet_result.data else {
+            'tier': alert_data.get('wallet_tier', 'S' if alert_type == 'elite15_trade' else 'C'),
+            'consistency_score': 0,
+        }
 
-            wallet_info = wallet_result.data[0] if wallet_result.data else {
-                'tier': 'C', 'consistency_score': 0
-            }
+        payload = {
+            'wallet': {
+                'address': wallet_address,
+                'tier': wallet_info.get('tier', 'C'),
+                'consistency_score': wallet_info.get('consistency_score', 0),
+            },
+            'action': alert_data.get('side', 'buy'),
+            'source': alert_data.get('source', 'watchlist'),
+            'token': {
+                'address': alert_data.get('token_address', ''),
+                'symbol': alert_data.get('token_ticker', 'UNKNOWN'),
+                'name': alert_data.get('token_name', 'Unknown'),
+            },
+            'trade': {
+                'amount_usd': alert_data.get('usd_value', 0),
+                'amount_tokens': alert_data.get('token_amount', 0),
+                'price': alert_data.get('price', 0),
+                'tx_hash': alert_data.get('tx_hash', ''),
+                'dex': alert_data.get('dex', 'unknown'),
+                'timestamp': alert_data.get('block_time', 0),
+            },
+            'links': {
+                'solscan': f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
+                'birdeye': f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
+                'dexscreener': f"https://dexscreener.com/solana/{alert_data.get('token_address', '')}",
+            },
+        }
 
-            payload = {
-                'wallet': {
-                    'address':           alert_data.get('wallet_address', ''),
-                    'tier':              wallet_info.get('tier', 'C'),
-                    'consistency_score': wallet_info.get('consistency_score', 0)
-                },
-                'action': alert_data.get('side', 'buy'),
-                'token': {
-                    'address': alert_data.get('token_address', ''),
-                    'symbol':  alert_data.get('token_ticker', 'UNKNOWN'),
-                    'name':    alert_data.get('token_name', 'Unknown')
-                },
-                'trade': {
-                    'amount_tokens': alert_data.get('token_amount', 0),
-                    'amount_usd':    alert_data.get('usd_value', 0),
-                    'price':         alert_data.get('price', 0),
-                    'tx_hash':       alert_data.get('tx_hash', ''),
-                    'dex':           alert_data.get('dex', 'unknown'),
-                    'timestamp':     alert_data.get('block_time', 0)
-                },
-                'links': {
-                    'solscan':     f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
-                    'birdeye':     f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
-                    'dexscreener': f"https://dexscreener.com/solana/{alert_data.get('token_address', '')}"
-                }
-            }
-
-            telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
-
+        if alert_type == 'elite15_trade':
+            if hasattr(telegram_notifier, 'send_elite15_alert'):
+                telegram_notifier.send_elite15_alert(user_id, payload)
+            else:
+                telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
+            if alert_data.get('side') == 'buy':
+                _queue_bot_auto_trade(
+                    user_id=user_id,
+                    alert_data=alert_data,
+                    notification_id=alert_data.get('notification_id'),
+                    supabase=supabase,
+                    schema_name=SCHEMA_NAME,
+                )
+        elif alert_type in ('watchlist_trade', 'trade'):
+            if hasattr(telegram_notifier, 'send_watchlist_alert'):
+                telegram_notifier.send_watchlist_alert(user_id, payload)
+            else:
+                telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
         elif alert_type == 'multi_wallet':
             telegram_notifier.send_multi_wallet_signal_alert(user_id, alert_data)
+        else:
+            telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
 
         return {
-            'status':     'sent',
-            'user_id':    user_id,
+            'status': 'sent',
+            'user_id': user_id,
             'alert_type': alert_type
         }
 
@@ -844,5 +860,121 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
         traceback.print_exc()
         return {
             'status': 'error',
-            'error':  str(e)
+            'error': str(e)
         }
+
+
+def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema_name):
+    """Create a pending bot_auto_trades row when Elite 15 auto-trade is enabled."""
+    try:
+        tg_result = supabase.schema(schema_name).table('telegram_users').select(
+            'auto_trade_enabled, auto_trade_max_usd'
+        ).eq('user_id', user_id).limit(1).execute()
+
+        if not tg_result.data or not tg_result.data[0].get('auto_trade_enabled'):
+            return
+
+        max_usd = float(tg_result.data[0].get('auto_trade_max_usd') or 100)
+        usd_amount = min(float(alert_data.get('usd_value') or 0), max_usd)
+
+        row = supabase.schema(schema_name).table('bot_auto_trades').insert({
+            'user_id': user_id,
+            'source': 'elite15',
+            'side': alert_data.get('side', 'buy'),
+            'token_address': alert_data.get('token_address', ''),
+            'token_ticker': alert_data.get('token_ticker', 'UNKNOWN'),
+            'usd_amount': usd_amount,
+            'wallet_address': alert_data.get('wallet_address', ''),
+            'wallet_tier': alert_data.get('wallet_tier', 'S'),
+            'tx_hash_signal': alert_data.get('tx_hash', ''),
+            'status': 'pending',
+            'notification_id': notification_id,
+        }).execute()
+
+        if row.data:
+            execute_bot_auto_trade.delay(row.data[0]['id'])
+    except Exception as e:
+        print(f"[TELEGRAM TASK] Failed to queue auto-trade for {user_id[:8]}...: {e}")
+
+
+@celery.task(name='tasks.execute_bot_auto_trade', max_retries=2)
+def execute_bot_auto_trade(trade_id: int):
+    """Execute a queued bot auto-trade via TelegramNotifier."""
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+    supabase = get_supabase_client()
+    try:
+        result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
+            'id', trade_id
+        ).limit(1).execute()
+        if not result.data:
+            return {'status': 'not_found'}
+
+        trade = result.data[0]
+        if trade['status'] != 'pending':
+            return {'status': 'skipped', 'reason': trade['status']}
+
+        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+            'status': 'executing',
+            'updated_at': datetime.utcnow().isoformat(),
+        }).eq('id', trade_id).eq('status', 'pending').execute()
+
+        existing = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('id').eq(
+            'user_id', trade['user_id']
+        ).eq('token_address', trade['token_address']).eq('side', 'buy').in_(
+            'status', ['executed']
+        ).execute()
+        if existing.data:
+            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+                'status': 'skipped',
+                'error_message': 'duplicate_buy_prevention',
+                'updated_at': datetime.utcnow().isoformat(),
+            }).eq('id', trade_id).execute()
+            return {'status': 'skipped', 'reason': 'duplicate'}
+
+        bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        from services.telegram_notifier import TelegramNotifier
+
+        notifier = TelegramNotifier(bot_token)
+        result_txid = notifier.execute_auto_trade_for_user(
+            user_id=trade['user_id'],
+            token_address=trade['token_address'],
+            side=trade['side'],
+            usd_amount=float(trade['usd_amount']),
+        )
+
+        if not result_txid:
+            raise RuntimeError('execute_auto_trade_for_user returned None')
+
+        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+            'status': 'executed',
+            'result_txid': result_txid,
+            'updated_at': datetime.utcnow().isoformat(),
+        }).eq('id', trade_id).execute()
+
+        if hasattr(notifier, 'send_auto_trade_confirmation'):
+            notifier.send_auto_trade_confirmation(trade['user_id'], trade, result_txid)
+        return {'status': 'executed', 'txid': result_txid}
+    except Exception as e:
+        print(f"[BOT TRADE] Error for {trade_id}: {e}")
+        try:
+            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+                'status': 'failed',
+                'error_message': str(e)[:500],
+                'updated_at': datetime.utcnow().isoformat(),
+            }).eq('id', trade_id).execute()
+            bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+            if bot_token:
+                from services.telegram_notifier import TelegramNotifier
+                trade_result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
+                    'id', trade_id
+                ).limit(1).execute()
+                if trade_result.data and hasattr(TelegramNotifier(bot_token), 'send_auto_trade_failed'):
+                    TelegramNotifier(bot_token).send_auto_trade_failed(
+                        trade_result.data[0]['user_id'],
+                        trade_result.data[0],
+                        str(e),
+                    )
+        except Exception:
+            pass
+        return {'status': 'error', 'error': str(e)}

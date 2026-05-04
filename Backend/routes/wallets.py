@@ -1189,14 +1189,27 @@ def get_notifications():
         if not user_id:
             return jsonify({'error': 'user_id required'}), 400
 
+        limit = min(int(request.args.get('limit', 50)), 200)
+        offset = max(int(request.args.get('offset', 0)), 0)
+        source = request.args.get('source')
         notifications = get_user_notifications(
             user_id=user_id,
             unread_only=request.args.get('unread_only', '').lower() == 'true',
-            limit=int(request.args.get('limit', 50)),
+            limit=limit,
+            offset=offset,
         )
-        unread_count = len([n for n in notifications if n['read_at'] is None])
+
+        if source:
+            notifications = [
+                notification for notification in notifications
+                if notification.get('source') == source
+                or (notification.get('metadata') or {}).get('source') == source
+            ]
+
+        unread_count = sum(1 for notification in notifications if not notification.get('is_read', False))
         return jsonify({'success': True, 'notifications': notifications,
-                        'count': len(notifications), 'unread_count': unread_count}), 200
+                        'count': len(notifications), 'unread_count': unread_count,
+                        'limit': limit, 'offset': offset}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1227,6 +1240,100 @@ def mark_notifications_read():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/notifications/stream', methods=['GET', 'OPTIONS'])
+@optional_auth
+def stream_notifications():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    user_id = getattr(request, 'user_id', None) or request.args.get('user_id')
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+
+    def generate():
+        import json
+        import time as _time
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.wallet_monitor import get_user_notifications
+
+        heartbeat_seconds = 25
+        poll_seconds = 3
+        max_open_seconds = 3600
+        last_id = None
+        last_heartbeat = _time.time()
+        opened_at = _time.time()
+
+        try:
+            rows = get_user_notifications(user_id=user_id, limit=50, offset=0)
+            unread = sum(1 for row in rows if not row.get('is_read', False))
+            if rows:
+                last_id = rows[0]['id']
+            yield (
+                f"event: snapshot\n"
+                f"data: {json.dumps({'type': 'snapshot', 'notifications': rows, 'unread_count': unread})}\n\n"
+            )
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+        while _time.time() - opened_at < max_open_seconds:
+            _time.sleep(poll_seconds)
+            now = _time.time()
+
+            if now - last_heartbeat >= heartbeat_seconds:
+                yield f"event: heartbeat\ndata: {json.dumps({'ts': int(now)})}\n\n"
+                last_heartbeat = now
+
+            try:
+                supabase = get_supabase_client()
+                result = (
+                    supabase.schema(SCHEMA_NAME)
+                    .table('wallet_notifications')
+                    .select('*')
+                    .eq('user_id', user_id)
+                    .eq('is_read', False)
+                    .order('id', desc=True)
+                    .limit(10)
+                    .execute()
+                )
+                rows = result.data or []
+                if not rows:
+                    continue
+
+                new_rows = [row for row in rows if last_id is None or row['id'] > last_id]
+                if new_rows:
+                    last_id = rows[0]['id']
+
+                for row in reversed(new_rows):
+                    unread_result = (
+                        supabase.schema(SCHEMA_NAME)
+                        .table('wallet_notifications')
+                        .select('id', count='exact')
+                        .eq('user_id', user_id)
+                        .eq('is_read', False)
+                        .execute()
+                    )
+                    meta = row.get('metadata') or {}
+                    source = row.get('source') or meta.get('source', 'watchlist')
+                    yield (
+                        f"event: notification\n"
+                        f"data: {json.dumps({'type': 'notification', 'notification': row, 'unread_count': unread_result.count or 0, 'source': source, 'is_elite15': source == 'elite15'})}\n\n"
+                    )
+            except Exception as e:
+                yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+        yield f"event: done\ndata: {json.dumps({'reason': 'timeout'})}\n\n"
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
 
 
 @wallets_bp.route('/alerts/update', methods=['POST', 'OPTIONS'])

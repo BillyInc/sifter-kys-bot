@@ -90,6 +90,8 @@ celery.conf.task_routes = {
     'tasks.flush_redis_to_duckdb':        {'queue': 'stats'},
     'tasks.invalidate_stale_ath_caches':  {'queue': 'stats'},
     'tasks.purge_stale_analysis_cache':   {'queue': 'stats'},
+    'tasks.send_telegram_alert_async':    {'queue': 'alerts'},
+    'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
 }
 
 print("""
@@ -105,6 +107,6 @@ print("""
   🔄 ATH cache invalidation:   Every hour (:45)  ← NEW
 
   Start with:
-    celery -A celery_app worker --loglevel=info -Q stats,rankings
+    celery -A celery_app worker --loglevel=info -Q stats,rankings,alerts
     celery -A celery_app beat --loglevel=info
 """)
