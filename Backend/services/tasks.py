@@ -868,14 +868,42 @@ def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema
     """Create a pending bot_auto_trades row when Elite 15 auto-trade is enabled."""
     try:
         tg_result = supabase.schema(schema_name).table('telegram_users').select(
-            'auto_trade_enabled, auto_trade_max_usd'
+            'auto_trade_enabled, auto_trade_max_usd, auto_trade_hourly_limit, auto_trade_daily_limit'
         ).eq('user_id', user_id).limit(1).execute()
 
         if not tg_result.data or not tg_result.data[0].get('auto_trade_enabled'):
             return
 
-        max_usd = float(tg_result.data[0].get('auto_trade_max_usd') or 100)
+        row_cfg = tg_result.data[0]
+        max_usd = float(row_cfg.get('auto_trade_max_usd') or 100)
+        hourly_limit = int(row_cfg.get('auto_trade_hourly_limit') or 1)
+        daily_limit = int(row_cfg.get('auto_trade_daily_limit') or 8)
         usd_amount = min(float(alert_data.get('usd_value') or 0), max_usd)
+        signal_key = alert_data.get('signal_key')
+
+        now = datetime.utcnow()
+        one_hour_ago = now.replace(minute=0, second=0, microsecond=0).isoformat()
+        one_day_ago = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        hourly_count = supabase.schema(schema_name).table('bot_auto_trades').select(
+            'id', count='exact'
+        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
+            'created_at', one_hour_ago
+        ).execute().count or 0
+        daily_count = supabase.schema(schema_name).table('bot_auto_trades').select(
+            'id', count='exact'
+        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
+            'created_at', one_day_ago
+        ).execute().count or 0
+
+        if hourly_count >= hourly_limit or daily_count >= daily_limit:
+            return
+
+        if signal_key:
+            duplicate = supabase.schema(schema_name).table('bot_auto_trades').select(
+                'id'
+            ).eq('user_id', user_id).eq('signal_key', signal_key).limit(1).execute()
+            if duplicate.data:
+                return
 
         row = supabase.schema(schema_name).table('bot_auto_trades').insert({
             'user_id': user_id,
@@ -887,6 +915,8 @@ def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema
             'wallet_address': alert_data.get('wallet_address', ''),
             'wallet_tier': alert_data.get('wallet_tier', 'S'),
             'tx_hash_signal': alert_data.get('tx_hash', ''),
+            'signal_key': signal_key,
+            'wallet_count': alert_data.get('wallet_count', 1),
             'status': 'pending',
             'notification_id': notification_id,
         }).execute()
@@ -921,8 +951,10 @@ def execute_bot_auto_trade(trade_id: int):
 
         existing = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('id').eq(
             'user_id', trade['user_id']
-        ).eq('token_address', trade['token_address']).eq('side', 'buy').in_(
-            'status', ['executed']
+        ).eq('token_address', trade['token_address']).eq('side', 'buy').neq(
+            'id', trade_id
+        ).in_(
+            'status', ['pending', 'executing', 'executed']
         ).execute()
         if existing.data:
             supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({

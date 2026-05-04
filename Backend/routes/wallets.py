@@ -56,16 +56,31 @@ def get_wallet_monitor():
     global _wallet_monitor
     if _wallet_monitor is None:
         from services.wallet_monitor import WalletActivityMonitor
+        from services.paper_trader import PaperTrader
         from flask import current_app
         telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
+        paper_trader = current_app.config.get('PAPER_TRADER') or PaperTrader()
         _wallet_monitor = WalletActivityMonitor(
             solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
             poll_interval=120,
-            telegram_notifier=telegram_notifier
+            telegram_notifier=telegram_notifier,
+            paper_trader=paper_trader,
         )
+        current_app.config['PAPER_TRADER'] = paper_trader
         _wallet_monitor.start()
         print("[WALLET MONITOR] Started background monitoring (Supabase)")
     return _wallet_monitor
+
+
+def get_paper_trader():
+    from flask import current_app
+    from services.paper_trader import PaperTrader
+
+    trader = current_app.config.get('PAPER_TRADER')
+    if trader is None:
+        trader = PaperTrader()
+        current_app.config['PAPER_TRADER'] = trader
+    return trader
 
 
 wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
@@ -1389,6 +1404,71 @@ def force_check_wallet():
         monitor.force_check_wallet(wallet_address)
         return jsonify({'success': True, 'message': f'Force check completed for {wallet_address[:8]}...'}), 200
 
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/paper-trading/summary', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_paper_trading_summary():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        trader = get_paper_trader()
+        return jsonify({'success': True, 'summary': trader.get_summary()}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/paper-trading/failures', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_paper_trading_failures():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        trader = get_paper_trader()
+        return jsonify({'success': True, 'report': trader.get_failure_report()}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/paper-trading/readiness', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_paper_trading_readiness():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        trader = get_paper_trader()
+        return jsonify({'success': True, 'report': trader.get_readiness_report()}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/paper-trading/events', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_paper_trading_events():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+        limit = min(int(request.args.get('limit', 50)), 200)
+        events = (
+            get_supabase_client()
+            .schema(SCHEMA_NAME)
+            .table('paper_trade_events')
+            .select('*')
+            .order('created_at', desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+        return jsonify({'success': True, 'events': events, 'count': len(events)}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

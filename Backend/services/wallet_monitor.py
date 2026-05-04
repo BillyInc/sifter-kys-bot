@@ -18,6 +18,7 @@ import requests
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
 
 if TYPE_CHECKING:
+    from services.paper_trader import PaperTrader
     from services.telegram_notifier import TelegramNotifier
 
 
@@ -52,6 +53,7 @@ class WalletActivityMonitor:
         solanatracker_api_key,
         poll_interval=120,
         telegram_notifier: Optional["TelegramNotifier"] = None,
+        paper_trader: Optional["PaperTrader"] = None,
         db_path: str = None,
     ):
         self.solanatracker_key = solanatracker_api_key
@@ -63,6 +65,7 @@ class WalletActivityMonitor:
         self.supabase = get_supabase_client()
         self.schema = SCHEMA_NAME
         self.telegram_notifier = telegram_notifier
+        self.paper_trader = paper_trader
 
         self.pending_signals = {}
         self.buffer_lock = threading.Lock()
@@ -125,6 +128,9 @@ WALLET ACTIVITY MONITOR INITIALIZED
                         break
                     self._check_wallet_activity(wallet_info)
 
+                if self.paper_trader:
+                    self.paper_trader.check_exits()
+
                 cycle_duration = time.time() - cycle_start
                 print(f"Cycle complete in {cycle_duration:.1f}s")
 
@@ -148,6 +154,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
             wallets = []
             seen_addresses = set()
+            elite15_set = self._get_elite15_set()
 
             for row in result.data or []:
                 addr = row["wallet_address"]
@@ -164,6 +171,25 @@ WALLET ACTIVITY MONITOR INITIALIZED
                     {
                         "wallet_address": addr,
                         "tier": row.get("tier"),
+                        "monitor_source": "watchlist",
+                        "last_checked_at": status.get("last_checked_at"),
+                        "last_activity_at": status.get("last_activity_at"),
+                    }
+                )
+
+            for addr in elite15_set:
+                if addr in seen_addresses:
+                    continue
+                seen_addresses.add(addr)
+                status_result = self._table("wallet_monitor_status").select(
+                    "last_checked_at, last_activity_at"
+                ).eq("wallet_address", addr).limit(1).execute()
+                status = status_result.data[0] if status_result.data else {}
+                wallets.append(
+                    {
+                        "wallet_address": addr,
+                        "tier": "S",
+                        "monitor_source": "elite15",
                         "last_checked_at": status.get("last_checked_at"),
                         "last_activity_at": status.get("last_activity_at"),
                     }
@@ -179,6 +205,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
     def _check_wallet_activity(self, wallet_info):
         wallet_address = wallet_info["wallet_address"]
         last_checked = wallet_info.get("last_checked_at")
+        is_elite15 = wallet_info.get("monitor_source") == "elite15" or wallet_address in self._get_elite15_set()
 
         if last_checked:
             try:
@@ -221,6 +248,12 @@ WALLET ACTIVITY MONITOR INITIALIZED
                                 "wallet": wallet_address,
                                 "tier": wallet_info.get("tier", "C"),
                                 "usd_value": tx.get("usd_value", 0),
+                                "token_ticker": tx.get("token_ticker"),
+                                "token_name": tx.get("token_name"),
+                                "tx_hash": tx.get("tx_hash"),
+                                "block_time": tx.get("block_time"),
+                                "side": tx.get("side"),
+                                "source": "elite15" if is_elite15 else "watchlist",
                             }
                         )
 
@@ -250,30 +283,56 @@ WALLET ACTIVITY MONITOR INITIALIZED
     def _buffer_multi_wallet_signal(self, token_address: str, wallets_buying: List[Dict]):
         with self.buffer_lock:
             if token_address not in self.pending_signals:
-                self.pending_signals[token_address] = []
+                self.pending_signals[token_address] = {"entries": []}
                 threading.Timer(60.0, self._flush_multi_signal, [token_address]).start()
 
-            self.pending_signals[token_address].extend(wallets_buying)
+            self.pending_signals[token_address]["entries"].extend(wallets_buying)
 
     def _flush_multi_signal(self, token_address: str):
         with self.buffer_lock:
-            trades = self.pending_signals.pop(token_address, [])
+            payload = self.pending_signals.pop(token_address, {"entries": []})
+            trades = payload.get("entries", [])
 
-        if len(trades) < 2:
+        if not trades:
             return
+
+        seen_wallets = set()
+        deduped_trades = []
+        for trade in trades:
+            wallet = trade.get("wallet")
+            if wallet in seen_wallets:
+                continue
+            seen_wallets.add(wallet)
+            deduped_trades.append(trade)
+        trades = deduped_trades
+
+        source = "elite15" if any(trade.get("source") == "elite15" for trade in trades) else "watchlist"
 
         signal_strength = 0
         tier_weights = {"S": 4, "A": 3, "B": 2, "C": 1}
         for trade in trades:
             signal_strength += tier_weights.get(trade["tier"], 1)
 
-        if signal_strength >= 5:
+        wallet_count = len(trades)
+        qualifies = (source == "elite15" and wallet_count >= 1) or (wallet_count >= 2 and signal_strength >= 5)
+
+        if qualifies:
+            latest_trade = max(trades, key=lambda row: row.get("block_time") or 0)
+            signal_bucket = int((latest_trade.get("block_time") or time.time()) // 60)
             signal = {
                 "token_address": token_address,
+                "token_ticker": latest_trade.get("token_ticker"),
+                "token_name": latest_trade.get("token_name"),
+                "side": "buy",
+                "source": source,
                 "signal_strength": signal_strength,
-                "wallet_count": len(trades),
+                "signal_type": "mega" if wallet_count >= 3 else "double" if wallet_count == 2 else "single",
+                "wallet_count": wallet_count,
+                "total_usd": round(sum(float(trade.get("usd_value") or 0) for trade in trades), 2),
                 "wallets": trades,
+                "trades": trades,
                 "timestamp": int(time.time()),
+                "signal_key": f"{source}:{token_address}:{signal_bucket}",
             }
             self._create_signal_alert(signal)
 
@@ -326,7 +385,11 @@ WALLET ACTIVITY MONITOR INITIALIZED
             f"  MULTI-WALLET SIGNAL: {signal['wallet_count']} wallets bought "
             f"{signal['token_address'][:8]}..."
         )
+        if signal.get("source") == "elite15" and self.paper_trader:
+            self.paper_trader.process_signal(signal)
         try:
+            if signal.get("source") == "elite15":
+                return
             wallet_addresses = [wallet["wallet"] for wallet in signal["wallets"]]
             result = self._table("wallet_watchlist").select("user_id").in_(
                 "wallet_address", wallet_addresses
@@ -806,6 +869,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
         wallet_info = {
             "wallet_address": wallet_address,
             "tier": None,
+            "monitor_source": "manual",
             "last_checked_at": None,
             "last_activity_at": None,
         }

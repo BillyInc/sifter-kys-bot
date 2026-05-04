@@ -4,7 +4,9 @@
 ALTER TABLE sifter_dev.telegram_users
   ADD COLUMN IF NOT EXISTS auto_trade_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS auto_trade_max_usd NUMERIC NOT NULL DEFAULT 100,
-  ADD COLUMN IF NOT EXISTS auto_trade_source TEXT NOT NULL DEFAULT 'elite15';
+  ADD COLUMN IF NOT EXISTS auto_trade_source TEXT NOT NULL DEFAULT 'elite15',
+  ADD COLUMN IF NOT EXISTS auto_trade_hourly_limit INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS auto_trade_daily_limit INTEGER NOT NULL DEFAULT 8;
 
 ALTER TABLE sifter_dev.wallet_notifications
   ADD COLUMN IF NOT EXISTS side TEXT,
@@ -39,9 +41,16 @@ CREATE TABLE IF NOT EXISTS sifter_dev.bot_auto_trades (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE sifter_dev.bot_auto_trades
+  ADD COLUMN IF NOT EXISTS signal_key TEXT,
+  ADD COLUMN IF NOT EXISTS wallet_count INTEGER NOT NULL DEFAULT 1;
+
 CREATE INDEX IF NOT EXISTS idx_bot_auto_trades_pending
   ON sifter_dev.bot_auto_trades(user_id, status, created_at)
   WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_bot_auto_trades_signal_key
+  ON sifter_dev.bot_auto_trades(user_id, token_address, signal_key);
 
 ALTER TABLE sifter_dev.bot_auto_trades ENABLE ROW LEVEL SECURITY;
 
@@ -65,3 +74,64 @@ ALTER TABLE sifter_dev.bot_wallets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can manage own bot wallet"
   ON sifter_dev.bot_wallets FOR ALL
   USING (auth.uid() = user_id);
+
+CREATE TABLE IF NOT EXISTS sifter_dev.paper_trade_positions (
+  id BIGSERIAL PRIMARY KEY,
+  token_address TEXT NOT NULL,
+  token_ticker TEXT,
+  entry_price_usd NUMERIC NOT NULL DEFAULT 0,
+  entry_size_usd NUMERIC NOT NULL DEFAULT 0,
+  token_amount NUMERIC NOT NULL DEFAULT 0,
+  remaining_amount NUMERIC NOT NULL DEFAULT 0,
+  realized_pnl_usd NUMERIC NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'open',
+  wallet_count INTEGER NOT NULL DEFAULT 1,
+  signal_type TEXT NOT NULL DEFAULT 'single',
+  signal_key TEXT NOT NULL UNIQUE,
+  signal_wallets JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  peak_multiple NUMERIC NOT NULL DEFAULT 1,
+  exits_taken JSONB NOT NULL DEFAULT '[]'::jsonb,
+  opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_checked_at TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ,
+  close_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_trade_positions_status
+  ON sifter_dev.paper_trade_positions(status, opened_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_paper_trade_positions_token
+  ON sifter_dev.paper_trade_positions(token_address, status);
+
+CREATE TABLE IF NOT EXISTS sifter_dev.paper_trade_events (
+  id BIGSERIAL PRIMARY KEY,
+  token_address TEXT NOT NULL,
+  token_ticker TEXT,
+  event_type TEXT NOT NULL,
+  reason TEXT,
+  signal_key TEXT,
+  wallet_count INTEGER NOT NULL DEFAULT 1,
+  usd_amount NUMERIC,
+  price_usd NUMERIC,
+  multiple NUMERIC,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_trade_events_time
+  ON sifter_dev.paper_trade_events(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_paper_trade_events_signal
+  ON sifter_dev.paper_trade_events(signal_key, created_at DESC);
+
+ALTER TABLE sifter_dev.paper_trade_positions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sifter_dev.paper_trade_events ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view paper positions"
+  ON sifter_dev.paper_trade_positions FOR SELECT
+  USING (true);
+
+CREATE POLICY "Users can view paper trade events"
+  ON sifter_dev.paper_trade_events FOR SELECT
+  USING (true);
