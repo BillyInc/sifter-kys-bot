@@ -13,15 +13,10 @@ Tasks:
   invalidate_stale_ath_caches  — every hour (:45)  NEW
   purge_stale_analysis_cache   — one-time / on-demand  NEW
   send_telegram_alert_async    — on-demand (queued by wallet monitor)
-  purge_old_notifications      — daily 2:30am UTC (30-day TTL)
 """
 from celery_app import celery
-from datetime import datetime, date, timedelta
-import json
+from datetime import datetime
 import os
-import traceback
-
-import redis as redis_lib
 
 
 # =============================================================================
@@ -32,110 +27,28 @@ import redis as redis_lib
 def daily_stats_refresh():
     """
     Daily stats refresh at 3am UTC.
-    Reads aggregate stats from ClickHouse and syncs them to Supabase wallet_watchlist.
-
-    Fields synced (per architecture doc section 10):
-        professional_score, consistency_score, win_rate, roi_30d,
-        runners_30d, avg_roi_mult, avg_entry_to_ath, tokens_qualified,
-        last_updated
-    Note: `tier` is only written by weekly_rerank_all — not touched here.
+    Updates all watchlist wallet metrics.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Daily Stats Refresh - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        from services.clickhouse_client import get_clickhouse_client
+        from services.watchlist_stats_updater import get_updater
+        updater = get_updater()
 
-        supabase = get_supabase_client()
-        ch = get_clickhouse_client()
+        result = updater.daily_stats_refresh()
 
-        # 1. Get all watchlisted wallet addresses from Supabase
-        print("[DAILY] Fetching watchlisted wallets from Supabase...")
-        watchlist_resp = (
-            supabase.schema(SCHEMA_NAME)
-            .table('wallet_watchlist')
-            .select('wallet_address')
-            .execute()
-        )
-        if not watchlist_resp.data:
-            print("[DAILY] No wallets in watchlist — nothing to refresh.")
-            return {
-                'status':    'success',
-                'wallets':   0,
-                'synced':    0,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-
-        addresses = list({row['wallet_address'] for row in watchlist_resp.data})
-        print(f"[DAILY] Found {len(addresses)} unique wallet addresses")
-
-        # 2. Bulk read latest aggregate stats from ClickHouse
-        print("[DAILY] Querying ClickHouse wallet_aggregate_stats FINAL...")
-        result = ch.query(
-            """SELECT
-                wallet_address,
-                professional_score,
-                consistency_score,
-                win_rate,
-                total_roi_pct,
-                tokens_qualified,
-                avg_roi_mult,
-                avg_entry_to_ath_mult
-            FROM wallet_aggregate_stats FINAL
-            WHERE wallet_address IN {addrs:Array(String)}""",
-            parameters={'addrs': addresses}
-        )
-        ch_rows = list(result.named_results())
-        stats_by_wallet = {r['wallet_address']: r for r in ch_rows}
-        print(f"[DAILY] Got stats for {len(stats_by_wallet)} wallets from ClickHouse")
-
-        # 3. Batch upsert computed fields back to Supabase
-        synced = 0
-        errors = 0
-        now_iso = datetime.utcnow().isoformat()
-
-        BATCH_SIZE = 50
-        for i in range(0, len(addresses), BATCH_SIZE):
-            batch = addresses[i:i + BATCH_SIZE]
-            for addr in batch:
-                stats = stats_by_wallet.get(addr)
-                if not stats:
-                    continue
-                try:
-                    supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
-                        'professional_score': float(stats.get('professional_score', 0)),
-                        'consistency_score':  float(stats.get('consistency_score', 0)),
-                        'win_rate':           float(stats.get('win_rate', 0)),
-                        'roi_30d':            float(stats.get('total_roi_pct', 0)),
-                        'runners_30d':        int(stats.get('tokens_qualified', 0)),
-                        'avg_roi_mult':       float(stats.get('avg_roi_mult', 0)),
-                        'avg_entry_to_ath':   float(stats.get('avg_entry_to_ath_mult', 0)),
-                        'tokens_qualified':   int(stats.get('tokens_qualified', 0)),
-                        'last_updated':       now_iso,
-                    }).eq('wallet_address', addr).execute()
-                    synced += 1
-                except Exception as e:
-                    errors += 1
-                    print(f"[DAILY] Error updating {addr[:12]}...: {e}")
-
-        print(f"\n[CELERY TASK] Daily refresh complete")
-        print(f"  Wallets found:   {len(addresses)}")
-        print(f"  CH stats loaded: {len(stats_by_wallet)}")
-        print(f"  Synced:          {synced}")
-        print(f"  Errors:          {errors}")
+        print(f"\n[CELERY TASK] Daily refresh complete: {result}")
         return {
             'status':    'success',
-            'wallets':   len(addresses),
-            'ch_loaded': len(stats_by_wallet),
-            'synced':    synced,
-            'errors':    errors,
-            'timestamp': now_iso
+            'result':    result,
+            'timestamp': datetime.utcnow().isoformat()
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] Daily refresh failed: {e}")
+        import traceback
         traceback.print_exc()
         return {
             'status':    'error',
@@ -152,204 +65,28 @@ def daily_stats_refresh():
 def weekly_rerank_all():
     """
     Weekly rerank on Sunday at 4am UTC.
-    1. Reads ALL wallets from ClickHouse ordered by professional_score DESC
-    2. Assigns tiers: S (top 5%), A (6-20%), B (21-50%), C (bottom 50%)
-    3. Writes weekly snapshot to ClickHouse wallet_weekly_snapshots
-    4. Writes Elite 100 to ClickHouse leaderboard_results
-    5. Caches Elite 100 in Redis (7-day TTL)
-    6. Syncs tiers back to Supabase wallet_watchlist
+    Reranks all user watchlists.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] Weekly Rerank - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        from services.clickhouse_client import (
-            get_clickhouse_client, insert_weekly_snapshots,
-            insert_leaderboard_results,
-        )
+        from services.watchlist_stats_updater import get_updater
+        updater = get_updater()
 
-        supabase = get_supabase_client()
-        ch = get_clickhouse_client()
+        result = updater.weekly_rerank_all()
 
-        # ----------------------------------------------------------------
-        # 1. Read ALL wallets ordered by professional_score DESC
-        # ----------------------------------------------------------------
-        print("[RERANK] Querying all wallets from ClickHouse...")
-        result = ch.query(
-            """SELECT
-                wallet_address,
-                professional_score,
-                consistency_score,
-                win_rate,
-                total_roi_pct,
-                tokens_qualified,
-                avg_roi_mult,
-                avg_entry_to_ath_mult,
-                total_pnl_usd,
-                last_active_at,
-                wins,
-                draws,
-                losses
-            FROM wallet_aggregate_stats FINAL
-            ORDER BY professional_score DESC"""
-        )
-        all_wallets = list(result.named_results())
-        total = len(all_wallets)
-        print(f"[RERANK] Loaded {total} wallets from ClickHouse")
-
-        if total == 0:
-            print("[RERANK] No wallets found — nothing to rank.")
-            return {
-                'status':    'success',
-                'wallets':   0,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-
-        # ----------------------------------------------------------------
-        # 2. Assign tiers by percentile position
-        # ----------------------------------------------------------------
-        print("[RERANK] Assigning tiers...")
-        today = date.today()
-        snapshot_rows = []
-        tier_map = {}  # wallet_address -> tier
-
-        for rank_idx, wallet in enumerate(all_wallets):
-            pct = (rank_idx + 1) / total  # percentile position (1-based)
-            if pct <= 0.05:
-                tier = 'S'
-            elif pct <= 0.20:
-                tier = 'A'
-            elif pct <= 0.50:
-                tier = 'B'
-            else:
-                tier = 'C'
-
-            addr = wallet['wallet_address']
-            tier_map[addr] = tier
-
-            # Match wallet_weekly_snapshots schema columns exactly
-            week_start = today - timedelta(days=today.weekday())  # snap to Monday
-            snapshot_rows.append({
-                'wallet_address':     addr,
-                'week_start':         week_start,
-                'tokens_qualified':   int(wallet.get('tokens_qualified', 0)),
-                'wins':               int(wallet.get('wins', 0)),
-                'losses':             int(wallet.get('losses', 0)),
-                'win_rate':           float(wallet.get('win_rate', 0)),
-                'avg_roi_mult':       float(wallet.get('avg_roi_mult', 0)),
-                'professional_score': float(wallet.get('professional_score', 0)),
-                'tier':               tier,
-                'consistency_score':  float(wallet.get('consistency_score', 0)),
-                'position_in_elite':  rank_idx + 1 if rank_idx < 100 else 0,
-            })
-
-        tier_counts = {}
-        for t in tier_map.values():
-            tier_counts[t] = tier_counts.get(t, 0) + 1
-        print(f"[RERANK] Tier distribution: {tier_counts}")
-
-        # ----------------------------------------------------------------
-        # 3. Write weekly snapshots to ClickHouse
-        # ----------------------------------------------------------------
-        print(f"[RERANK] Writing {len(snapshot_rows)} weekly snapshots to ClickHouse...")
-        insert_weekly_snapshots(snapshot_rows)
-
-        # ----------------------------------------------------------------
-        # 4. Write Elite 100 to ClickHouse leaderboard_results
-        # ----------------------------------------------------------------
-        # Match leaderboard_results schema columns exactly
-        elite_100 = all_wallets[:100]
-        leaderboard_rows = []
-        for rank_idx, wallet in enumerate(elite_100):
-            addr = wallet['wallet_address']
-            leaderboard_rows.append({
-                'result_key':           'elite100',
-                'leaderboard_type':     'elite100',
-                'user_id':              '',
-                'token_set':            '[]',
-                'rank':                 rank_idx + 1,
-                'wallet_address':       addr,
-                'professional_score':   float(wallet.get('professional_score', 0)),
-                'tier':                 tier_map[addr],
-                'avg_entry_to_ath_mult': float(wallet.get('avg_entry_to_ath_mult', 0)),
-                'avg_roi_mult':         float(wallet.get('avg_roi_mult', 0)),
-                'consistency_score':    float(wallet.get('consistency_score', 0)),
-                'tokens_qualified':     int(wallet.get('tokens_qualified', 0)),
-                'win_rate':             float(wallet.get('win_rate', 0)),
-                'total_pnl_usd':        float(wallet.get('total_pnl_usd', 0)),
-                'expires_at':           datetime.utcnow() + timedelta(days=7),
-            })
-        print(f"[RERANK] Writing {len(leaderboard_rows)} Elite 100 rows to ClickHouse...")
-        insert_leaderboard_results(leaderboard_rows)
-
-        # ----------------------------------------------------------------
-        # 5. Cache Elite 100 in Redis (7-day TTL)
-        # ----------------------------------------------------------------
-        print("[RERANK] Caching Elite 100 in Redis...")
-        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-        r = redis_lib.from_url(redis_url, decode_responses=True, socket_timeout=10)
-
-        elite_payload = []
-        for row in leaderboard_rows:
-            serializable = dict(row)
-            # Convert datetime to string for JSON serialization
-            if 'expires_at' in serializable:
-                serializable['expires_at'] = str(serializable['expires_at'])
-            elite_payload.append(serializable)
-
-        r.set('kys:elite100', json.dumps(elite_payload), ex=604800)
-        print("[RERANK] Redis kys:elite100 cached with 7-day TTL")
-
-        # ----------------------------------------------------------------
-        # 6. Sync tiers to Supabase wallet_watchlist (only watchlisted wallets)
-        # ----------------------------------------------------------------
-        print("[RERANK] Syncing tiers to Supabase wallet_watchlist...")
-        watchlist_resp = (
-            supabase.schema(SCHEMA_NAME)
-            .table('wallet_watchlist')
-            .select('wallet_address')
-            .execute()
-        )
-        watchlisted_addrs = {row['wallet_address'] for row in watchlist_resp.data} if watchlist_resp.data else set()
-
-        synced = 0
-        errors = 0
-        for addr in watchlisted_addrs:
-            tier = tier_map.get(addr)
-            if not tier:
-                continue
-            try:
-                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
-                    'tier':         tier,
-                    'last_updated': datetime.utcnow().isoformat(),
-                }).eq('wallet_address', addr).execute()
-                synced += 1
-            except Exception as e:
-                errors += 1
-                if errors <= 5:
-                    print(f"[RERANK] Error syncing tier for {addr[:12]}...: {e}")
-
-        print(f"\n[CELERY TASK] Weekly rerank complete")
-        print(f"  Total wallets:    {total}")
-        print(f"  Snapshots:        {len(snapshot_rows)}")
-        print(f"  Elite 100:        {len(leaderboard_rows)}")
-        print(f"  Tiers synced:     {synced}")
-        print(f"  Errors:           {errors}")
+        print(f"\n[CELERY TASK] Weekly rerank complete: {result}")
         return {
-            'status':      'success',
-            'total':       total,
-            'snapshots':   len(snapshot_rows),
-            'elite_100':   len(leaderboard_rows),
-            'tiers':       tier_counts,
-            'synced':      synced,
-            'errors':      errors,
-            'timestamp':   datetime.utcnow().isoformat()
+            'status':    'success',
+            'result':    result,
+            'timestamp': datetime.utcnow().isoformat()
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] Weekly rerank failed: {e}")
+        import traceback
         traceback.print_exc()
         return {
             'status':    'error',
@@ -365,173 +102,35 @@ def weekly_rerank_all():
 @celery.task(name='tasks.four_week_degradation_check')
 def four_week_degradation_check():
     """
-    4-week degradation check (1st & 29th of month at 5am UTC).
-    Queries wallet_weekly_snapshots for wallets with 4+ weeks of data
-    in the last 28 days, compares first vs last snapshot, and flags
-    degraded wallets with status='critical' in Supabase.
-
-    Degradation thresholds (architecture doc section 11):
-        - ROI drop > 200% (half of 400% floor equivalent)
-        - Win rate drop >= 20 percentage points
-        - Elite position drop >= 5 positions
-        - Consistency drop >= 20 points
-        - Win rate dropped to 0
+    4-week degradation check every 28 days at 5am UTC.
+    Identifies wallets with declining performance over 4 weeks.
     """
     print(f"\n{'='*80}")
     print(f"[CELERY TASK] 4-Week Degradation Check - {datetime.utcnow().isoformat()}")
     print(f"{'='*80}\n")
 
     try:
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        from services.clickhouse_client import get_clickhouse_client
+        from services.watchlist_stats_updater import get_updater
+        updater = get_updater()
 
-        supabase = get_supabase_client()
-        ch = get_clickhouse_client()
+        result = updater.four_week_degradation_check()
 
-        cutoff_date = date.today() - timedelta(days=28)
-
-        # ----------------------------------------------------------------
-        # 1. Query wallets with 4+ snapshots in the last 28 days
-        #    Use groupArray() to get ordered arrays per wallet
-        # ----------------------------------------------------------------
-        print(f"[DEGRADATION] Querying snapshots since {cutoff_date}...")
-        result = ch.query(
-            """SELECT
-                wallet_address,
-                groupArray(week_start)         AS dates,
-                groupArray(avg_roi_mult)       AS roi_arr,
-                groupArray(win_rate)           AS wr_arr,
-                groupArray(position_in_elite)  AS rank_arr,
-                groupArray(consistency_score)  AS cs_arr
-            FROM (
-                SELECT *
-                FROM wallet_weekly_snapshots FINAL
-                WHERE week_start >= {cutoff:Date}
-                ORDER BY wallet_address, week_start ASC
-            )
-            GROUP BY wallet_address
-            HAVING length(dates) >= 4""",
-            parameters={'cutoff': cutoff_date}
-        )
-        wallets = list(result.named_results())
-        print(f"[DEGRADATION] Found {len(wallets)} wallets with 4+ weeks of data")
-
-        # ----------------------------------------------------------------
-        # 2. Compare first vs last snapshot and flag degraded wallets
-        # ----------------------------------------------------------------
-        degraded = []
-        for w in wallets:
-            addr = w['wallet_address']
-            reasons = []
-
-            roi_first = float(w['roi_arr'][0])
-            roi_last  = float(w['roi_arr'][-1])
-            wr_first  = float(w['wr_arr'][0])
-            wr_last   = float(w['wr_arr'][-1])
-            rank_first = int(w['rank_arr'][0])
-            rank_last  = int(w['rank_arr'][-1])
-            cs_first  = float(w['cs_arr'][0])
-            cs_last   = float(w['cs_arr'][-1])
-
-            roi_drop = roi_first - roi_last
-            wr_drop  = wr_first - wr_last
-            cs_drop  = cs_first - cs_last
-
-            # ROI drop > 200%
-            if roi_drop > 200:
-                reasons.append(f"ROI dropped {roi_drop:.1f}% (>{200}% threshold)")
-
-            # Win rate drop >= 20 percentage points
-            if wr_drop >= 20:
-                reasons.append(f"Win rate dropped {wr_drop:.1f}pp (>={20}pp threshold)")
-
-            # Win rate dropped to 0
-            if wr_last == 0 and wr_first > 0:
-                reasons.append("Win rate dropped to 0%")
-
-            # Elite position drop >= 5 (only if both are ranked)
-            if rank_first > 0 and rank_last > 0:
-                rank_drop = rank_last - rank_first  # higher rank number = worse
-                if rank_drop >= 5:
-                    reasons.append(f"Elite rank dropped {rank_drop} positions")
-
-            # Consistency drop >= 20 points
-            if cs_drop >= 20:
-                reasons.append(f"Consistency dropped {cs_drop:.1f}pts (>={20}pt threshold)")
-
-            if reasons:
-                degraded.append({
-                    'wallet_address': addr,
-                    'reasons':        reasons,
-                })
-
-        print(f"[DEGRADATION] {len(degraded)} wallets flagged as degraded")
-
-        # ----------------------------------------------------------------
-        # 3. Flag degraded wallets in Supabase
-        # ----------------------------------------------------------------
-        flagged = 0
-        errors = 0
-        for entry in degraded:
-            try:
-                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').update({
-                    'status':       'critical',
-                    'last_updated': datetime.utcnow().isoformat(),
-                }).eq('wallet_address', entry['wallet_address']).execute()
-                flagged += 1
-                if flagged <= 10:
-                    print(f"  Flagged {entry['wallet_address'][:12]}...: "
-                          f"{'; '.join(entry['reasons'])}")
-            except Exception as e:
-                errors += 1
-                print(f"[DEGRADATION] Error flagging {entry['wallet_address'][:12]}...: {e}")
-
-        print(f"\n[CELERY TASK] 4-week degradation check complete")
-        print(f"  Wallets checked: {len(wallets)}")
-        print(f"  Degraded:        {len(degraded)}")
-        print(f"  Flagged:         {flagged}")
-        print(f"  Errors:          {errors}")
+        print(f"\n[CELERY TASK] 4-week check complete: {result}")
         return {
             'status':    'success',
-            'checked':   len(wallets),
-            'degraded':  len(degraded),
-            'flagged':   flagged,
-            'errors':    errors,
+            'result':    result,
             'timestamp': datetime.utcnow().isoformat()
         }
 
     except Exception as e:
         print(f"\n[CELERY TASK] 4-week check failed: {e}")
+        import traceback
         traceback.print_exc()
         return {
             'status':    'error',
             'error':     str(e),
             'timestamp': datetime.utcnow().isoformat()
         }
-
-
-# =============================================================================
-# WARM TRENDING CACHE
-# =============================================================================
-
-@celery.task(name='tasks.warm_trending_cache')
-def warm_trending_cache():
-    """Pre-warm the trending runners cache every 10 minutes.
-    Runs in Celery worker so the API endpoint always serves from cache."""
-    print(f"\n[CELERY TASK] Warming trending cache - {datetime.utcnow().isoformat()}")
-    try:
-        from routes.wallets import get_wallet_analyzer
-        analyzer = get_wallet_analyzer()
-        for days_back in [7, 14, 30]:
-            runners = analyzer.find_trending_runners_enhanced(
-                days_back=days_back, min_multiplier=5.0, min_liquidity=50000,
-            )
-            print(f"  {days_back}d: {len(runners)} runners cached")
-        return {'status': 'success', 'timestamp': datetime.utcnow().isoformat()}
-    except Exception as e:
-        print(f"[CELERY TASK] Trending cache warm failed: {e}")
-        traceback.print_exc()
-        return {'status': 'error', 'error': str(e)}
 
 
 # =============================================================================
@@ -1175,67 +774,83 @@ def purge_stale_analysis_cache():
 @celery.task(name='tasks.send_telegram_alert_async')
 def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
     """
-    Async Telegram alert sender.
-    Called by wallet monitor for background alert delivery.
+    Async Telegram notification with Elite 15 auto-trade queueing.
     """
     try:
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
         if not bot_token:
-            print(f"[TELEGRAM TASK] Notifier not configured")
-            return {'status': 'skipped', 'reason': 'no_notifier'}
+            return {'status': 'skipped', 'reason': 'no_token'}
 
         from services.telegram_notifier import TelegramNotifier
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
         telegram_notifier = TelegramNotifier(bot_token)
+        supabase = get_supabase_client()
 
-        if alert_type == 'trade':
-            from services.supabase_client import get_supabase_client, SCHEMA_NAME
-            supabase = get_supabase_client()
+        wallet_address = alert_data.get('wallet_address', '')
+        wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
+            'tier, consistency_score'
+        ).eq('user_id', user_id).eq('wallet_address', wallet_address).limit(1).execute()
 
-            wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
-                'tier, consistency_score'
-            ).eq('user_id', user_id).eq(
-                'wallet_address', alert_data.get('wallet_address')
-            ).limit(1).execute()
+        wallet_info = wallet_result.data[0] if wallet_result.data else {
+            'tier': alert_data.get('wallet_tier', 'S' if alert_type == 'elite15_trade' else 'C'),
+            'consistency_score': 0,
+        }
 
-            wallet_info = wallet_result.data[0] if wallet_result.data else {
-                'tier': 'C', 'consistency_score': 0
-            }
+        payload = {
+            'wallet': {
+                'address': wallet_address,
+                'tier': wallet_info.get('tier', 'C'),
+                'consistency_score': wallet_info.get('consistency_score', 0),
+            },
+            'action': alert_data.get('side', 'buy'),
+            'source': alert_data.get('source', 'watchlist'),
+            'token': {
+                'address': alert_data.get('token_address', ''),
+                'symbol': alert_data.get('token_ticker', 'UNKNOWN'),
+                'name': alert_data.get('token_name', 'Unknown'),
+            },
+            'trade': {
+                'amount_usd': alert_data.get('usd_value', 0),
+                'amount_tokens': alert_data.get('token_amount', 0),
+                'price': alert_data.get('price', 0),
+                'tx_hash': alert_data.get('tx_hash', ''),
+                'dex': alert_data.get('dex', 'unknown'),
+                'timestamp': alert_data.get('block_time', 0),
+            },
+            'links': {
+                'solscan': f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
+                'birdeye': f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
+                'dexscreener': f"https://dexscreener.com/solana/{alert_data.get('token_address', '')}",
+            },
+        }
 
-            payload = {
-                'wallet': {
-                    'address':           alert_data.get('wallet_address', ''),
-                    'tier':              wallet_info.get('tier', 'C'),
-                    'consistency_score': wallet_info.get('consistency_score', 0)
-                },
-                'action': alert_data.get('side', 'buy'),
-                'token': {
-                    'address': alert_data.get('token_address', ''),
-                    'symbol':  alert_data.get('token_ticker', 'UNKNOWN'),
-                    'name':    alert_data.get('token_name', 'Unknown')
-                },
-                'trade': {
-                    'amount_tokens': alert_data.get('token_amount', 0),
-                    'amount_usd':    alert_data.get('usd_value', 0),
-                    'price':         alert_data.get('price', 0),
-                    'tx_hash':       alert_data.get('tx_hash', ''),
-                    'dex':           alert_data.get('dex', 'unknown'),
-                    'timestamp':     alert_data.get('block_time', 0)
-                },
-                'links': {
-                    'solscan':     f"https://solscan.io/tx/{alert_data.get('tx_hash', '')}",
-                    'birdeye':     f"https://birdeye.so/token/{alert_data.get('token_address', '')}",
-                    'dexscreener': f"https://dexscreener.com/solana/{alert_data.get('token_address', '')}"
-                }
-            }
-
-            telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
-
+        if alert_type == 'elite15_trade':
+            if hasattr(telegram_notifier, 'send_elite15_alert'):
+                telegram_notifier.send_elite15_alert(user_id, payload)
+            else:
+                telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
+            if alert_data.get('side') == 'buy':
+                _queue_bot_auto_trade(
+                    user_id=user_id,
+                    alert_data=alert_data,
+                    notification_id=alert_data.get('notification_id'),
+                    supabase=supabase,
+                    schema_name=SCHEMA_NAME,
+                )
+        elif alert_type in ('watchlist_trade', 'trade'):
+            if hasattr(telegram_notifier, 'send_watchlist_alert'):
+                telegram_notifier.send_watchlist_alert(user_id, payload)
+            else:
+                telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
         elif alert_type == 'multi_wallet':
             telegram_notifier.send_multi_wallet_signal_alert(user_id, alert_data)
+        else:
+            telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
 
         return {
-            'status':     'sent',
-            'user_id':    user_id,
+            'status': 'sent',
+            'user_id': user_id,
             'alert_type': alert_type
         }
 
@@ -1245,26 +860,153 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
         traceback.print_exc()
         return {
             'status': 'error',
-            'error':  str(e)
+            'error': str(e)
         }
 
 
-# =============================================================================
-# NOTIFICATION TTL — PURGE OLD NOTIFICATIONS
-# =============================================================================
-
-@celery.task(name='tasks.purge_old_notifications')
-def purge_old_notifications():
-    """Delete notifications older than 30 days."""
-    print(f"[CELERY TASK] Purging old notifications - {datetime.utcnow().isoformat()}")
+def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema_name):
+    """Create a pending bot_auto_trades row when Elite 15 auto-trade is enabled."""
     try:
-        from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        supabase = get_supabase_client()
-        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
-        result = supabase.schema(SCHEMA_NAME).table('wallet_notifications').delete().lt('sent_at', cutoff).execute()
-        count = len(result.data) if result.data else 0
-        print(f"[PURGE] Deleted {count} notifications older than 30 days")
-        return {'status': 'success', 'deleted': count}
+        tg_result = supabase.schema(schema_name).table('telegram_users').select(
+            'auto_trade_enabled, auto_trade_max_usd, auto_trade_hourly_limit, auto_trade_daily_limit'
+        ).eq('user_id', user_id).limit(1).execute()
+
+        if not tg_result.data or not tg_result.data[0].get('auto_trade_enabled'):
+            return
+
+        row_cfg = tg_result.data[0]
+        max_usd = float(row_cfg.get('auto_trade_max_usd') or 100)
+        hourly_limit = int(row_cfg.get('auto_trade_hourly_limit') or 1)
+        daily_limit = int(row_cfg.get('auto_trade_daily_limit') or 8)
+        usd_amount = min(float(alert_data.get('usd_value') or 0), max_usd)
+        signal_key = alert_data.get('signal_key')
+
+        now = datetime.utcnow()
+        one_hour_ago = now.replace(minute=0, second=0, microsecond=0).isoformat()
+        one_day_ago = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        hourly_count = supabase.schema(schema_name).table('bot_auto_trades').select(
+            'id', count='exact'
+        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
+            'created_at', one_hour_ago
+        ).execute().count or 0
+        daily_count = supabase.schema(schema_name).table('bot_auto_trades').select(
+            'id', count='exact'
+        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
+            'created_at', one_day_ago
+        ).execute().count or 0
+
+        if hourly_count >= hourly_limit or daily_count >= daily_limit:
+            return
+
+        if signal_key:
+            duplicate = supabase.schema(schema_name).table('bot_auto_trades').select(
+                'id'
+            ).eq('user_id', user_id).eq('signal_key', signal_key).limit(1).execute()
+            if duplicate.data:
+                return
+
+        row = supabase.schema(schema_name).table('bot_auto_trades').insert({
+            'user_id': user_id,
+            'source': 'elite15',
+            'side': alert_data.get('side', 'buy'),
+            'token_address': alert_data.get('token_address', ''),
+            'token_ticker': alert_data.get('token_ticker', 'UNKNOWN'),
+            'usd_amount': usd_amount,
+            'wallet_address': alert_data.get('wallet_address', ''),
+            'wallet_tier': alert_data.get('wallet_tier', 'S'),
+            'tx_hash_signal': alert_data.get('tx_hash', ''),
+            'signal_key': signal_key,
+            'wallet_count': alert_data.get('wallet_count', 1),
+            'status': 'pending',
+            'notification_id': notification_id,
+        }).execute()
+
+        if row.data:
+            execute_bot_auto_trade.delay(row.data[0]['id'])
     except Exception as e:
-        print(f"[PURGE] Failed: {e}")
+        print(f"[TELEGRAM TASK] Failed to queue auto-trade for {user_id[:8]}...: {e}")
+
+
+@celery.task(name='tasks.execute_bot_auto_trade', max_retries=2)
+def execute_bot_auto_trade(trade_id: int):
+    """Execute a queued bot auto-trade via TelegramNotifier."""
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+    supabase = get_supabase_client()
+    try:
+        result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
+            'id', trade_id
+        ).limit(1).execute()
+        if not result.data:
+            return {'status': 'not_found'}
+
+        trade = result.data[0]
+        if trade['status'] != 'pending':
+            return {'status': 'skipped', 'reason': trade['status']}
+
+        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+            'status': 'executing',
+            'updated_at': datetime.utcnow().isoformat(),
+        }).eq('id', trade_id).eq('status', 'pending').execute()
+
+        existing = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('id').eq(
+            'user_id', trade['user_id']
+        ).eq('token_address', trade['token_address']).eq('side', 'buy').neq(
+            'id', trade_id
+        ).in_(
+            'status', ['pending', 'executing', 'executed']
+        ).execute()
+        if existing.data:
+            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+                'status': 'skipped',
+                'error_message': 'duplicate_buy_prevention',
+                'updated_at': datetime.utcnow().isoformat(),
+            }).eq('id', trade_id).execute()
+            return {'status': 'skipped', 'reason': 'duplicate'}
+
+        bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        from services.telegram_notifier import TelegramNotifier
+
+        notifier = TelegramNotifier(bot_token)
+        result_txid = notifier.execute_auto_trade_for_user(
+            user_id=trade['user_id'],
+            token_address=trade['token_address'],
+            side=trade['side'],
+            usd_amount=float(trade['usd_amount']),
+        )
+
+        if not result_txid:
+            raise RuntimeError('execute_auto_trade_for_user returned None')
+
+        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+            'status': 'executed',
+            'result_txid': result_txid,
+            'updated_at': datetime.utcnow().isoformat(),
+        }).eq('id', trade_id).execute()
+
+        if hasattr(notifier, 'send_auto_trade_confirmation'):
+            notifier.send_auto_trade_confirmation(trade['user_id'], trade, result_txid)
+        return {'status': 'executed', 'txid': result_txid}
+    except Exception as e:
+        print(f"[BOT TRADE] Error for {trade_id}: {e}")
+        try:
+            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
+                'status': 'failed',
+                'error_message': str(e)[:500],
+                'updated_at': datetime.utcnow().isoformat(),
+            }).eq('id', trade_id).execute()
+            bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+            if bot_token:
+                from services.telegram_notifier import TelegramNotifier
+                trade_result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
+                    'id', trade_id
+                ).limit(1).execute()
+                if trade_result.data and hasattr(TelegramNotifier(bot_token), 'send_auto_trade_failed'):
+                    TelegramNotifier(bot_token).send_auto_trade_failed(
+                        trade_result.data[0]['user_id'],
+                        trade_result.data[0],
+                        str(e),
+                    )
+        except Exception:
+            pass
         return {'status': 'error', 'error': str(e)}

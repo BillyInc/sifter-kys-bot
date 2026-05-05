@@ -1,127 +1,236 @@
 import { supabase } from './lib/supabase';
 
-interface NotificationData {
-  notifications: any[];
-  unread_count: number;
-  has_new?: boolean;
+function normalise(raw) {
+  const metadata = raw?.metadata || {};
+  const source = raw?.source || metadata.source || 'watchlist';
+  return {
+    ...raw,
+    is_read: raw?.is_read === true,
+    _side: raw?.side || metadata.side || raw?.notification_type || 'trade',
+    _ticker: raw?.token_ticker || metadata.token_ticker || 'UNKNOWN',
+    _name: raw?.token_name || metadata.token_name,
+    _tokenAddress: raw?.token_address || metadata.token_address,
+    _usdValue: raw?.usd_value ?? metadata.usd_value,
+    _txHash: raw?.tx_hash || metadata.tx_hash,
+    _source: source,
+    _isElite15: source === 'elite15',
+    _solscanUrl: metadata.solscan_url || (raw?.tx_hash ? `https://solscan.io/tx/${raw.tx_hash}` : undefined),
+  };
 }
 
-type ListenerCallback = (data: NotificationData) => void;
-
 class WalletActivityService {
-  private apiUrl: string;
-  private pollInterval: ReturnType<typeof setInterval> | null;
-  private userId: string | null;
-  private listeners: Set<ListenerCallback>;
-  private notifications: any[];
-  private unreadCount: number;
-  private isPolling: boolean;
-
   constructor() {
     this.apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    this.pollInterval = null;
     this.userId = null;
-    this.listeners = new Set();
     this.notifications = [];
     this.unreadCount = 0;
+    this.listeners = new Set();
+    this.elite15Listeners = new Set();
+    this.realtimeChannel = null;
+    this.eventSource = null;
+    this.pollHandle = null;
     this.isPolling = false;
   }
 
-  async getHeaders(): Promise<Record<string, string>> {
+  async getHeaders() {
     const { data: { session } } = await supabase.auth.getSession();
     return {
       'Content-Type': 'application/json',
-      ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     };
   }
 
-  async start(userId: string): Promise<void> {
+  async start(userId) {
     if (!userId) return;
+    if (this.userId === userId && (this.realtimeChannel || this.eventSource || this.isPolling)) return;
+
+    this.stop();
     this.userId = userId;
+    await this.fetchAll();
 
-    // Initial fetch
-    await this.fetchNotifications();
-
-    // Start polling every 30 seconds (reduced from 2 seconds to avoid rate limiting)
-    if (!this.isPolling) {
-      this.isPolling = true;
-      this.pollInterval = setInterval(() => this.fetchNotifications(), 30000); // 30 seconds
+    const realtimeOk = await this.startRealtime();
+    if (!realtimeOk) {
+      const sseOk = this.startSSE();
+      if (!sseOk) this.startPolling();
     }
   }
 
-  stop(): void {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
-      this.isPolling = false;
+  stop() {
+    if (this.realtimeChannel) {
+      supabase.removeChannel(this.realtimeChannel);
+      this.realtimeChannel = null;
     }
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+    if (this.pollHandle) {
+      clearInterval(this.pollHandle);
+      this.pollHandle = null;
+    }
+    this.isPolling = false;
   }
 
-  async fetchNotifications(): Promise<void> {
-    if (!this.userId) return;
-
+  async startRealtime() {
+    if (!this.userId) return false;
     try {
-      const data = await this.getAllNotifications(this.userId, false);
-      const hasNew = data.unread_count > this.unreadCount;
+      const channel = supabase
+        .channel(`wallet_notifications:${this.userId}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'sifter_dev',
+          table: 'wallet_notifications',
+          filter: `user_id=eq.${this.userId}`,
+        }, ({ new: row }) => this.onIncoming(normalise(row)))
+        .on('postgres_changes', {
+          event: 'UPDATE',
+          schema: 'sifter_dev',
+          table: 'wallet_notifications',
+          filter: `user_id=eq.${this.userId}`,
+        }, ({ new: row }) => {
+          const updated = normalise(row);
+          this.notifications = this.notifications.map((item) => item.id === updated.id ? updated : item);
+          this.unreadCount = this.notifications.filter((item) => !item.is_read).length;
+          this.notify({ notifications: this.notifications, unread_count: this.unreadCount });
+        })
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            this.stopRealtimeOnly();
+            if (!this.startSSE()) this.startPolling();
+          }
+        });
 
-      this.notifications = data.notifications;
-      this.unreadCount = data.unread_count;
-
-      // Notify all listeners
-      this.notifyListeners({
-        notifications: this.notifications,
-        unread_count: this.unreadCount,
-        has_new: hasNew
-      });
-    } catch (error) {
-      console.error('[WalletActivity] Fetch error:', error);
+      this.realtimeChannel = channel;
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  async getAllNotifications(userId: string | null, unreadOnly: boolean = false): Promise<{ notifications: any[]; unread_count: number }> {
+  stopRealtimeOnly() {
+    if (this.realtimeChannel) {
+      supabase.removeChannel(this.realtimeChannel);
+      this.realtimeChannel = null;
+    }
+  }
+
+  startSSE() {
+    if (!this.userId || typeof EventSource === 'undefined') return false;
+    try {
+      const source = new EventSource(`${this.apiUrl}/api/wallets/notifications/stream?user_id=${encodeURIComponent(this.userId)}`);
+
+      source.addEventListener('snapshot', (event) => {
+        const payload = JSON.parse(event.data);
+        this.notifications = (payload.notifications || []).map(normalise);
+        this.unreadCount = payload.unread_count || 0;
+        this.notify({ notifications: this.notifications, unread_count: this.unreadCount });
+      });
+
+      source.addEventListener('notification', (event) => {
+        const payload = JSON.parse(event.data);
+        this.onIncoming(normalise(payload.notification), payload.unread_count);
+      });
+
+      source.addEventListener('done', () => {
+        source.close();
+        this.eventSource = null;
+        if (this.userId) {
+          setTimeout(() => {
+            if (this.userId && !this.eventSource) this.startSSE();
+          }, 5000);
+        }
+      });
+
+      source.onerror = () => {
+        source.close();
+        this.eventSource = null;
+        if (!this.isPolling) this.startPolling();
+      };
+
+      this.eventSource = source;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  startPolling() {
+    if (this.isPolling) return;
+    this.isPolling = true;
+    this.pollHandle = setInterval(() => this.fetchAll(), 60000);
+  }
+
+  async fetchAll() {
+    if (!this.userId) return;
+    const data = await this.getAllNotifications(this.userId, false);
+    const hasNew = data.unread_count > this.unreadCount;
+    this.notifications = data.notifications;
+    this.unreadCount = data.unread_count;
+    this.notify({ notifications: this.notifications, unread_count: this.unreadCount, has_new: hasNew });
+  }
+
+  async getAllNotifications(userId, unreadOnly = false) {
     if (userId) this.userId = userId;
     if (!this.userId) return { notifications: [], unread_count: 0 };
 
     try {
       const params = new URLSearchParams({
-        user_id: this.userId,
-        unread_only: unreadOnly ? 'true' : 'false',
-        limit: '50'
+        unread_only: String(unreadOnly),
+        limit: '50',
       });
-
       const headers = await this.getHeaders();
-      const response = await fetch(`${this.apiUrl}/api/wallets/notifications?${params}`, { headers });
-
-      // Handle rate limiting gracefully
+      const response = await fetch(`${this.apiUrl}/api/wallets/notifications?${params.toString()}`, { headers });
       if (response.status === 429) {
-        console.warn('[WalletActivity] Rate limited - will retry on next poll');
         return { notifications: this.notifications, unread_count: this.unreadCount };
       }
-
       const data = await response.json();
-
-      return data.success ? {
-        notifications: data.notifications || [],
-        unread_count: data.unread_count || 0
-      } : { notifications: [], unread_count: 0 };
+      if (!data.success) return { notifications: [], unread_count: 0 };
+      return {
+        notifications: (data.notifications || []).map(normalise),
+        unread_count: data.unread_count || 0,
+      };
     } catch (error) {
       console.error('[WalletActivity] Error fetching notifications:', error);
       return { notifications: [], unread_count: 0 };
     }
   }
 
-  async markAsRead(notificationId: string): Promise<boolean> {
+  onIncoming(notification, unreadCountFromServer) {
+    this.notifications = [notification, ...this.notifications.filter((item) => item.id !== notification.id)];
+    this.unreadCount = unreadCountFromServer ?? this.notifications.filter((item) => !item.is_read).length;
+    this.notify({ notifications: this.notifications, unread_count: this.unreadCount, has_new: true });
+
+    if (notification._isElite15 && notification._tokenAddress) {
+      const signal = {
+        notification,
+        token_address: notification._tokenAddress,
+        side: notification._side || 'buy',
+        usd_value: notification._usdValue || 0,
+        wallet_tier: notification.wallet_tier || 'S',
+      };
+      this.elite15Listeners.forEach((listener) => {
+        try {
+          listener(signal);
+        } catch (error) {
+          console.error('[WalletActivity] Elite15 listener error:', error);
+        }
+      });
+    }
+  }
+
+  async markAsRead(id) {
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ user_id: this.userId, notification_id: notificationId })
+        body: JSON.stringify({ notification_id: id }),
       });
-
       const data = await response.json();
       if (data.success) {
-        await this.fetchNotifications();
+        this.notifications = this.notifications.map((item) => item.id === id ? { ...item, is_read: true } : item);
+        this.unreadCount = this.notifications.filter((item) => !item.is_read).length;
+        this.notify({ notifications: this.notifications, unread_count: this.unreadCount });
       }
       return data.success;
     } catch (error) {
@@ -130,18 +239,19 @@ class WalletActivityService {
     }
   }
 
-  async markAllAsRead(): Promise<boolean> {
+  async markAllAsRead() {
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.apiUrl}/api/wallets/notifications/mark-read`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ user_id: this.userId, mark_all: true })
+        body: JSON.stringify({ mark_all: true }),
       });
-
       const data = await response.json();
       if (data.success) {
-        await this.fetchNotifications();
+        this.notifications = this.notifications.map((item) => ({ ...item, is_read: true }));
+        this.unreadCount = 0;
+        this.notify({ notifications: this.notifications, unread_count: 0 });
       }
       return data.success;
     } catch (error) {
@@ -150,13 +260,18 @@ class WalletActivityService {
     }
   }
 
-  subscribe(callback: ListenerCallback): () => void {
+  subscribe(callback) {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
   }
 
-  notifyListeners(data: NotificationData): void {
-    this.listeners.forEach(listener => {
+  onElite15Signal(callback) {
+    this.elite15Listeners.add(callback);
+    return () => this.elite15Listeners.delete(callback);
+  }
+
+  notify(data) {
+    this.listeners.forEach((listener) => {
       try {
         listener(data);
       } catch (error) {
@@ -165,12 +280,10 @@ class WalletActivityService {
     });
   }
 
-  // Manual refresh method
-  async refresh(): Promise<void> {
-    await this.fetchNotifications();
+  async refresh() {
+    await this.fetchAll();
   }
 }
 
-// Export singleton instance
 export const walletActivityService = new WalletActivityService();
 export default walletActivityService;
