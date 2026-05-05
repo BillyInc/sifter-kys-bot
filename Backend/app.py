@@ -181,16 +181,20 @@ def start_wallet_monitoring():
     try:
         print("\n[WALLET MONITORING] Starting real-time monitoring...")
         from services.wallet_monitor import WalletActivityMonitor
+        from services.paper_trader import PaperTrader
         from config import Config
         from flask import current_app
         telegram_notifier = current_app.config.get('TELEGRAM_NOTIFIER')
+        paper_trader = PaperTrader()
 
         monitor = WalletActivityMonitor(
             solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
             poll_interval=120,
-            telegram_notifier=telegram_notifier
+            telegram_notifier=telegram_notifier,
+            paper_trader=paper_trader,
         )
         current_app.config['WALLET_MONITOR'] = monitor
+        current_app.config['PAPER_TRADER'] = paper_trader
         monitor.start()
         print("  ✅ Wallet monitoring started (polling every 2 minutes)\n")
     except Exception as e:
