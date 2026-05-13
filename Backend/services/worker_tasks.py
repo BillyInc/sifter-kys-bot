@@ -382,6 +382,8 @@ def perform_wallet_analysis(self, data):
     tokens   = data.get('tokens', [])
     user_id  = data.get('user_id', 'default_user')
     job_id   = data.get('job_id')
+    settings = data.get('global_settings') or {}
+    min_roi_multiplier = float(settings.get('min_roi_multiplier', data.get('min_roi_multiplier', 5.0)))
     supabase = get_supabase_client()
     r        = _get_redis()
 
@@ -469,16 +471,16 @@ def perform_wallet_analysis(self, data):
     }).eq('job_id', job_id).execute()
 
     if len(tokens) == 1:
-        _queue_single_token_pipeline(tokens[0], user_id, job_id, supabase)
+        _queue_single_token_pipeline(tokens[0], user_id, job_id, supabase, min_roi_multiplier)
     else:
-        _queue_batch_pipeline(tokens, user_id, job_id, supabase)
+        _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_roi_multiplier=min_roi_multiplier)
 
 
 # =============================================================================
 # PIPELINE QUEUING — top_holders removed, 2 phase-1 workers only
 # =============================================================================
 
-def _queue_single_token_pipeline(token, user_id, job_id, supabase):
+def _queue_single_token_pipeline(token, user_id, job_id, supabase, min_roi_multiplier=5.0):
     print(f"\n[PIPELINE] Queuing single token: {token.get('ticker')}")
 
     # Phase 1: fetch top_traders and first_buyers in parallel, then coordinate
@@ -506,6 +508,7 @@ def _queue_single_token_pipeline(token, user_id, job_id, supabase):
     coord_data = {
         'token': token, 'job_id': job_id,
         'user_id': user_id, 'parent_job_id': None,
+        'min_roi_multiplier': min_roi_multiplier,
         'phase1_jobs': [job1.id, job2.id],
     }
     pnl_coordinator = coordinate_pnl_phase.apply_async(
@@ -526,7 +529,7 @@ def _queue_single_token_pipeline(token, user_id, job_id, supabase):
     print(f"  PnL coord: {pnl_coordinator.id[:8]} (entry prices from PnL first_buy)")
 
 
-def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
+def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2, min_roi_multiplier=5.0):
     print(f"\n[PIPELINE] Queuing batch: {len(tokens)} tokens")
     r = _get_redis()
 
@@ -537,6 +540,7 @@ def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
     r.set(f"batch_tokens:{job_id}",          json.dumps(tokens),      ex=PIPELINE_TTL)
     r.set(f"batch_completed:{job_id}",       0,                       ex=PIPELINE_TTL)
     r.set(f"batch_min_runner_hits:{job_id}", min_runner_hits,         ex=PIPELINE_TTL)
+    r.set(f"batch_min_roi_multiplier:{job_id}", min_roi_multiplier,   ex=PIPELINE_TTL)
     r.set(f"batch_user_id:{job_id}",         user_id,                 ex=PIPELINE_TTL)
 
     for token, sub_job_id in zip(tokens, sub_job_ids):
@@ -571,6 +575,7 @@ def _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=2):
                 args=[{
                     'token': token, 'job_id': sub_job_id,
                     'user_id': user_id, 'parent_job_id': job_id,
+                    'min_roi_multiplier': min_roi_multiplier,
                     'phase1_jobs': [job1.id, job2.id],
                 }],
                 queue=Q_COMPUTE,
@@ -593,6 +598,7 @@ def perform_trending_batch_analysis(self, data):
     runners         = data.get('runners', [])
     user_id         = data.get('user_id', 'default_user')
     min_runner_hits = data.get('min_runner_hits', 2)
+    min_roi_multiplier = float(data.get('min_roi_multiplier', 5.0))
     job_id          = data.get('job_id')
     supabase        = get_supabase_client()
 
@@ -608,7 +614,11 @@ def perform_trending_batch_analysis(self, data):
          'symbol':  r.get('symbol', r.get('ticker', 'UNKNOWN'))}
         for r in runners
     ]
-    _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=min_runner_hits)
+    _queue_batch_pipeline(
+        tokens, user_id, job_id, supabase,
+        min_runner_hits=min_runner_hits,
+        min_roi_multiplier=min_roi_multiplier,
+    )
     print(f"[TRENDING BATCH] Distributed pipeline queued for {len(tokens)} runners")
 
 # =============================================================================
@@ -621,6 +631,7 @@ def perform_auto_discovery(self, data):
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
     user_id         = data.get('user_id', 'default_user')
     min_runner_hits = data.get('min_runner_hits', 2)
+    min_roi_multiplier = float(data.get('min_roi_multiplier', 5.0))
     job_id          = data.get('job_id')
     supabase        = get_supabase_client()
 
@@ -664,7 +675,11 @@ def perform_auto_discovery(self, data):
          'symbol':  r.get('symbol', r.get('ticker', 'UNKNOWN'))}
         for r in selected
     ]
-    _queue_batch_pipeline(tokens, user_id, job_id, supabase, min_runner_hits=min_runner_hits)
+    _queue_batch_pipeline(
+        tokens, user_id, job_id, supabase,
+        min_runner_hits=min_runner_hits,
+        min_roi_multiplier=min_roi_multiplier,
+    )
     print(f"[AUTO DISCOVERY] Distributed pipeline queued for {len(tokens)} runners")
 
 # =============================================================================
@@ -844,6 +859,7 @@ def coordinate_pnl_phase(self, data):
     job_id     = data['job_id']
     user_id    = data.get('user_id', 'default_user')
     parent_job = data.get('parent_job_id')
+    min_roi_multiplier = float(data.get('min_roi_multiplier', 5.0))
     heartbeat  = HeartbeatManager()
     heartbeat.start()
 
@@ -903,7 +919,9 @@ def coordinate_pnl_phase(self, data):
 
             if has_pnl and has_price:
                 if not _qualify_wallet(wallet, wdata['pnl_data'], wallet_data,
-                                       token, pre_qualified, debug=True):
+                                       token, pre_qualified,
+                                       min_roi_mult=min_roi_multiplier,
+                                       debug=True):
                     invested = wdata['pnl_data'].get('total_invested', 0)
                     if invested < 100:
                         pre_qual_failed['low_invested'] += 1
@@ -930,6 +948,7 @@ def coordinate_pnl_phase(self, data):
                     'token': token, 'job_id': job_id,
                     'batch_idx': batch_idx, 'wallets': batch,
                     'wallet_data': {w: wallet_data[w] for w in batch},
+                    'min_roi_multiplier': min_roi_multiplier,
                 }],
                 queue=Q_BATCH,
                 soft_time_limit=dynamic_jt,
@@ -988,6 +1007,7 @@ def fetch_pnl_batch(self, data):
     batch_idx   = data['batch_idx']
     wallets     = data['wallets']
     wallet_data = data['wallet_data']
+    min_roi_multiplier = float(data.get('min_roi_multiplier', 5.0))
 
     heartbeat = HeartbeatManager()
     heartbeat.start()
@@ -1080,7 +1100,8 @@ def fetch_pnl_batch(self, data):
                 wdata['earliest_entry'] = first_buy.get('time')
                 wallet_data[wallet]     = wdata
 
-        if not _qualify_wallet(wallet, pnl, wallet_data, token, qualified, debug=True):
+        if not _qualify_wallet(wallet, pnl, wallet_data, token, qualified,
+                               min_roi_mult=min_roi_multiplier, debug=True):
             invested = pnl.get('total_invested', 0)
             r_mult   = (pnl.get('realized', 0) + invested) / invested if invested > 0 else 0
             t_mult   = (pnl.get('realized', 0) + pnl.get('unrealized', 0) + invested) / invested \

@@ -89,6 +89,20 @@ celery.conf.beat_schedule = {
 
 # Task routes
 celery.conf.task_routes = {
+    'worker.perform_wallet_analysis':          {'queue': 'high'},
+    'worker.perform_trending_batch_analysis':  {'queue': 'batch'},
+    'worker.perform_auto_discovery':           {'queue': 'compute'},
+    'worker.fetch_top_traders':                {'queue': 'high'},
+    'worker.fetch_first_buyers':               {'queue': 'high'},
+    'worker.coordinate_pnl_phase':             {'queue': 'compute'},
+    'worker.fetch_pnl_batch':                  {'queue': 'batch'},
+    'worker.score_and_rank_single':            {'queue': 'compute'},
+    'worker.fetch_from_token_cache':           {'queue': 'compute'},
+    'worker.fetch_runner_history_batch':       {'queue': 'batch'},
+    'worker.merge_and_save_final':             {'queue': 'compute'},
+    'worker.aggregate_cross_token':            {'queue': 'compute'},
+    'worker.merge_batch_final':                {'queue': 'compute'},
+    'worker.warm_cache_runners':               {'queue': 'batch'},
     'tasks.daily_stats_refresh':          {'queue': 'stats'},
     'tasks.weekly_rerank_all':            {'queue': 'stats'},
     'tasks.four_week_degradation_check':  {'queue': 'stats'},
@@ -101,6 +115,11 @@ celery.conf.task_routes = {
     'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
     'tasks.send_paper_trader_daily_digest': {'queue': 'alerts'},
 }
+
+# Import task modules so `celery -A celery_app worker ...` registers both
+# scheduled jobs and on-demand token-analysis pipeline tasks.
+import services.tasks  # noqa: E402,F401
+import services.worker_tasks  # noqa: E402,F401
 
 print("""
 ╔══════════════════════════════════════════════════════════════════╗

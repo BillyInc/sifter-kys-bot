@@ -35,7 +35,7 @@ class ApiClient {
 
   // Convenience methods matching backend endpoints
   async getHealth(): Promise<any> { return this.get('/health'); }
-  async getElite100(): Promise<any> { return this.get('/api/wallets/elite-100'); }
+  async getElite100(): Promise<any> { return this.get('/api/wallets/elite-100?sort_by=score'); }
   async getTrending(timeframe: string = '7d'): Promise<any> { return this.get(`/api/wallets/trending/runners?timeframe=${timeframe}`); }
   async getWatchlist(): Promise<any> { return this.get('/api/wallets/watchlist/table'); }
   async addToWatchlist(walletData: any): Promise<any> { return this.post('/api/wallets/watchlist/add', { wallet: walletData }); }

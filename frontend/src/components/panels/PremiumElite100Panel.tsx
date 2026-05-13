@@ -105,7 +105,7 @@ export default function PremiumElite100Panel({
                     <div className="flex items-center gap-3 mt-1 text-xs">
                       <span className="text-yellow-400 font-bold">{wallet.professional_score} ⭐</span>
                       <span className="text-green-400">+{wallet.roi_30d}% ROI</span>
-                      <span className="text-blue-400">{wallet.runner_hits_30d} runners</span>
+                      <span className="text-blue-400">{wallet.runners_30d ?? wallet.runner_hits_30d ?? 0} runners</span>
                       <span className="text-purple-400">{wallet.win_streak}W streak</span>
                     </div>
                   </div>

@@ -16,6 +16,19 @@ class Elite100Manager:
     def _table(self, name: str):
         """Get table reference with schema"""
         return self.supabase.schema(self.schema).table(name)
+
+    def _normalize_ranked_wallets(self, wallets: List[Dict]) -> List[Dict]:
+        """Backfill rank and legacy field aliases on generated or cached rows."""
+        normalized = []
+        for rank, wallet in enumerate(wallets or [], 1):
+            row = dict(wallet)
+            row['rank'] = row.get('rank') or rank
+            if 'runners_30d' not in row:
+                row['runners_30d'] = row.get('runner_hits_30d', 0) or 0
+            if 'runner_hits_30d' not in row:
+                row['runner_hits_30d'] = row.get('runners_30d', 0) or 0
+            normalized.append(row)
+        return normalized
     
     def generate_elite_100(self, sort_by='score') -> List[Dict]:
         """
@@ -84,9 +97,14 @@ class Elite100Manager:
             else:  # 'score' (default)
                 elite_wallets.sort(key=lambda x: x['composite_score'], reverse=True)
             
-            # Take top 100
+            # Take top 100 and assign stable 1-based ranks for web/mobile clients.
             top_100 = elite_wallets[:100]
+            for rank, wallet in enumerate(top_100, 1):
+                wallet['rank'] = rank
+                wallet['runner_hits_30d'] = wallet.get('runners_30d', 0)
             
+            top_100 = self._normalize_ranked_wallets(top_100)
+
             print(f"[ELITE 100] ✅ Generated {len(top_100)} wallets")
             print(f"[ELITE 100] Top 3:")
             for i, w in enumerate(top_100[:3], 1):
@@ -179,7 +197,7 @@ class Elite100Manager:
                 # Cache valid for 1 hour
                 if datetime.utcnow().replace(tzinfo=generated_at.tzinfo) - generated_at < timedelta(hours=1):
                     print(f"[ELITE 100] Using cached results (age: {(datetime.utcnow().replace(tzinfo=generated_at.tzinfo) - generated_at).seconds // 60} min)")
-                    return cache['wallets']
+                    return self._normalize_ranked_wallets(cache['wallets'])
             
             # Cache miss or expired - regenerate
             print("[ELITE 100] Cache miss or expired - regenerating...")
@@ -247,11 +265,14 @@ class Elite100Manager:
             
             # Take top 100
             top_100 = community_wallets[:100]
-            
+
             # Add rank change (mock for now - would need historical data)
             for i, wallet in enumerate(top_100):
+                wallet['rank'] = i + 1
                 wallet['rank_change'] = 0  # TODO: Compare with previous week's ranking
             
+            top_100 = self._normalize_ranked_wallets(top_100)
+
             print(f"[COMMUNITY TOP 100] ✅ Generated {len(top_100)} wallets")
             print(f"[COMMUNITY TOP 100] Top 3:")
             for i, w in enumerate(top_100[:3], 1):
@@ -300,7 +321,7 @@ class Elite100Manager:
                 # Cache valid for 1 hour
                 if datetime.utcnow().replace(tzinfo=generated_at.tzinfo) - generated_at < timedelta(hours=1):
                     print(f"[COMMUNITY TOP 100] Using cached results")
-                    return cache['wallets']
+                    return self._normalize_ranked_wallets(cache['wallets'])
             
             # Cache miss or expired
             print("[COMMUNITY TOP 100] Cache miss - regenerating...")

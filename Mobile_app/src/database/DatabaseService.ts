@@ -96,23 +96,24 @@ class DatabaseService {
   // ==================== ELITE 15 ====================
   async syncElite15(wallets: any[]): Promise<void> {
     const db = await this.init();
+    const elite15 = (wallets || []).slice(0, 15);
     await db.executeSql('BEGIN TRANSACTION');
     try {
       await db.executeSql('DELETE FROM elite_15');
-      for (const wallet of wallets) {
+      for (const [idx, wallet] of elite15.entries()) {
         await db.executeSql(
           `INSERT INTO elite_15
            (wallet_address, rank, professional_score, tier, roi_30d, runners_30d, win_rate_7d, consistency_score, last_trade_time)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            wallet.wallet_address, wallet.rank, wallet.professional_score,
-            wallet.tier, wallet.roi_30d || 0, wallet.runners_30d || 0,
+            wallet.wallet_address, wallet.rank || idx + 1, wallet.professional_score || 0,
+            wallet.tier || 'C', wallet.roi_30d || 0, wallet.runners_30d || wallet.runner_hits_30d || 0,
             wallet.win_rate_7d || 0, wallet.consistency_score || 0, wallet.last_trade_time
           ]
         );
       }
       await db.executeSql('COMMIT');
-      if (__DEV__) console.log(`✅ Synced ${wallets.length} Elite 15 wallets`);
+      if (__DEV__) console.log(`✅ Synced ${elite15.length} Elite 15 wallets`);
     } catch (error) {
       await db.executeSql('ROLLBACK');
       throw error;

@@ -91,15 +91,27 @@ wallets_bp = Blueprint('wallets', __name__, url_prefix='/api/wallets')
 # =============================================================================
 
 def get_queues():
-    from redis import Redis
-    from rq import Queue
-    redis_url  = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-    redis_conn = Redis.from_url(redis_url)
-    return (
-        Queue('high',    connection=redis_conn),
-        Queue('batch',   connection=redis_conn),
-        Queue('compute', connection=redis_conn),
-    )
+    """Backward-compatible queue names for tests and callers."""
+    return ('high', 'batch', 'compute')
+
+
+def _remember_celery_task(job_id: str, celery_task_id: str) -> None:
+    try:
+        from redis import Redis
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r = Redis.from_url(redis_url, decode_responses=True)
+        r.sadd(f'analysis_job_tasks:{job_id}', celery_task_id)
+        r.expire(f'analysis_job_tasks:{job_id}', 86400)
+    except Exception as e:
+        print(f"[ANALYZE] Failed to record Celery task id for {job_id[:8]}: {e}")
+
+
+def _dispatch_celery(task, payload: dict, queue: str):
+    result = task.apply_async(args=[payload], queue=queue)
+    job_id = payload.get('job_id')
+    if job_id:
+        _remember_celery_task(job_id, result.id)
+    return result
 
 
 def compute_consistency(other_runners: list) -> int:
@@ -140,7 +152,6 @@ def analyze_wallets():
         user_id = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        q_high, q_batch, q_compute = get_queues()
         supabase = get_supabase_client()
         job_id   = str(uuid.uuid4())
 
@@ -155,17 +166,18 @@ def analyze_wallets():
             'token_address':    tokens[0]['address'] if len(tokens) == 1 else None,
         }).execute()
 
+        from services.worker_tasks import perform_wallet_analysis
         if len(tokens) == 1:
-            q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
+            _dispatch_celery(perform_wallet_analysis, {
                 'tokens': tokens, 'user_id': user_id,
                 'global_settings': data.get('global_settings', {}), 'job_id': job_id,
-            })
+            }, 'high')
             print(f"[ANALYZE] Queued single token job {job_id[:8]} to HIGH queue")
         else:
-            q_batch.enqueue('services.worker_tasks.perform_wallet_analysis', {
+            _dispatch_celery(perform_wallet_analysis, {
                 'tokens': tokens, 'user_id': user_id,
                 'global_settings': data.get('global_settings', {}), 'job_id': job_id,
-            })
+            }, 'batch')
             print(f"[ANALYZE] Queued batch job {job_id[:8]} ({len(tokens)} tokens) to BATCH queue")
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
@@ -220,17 +232,15 @@ def cancel_job(job_id):
 
     try:
         from redis import Redis
-        from rq import Queue
-        redis_url  = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-        redis_conn = Redis.from_url(redis_url)
+        from celery_app import celery
 
-        for queue_name in ['high', 'batch', 'compute']:
-            queue = Queue(queue_name, connection=redis_conn)
-            job   = queue.fetch_job(job_id)
-            if job:
-                job.cancel()
-                print(f"[CANCEL] Cancelled job {job_id[:8]} from {queue_name} queue")
-                break
+        redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+        r = Redis.from_url(redis_url, decode_responses=True)
+        task_ids = list(r.smembers(f'analysis_job_tasks:{job_id}'))
+        for task_id in task_ids:
+            celery.control.revoke(task_id, terminate=True)
+        r.delete(f'analysis_job_tasks:{job_id}')
+        print(f"[CANCEL] Revoked {len(task_ids)} Celery task(s) for job {job_id[:8]}")
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         supabase = get_supabase_client()
@@ -563,7 +573,6 @@ def analyze_trending_runner():
         user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        q_high, _, _ = get_queues()
         supabase     = get_supabase_client()
         job_id       = str(uuid.uuid4())
 
@@ -573,10 +582,11 @@ def analyze_trending_runner():
             'tokens_completed': 0, 'token_address': runner['address'],
         }).execute()
 
-        q_high.enqueue('services.worker_tasks.perform_wallet_analysis', {
+        from services.worker_tasks import perform_wallet_analysis
+        _dispatch_celery(perform_wallet_analysis, {
             'tokens': [{'address': runner['address'], 'ticker': runner.get('symbol', 'UNKNOWN'), 'chain': runner.get('chain', 'solana')}],
             'user_id': user_id, 'global_settings': {'min_roi_multiplier': min_roi_multiplier}, 'job_id': job_id,
-        })
+        }, 'high')
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -602,7 +612,6 @@ def analyze_trending_runners_batch():
         user_id            = getattr(request, 'user_id', None) or data.get('user_id', 'default_user')
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        _, q_batch, _ = get_queues()
         supabase      = get_supabase_client()
         job_id        = str(uuid.uuid4())
 
@@ -611,10 +620,11 @@ def analyze_trending_runners_batch():
             'progress': 0, 'phase': 'queued', 'tokens_total': len(runners), 'tokens_completed': 0,
         }).execute()
 
-        q_batch.enqueue('services.worker_tasks.perform_trending_batch_analysis', {
+        from services.worker_tasks import perform_trending_batch_analysis
+        _dispatch_celery(perform_trending_batch_analysis, {
             'runners': runners, 'user_id': user_id,
             'min_runner_hits': min_runner_hits, 'min_roi_multiplier': min_roi_multiplier, 'job_id': job_id,
-        })
+        }, 'batch')
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -640,7 +650,6 @@ def auto_discover_wallets():
         min_roi_multiplier = data.get('min_roi_multiplier', 3.0)
 
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
-        _, _, q_compute = get_queues()
         supabase        = get_supabase_client()
         job_id          = str(uuid.uuid4())
 
@@ -653,13 +662,14 @@ def auto_discover_wallets():
         # user_analysis_history entry as result_type='discovery'.  This is what
         # allows _get_history_cache_discovery() in worker_tasks.py to distinguish
         # a cached discovery run from a cached manual batch analysis.
-        q_compute.enqueue('services.worker_tasks.perform_auto_discovery', {
+        from services.worker_tasks import perform_auto_discovery
+        _dispatch_celery(perform_auto_discovery, {
             'user_id':            user_id,
             'min_runner_hits':    min_runner_hits,
             'min_roi_multiplier': min_roi_multiplier,
             'job_id':             job_id,
             'is_auto_discovery':  True,
-        })
+        }, 'compute')
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'pending'}), 202
 
@@ -1478,6 +1488,7 @@ def get_paper_trading_events():
 # =============================================================================
 
 @wallets_bp.route('/premium-elite-100', methods=['GET', 'OPTIONS'])
+@wallets_bp.route('/elite-100', methods=['GET', 'OPTIONS'])
 @optional_auth
 def get_premium_elite_100():
     if request.method == 'OPTIONS':
@@ -1521,8 +1532,16 @@ def export_elite_100():
         writer.writerow(['Rank', 'Wallet Address', 'Tier', 'Professional Score',
                          'ROI 30d', 'Runners 30d', 'Win Rate 7d', 'Win Streak'])
         for i, w in enumerate(wallets, 1):
-            writer.writerow([i, w['wallet_address'], w['tier'], w['professional_score'],
-                             w['roi_30d'], w['runners_30d'], w['win_rate_7d'], w['win_streak']])
+            writer.writerow([
+                w.get('rank', i),
+                w.get('wallet_address'),
+                w.get('tier'),
+                w.get('professional_score', 0),
+                w.get('roi_30d', 0),
+                w.get('runners_30d', w.get('runner_hits_30d', 0)),
+                w.get('win_rate_7d', 0),
+                w.get('win_streak', 0),
+            ])
         output.seek(0)
 
         return Response(output.getvalue(), mimetype='text/csv',

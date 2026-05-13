@@ -146,6 +146,8 @@ class TestGenerateElite100:
         # Takes best professional_score
         assert result[0]["professional_score"] == 90
         assert result[0]["times_added"] == 2
+        assert result[0]["rank"] == 1
+        assert result[0]["runner_hits_30d"] == result[0]["runners_30d"]
 
     def test_sorts_by_roi(self):
         mgr, mock_sb = self._setup()
@@ -221,6 +223,7 @@ class TestGenerateCommunityTop100:
         # W1 added twice → first
         assert result[0]["wallet_address"] == "W1"
         assert result[0]["times_added"] == 2
+        assert result[0]["rank"] == 1
 
     def test_includes_rank_change(self):
         mgr, mock_sb = self._setup()
