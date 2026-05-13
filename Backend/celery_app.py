@@ -34,6 +34,13 @@ celery.conf.beat_schedule = {
         'options': {'expires': 3600}
     },
 
+    # Paper trader daily operator digest at 8am UTC
+    'paper-trader-daily-digest': {
+        'task': 'tasks.send_paper_trader_daily_digest',
+        'schedule': crontab(hour=8, minute=0),
+        'options': {'expires': 3600}
+    },
+
     # Weekly rerank on Sunday at 4am UTC
     'weekly-rerank': {
         'task': 'tasks.weekly_rerank_all',
@@ -92,6 +99,7 @@ celery.conf.task_routes = {
     'tasks.purge_stale_analysis_cache':   {'queue': 'stats'},
     'tasks.send_telegram_alert_async':    {'queue': 'alerts'},
     'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
+    'tasks.send_paper_trader_daily_digest': {'queue': 'alerts'},
 }
 
 print("""

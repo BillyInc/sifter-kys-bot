@@ -15,7 +15,9 @@ from typing import Dict, List, Optional
 
 import requests
 
+from services.execution_adapters import LiveJupiterExecutionAdapter
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
+from services.paper_trade_runtime import get_paper_trade_runtime, is_operator_chat_id
 
 logger = logging.getLogger(__name__)
 
@@ -295,10 +297,21 @@ class TelegramNotifier:
             )
 
             try:
-                mock_txid = "BOT" + hashlib.sha256(
-                    f"{user_id}{token_address}{side}{usd_amount}".encode()
-                ).hexdigest()[:60]
-                return mock_txid
+                execution = LiveJupiterExecutionAdapter().execute(
+                    user_id=user_id,
+                    token_address=token_address,
+                    side=side,
+                    usd_amount=usd_amount,
+                    wallet_public_key=result.data[0].get("public_key"),
+                )
+                if execution.status == "filled":
+                    return execution.txid
+                logger.warning(
+                    "[BOT TRADE] Live execution rejected at %s: %s",
+                    execution.stage,
+                    execution.reason,
+                )
+                return None
             finally:
                 for i in range(len(private_key_bytes)):
                     private_key_bytes[i] = 0
@@ -402,6 +415,10 @@ class TelegramNotifier:
                 )
             return
 
+        if text in {"/paper_status", "/paper_logs", "/paper_failures", "/paper_start", "/paper_stop", "/paper_test"}:
+            self._handle_operator_command(chat_id, text)
+            return
+
         if text.startswith("/setamount"):
             parts = text.split()
             try:
@@ -448,6 +465,12 @@ class TelegramNotifier:
                 chat_id,
                 "<b>Sifter KYS Bot Commands</b>\n\n"
                 "/settings\n"
+                "/paper_status\n"
+                "/paper_start\n"
+                "/paper_stop\n"
+                "/paper_logs\n"
+                "/paper_failures\n"
+                "/paper_test\n"
                 "/autotrade on|off|status\n"
                 "/setamount 200\n"
                 "/help",
@@ -498,3 +521,88 @@ class TelegramNotifier:
 
     def send_raw_message(self, chat_id: str, text: str, reply_markup: dict = None) -> bool:
         return self.send_message(chat_id, text, reply_markup)
+
+    def _handle_operator_command(self, chat_id: str, command: str):
+        if not is_operator_chat_id(chat_id):
+            self.send_message(chat_id, "<b>Operator access required.</b>")
+            return
+
+        runtime = get_paper_trade_runtime()
+        from services.paper_trader import PaperTrader
+
+        trader = PaperTrader()
+
+        if command == "/paper_start":
+            runtime.start_run(source="telegram")
+            self.send_message(chat_id, "<b>Paper trader started.</b>")
+            return
+
+        if command == "/paper_stop":
+            runtime.stop_run(reason="telegram")
+            self.send_message(chat_id, "<b>Paper trader stopped.</b>")
+            return
+
+        if command == "/paper_test":
+            signal = {
+                "source": "elite15",
+                "side": "buy",
+                "token_address": "So11111111111111111111111111111111111111112",
+                "token_ticker": "TEST",
+                "signal_key": f"telegram-test:{int(datetime.now(timezone.utc).timestamp())}",
+                "wallet_count": 1,
+                "total_usd": 250,
+                "trades": [{"usd_value": 250}],
+                "wallets": [{"wallet": "telegram-operator", "tier": "S"}],
+            }
+            trader.process_signal(signal)
+            self.send_message(chat_id, "<b>Test paper signal submitted.</b>")
+            return
+
+        if command == "/paper_logs":
+            logs = runtime.recent_logs(limit=8)
+            if not logs:
+                self.send_message(chat_id, "<b>Recent logs</b>\n\nNo logs yet.")
+                return
+            lines = ["<b>Recent paper logs</b>", ""]
+            for row in logs:
+                lines.append(
+                    f"{html.escape(str(row.get('severity', 'info')).upper())} "
+                    f"{html.escape(str(row.get('component', 'paper')))}: "
+                    f"{html.escape(str(row.get('message', ''))[:120])}"
+                )
+            self.send_message(chat_id, "\n".join(lines))
+            return
+
+        if command == "/paper_failures":
+            report = trader.get_failure_report()
+            issues = report.get("issues") or []
+            actions = report.get("actions") or []
+            lines = [
+                "<b>Paper trader failure report</b>",
+                "",
+                f"Issues found: <b>{int(report.get('issues_found') or 0)}</b>",
+            ]
+            if issues:
+                lines.append("Issues: " + html.escape(", ".join(issues)))
+            if actions:
+                lines.append("Next: " + html.escape(actions[0]))
+            self.send_message(chat_id, "\n".join(lines))
+            return
+
+        status = runtime.get_status()
+        summary = trader.get_summary()
+        settings = status.get("settings", {})
+        signals = summary.get("signals", {})
+        portfolio = summary.get("portfolio", {})
+        lines = [
+            "<b>Paper trader status</b>",
+            "",
+            f"Runtime: <b>{'ON' if settings.get('paper_trader_enabled') else 'OFF'}</b>",
+            f"Open run: <b>{'yes' if status.get('active_run') else 'no'}</b>",
+            f"Signals seen: <b>{signals.get('seen', 0)}</b>",
+            f"Entries: <b>{signals.get('entered', 0)}</b>",
+            f"Skipped: <b>{signals.get('skipped', 0)}</b>",
+            f"Cash: <b>${float(portfolio.get('available_cash_usd', 0) or 0):,.2f}</b>",
+            f"PnL: <b>${float(portfolio.get('realized_pnl_usd', 0) or 0):,.2f}</b>",
+        ]
+        self.send_message(chat_id, "\n".join(lines))

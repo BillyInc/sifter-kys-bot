@@ -1010,3 +1010,38 @@ def execute_bot_auto_trade(trade_id: int):
         except Exception:
             pass
         return {'status': 'error', 'error': str(e)}
+
+
+@celery.task(name='tasks.send_paper_trader_daily_digest')
+def send_paper_trader_daily_digest():
+    """Send the daily paper trader HTML digest to configured recipients."""
+    try:
+        from services.paper_trade_email import PaperTradeEmailService
+        from services.paper_trade_runtime import get_paper_trade_runtime
+        from services.paper_trader import PaperTrader
+
+        runtime = get_paper_trade_runtime()
+        settings = runtime.get_settings()
+        if not settings.get('email_digest_enabled', True):
+            return {'status': 'skipped', 'reason': 'digest_disabled'}
+
+        trader = PaperTrader()
+        summary = trader.get_summary()
+        failure_report = trader.get_failure_report()
+        logs = runtime.recent_logs(limit=25, severity='critical') + runtime.recent_logs(limit=25, severity='error')
+        sent = PaperTradeEmailService().send_daily_digest(
+            summary=summary,
+            failure_report=failure_report,
+            logs=logs,
+        )
+        runtime.log(
+            severity='info' if sent else 'warning',
+            component='email',
+            event_type='daily_digest',
+            status='sent' if sent else 'skipped',
+            message='Paper trader daily digest sent' if sent else 'Paper trader daily digest skipped',
+            payload={'configured': PaperTradeEmailService().is_configured()},
+        )
+        return {'status': 'sent' if sent else 'skipped'}
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}

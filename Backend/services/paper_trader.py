@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 import requests
 
 from config import Config
+from services.execution_adapters import NormalizedTradeSignal, PaperExecutionAdapter
+from services.paper_trade_runtime import get_paper_trade_runtime
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
 from services.trading_rules import (
     DEFAULT_DAILY_TRADE_LIMIT,
@@ -70,6 +72,8 @@ class PaperTrader:
             "accept": "application/json",
             "x-api-key": Config.SOLANATRACKER_API_KEY,
         }
+        self.runtime = get_paper_trade_runtime()
+        self.execution_adapter = PaperExecutionAdapter()
         self.lock = threading.Lock()
         self.open_positions: Dict[str, PaperPosition] = {}
         self.closed_token_set: set[str] = set()
@@ -123,6 +127,20 @@ class PaperTrader:
 
     def process_signal(self, signal: Dict):
         if signal.get("source") != "elite15" or signal.get("side") != "buy":
+            return
+
+        settings = self.runtime.get_settings()
+        if not settings.get("paper_trader_enabled", False):
+            self.runtime.log(
+                severity="debug",
+                component="paper_trader",
+                event_type="signal_ignored",
+                status="disabled",
+                message="Elite 15 signal ignored because paper trader is stopped",
+                signal_key=signal.get("signal_key"),
+                token_address=signal.get("token_address"),
+                payload={"source": signal.get("source"), "side": signal.get("side")},
+            )
             return
 
         token_address = signal.get("token_address")
@@ -250,8 +268,8 @@ class PaperTrader:
             "summary": summary,
             "failure_report": failure_report,
             "notes": [
-                "Telegram auto-trade execution is still a mock txid path until a real Jupiter/RPC swap executor is wired.",
-                "Paper trading mirrors sizing, duplicate prevention, caps, and TP ladder, but it does not prove private orderflow or signing behavior yet.",
+                "Telegram auto-trade now uses the live execution adapter boundary; signed Jupiter swap submission is still disabled until wallet signing/RPC execution is explicitly enabled.",
+                "Paper trading mirrors sizing, duplicate prevention, caps, TP ladder, and Jupiter-style execution friction, but it does not prove private orderflow or signing behavior yet.",
             ],
         }
 
@@ -294,12 +312,52 @@ class PaperTrader:
         if entry_price <= 0:
             return {"event_type": "skipped", "status": "skipped", "reason": "invalid_price"}
 
-        token_amount = round(sizing.recommended_usd / entry_price, 8)
+        normalized_signal = NormalizedTradeSignal(
+            source=signal.get("source") or "elite15",
+            side=signal.get("side") or "buy",
+            token_address=token_address,
+            token_ticker=signal.get("token_ticker") or snapshot["ticker"] or "UNKNOWN",
+            signal_key=signal.get("signal_key") or token_address,
+            wallet_count=int(signal.get("wallet_count") or 1),
+            total_usd=float(signal.get("total_usd") or 0),
+            qualifying_usd=qualifying_usd,
+            trades=signal.get("trades") or [],
+            wallets=signal.get("wallets") or [],
+        )
+        execution = self.execution_adapter.execute(
+            signal=normalized_signal,
+            requested_usd=sizing.recommended_usd,
+            snapshot=snapshot,
+            settings=self.runtime.get_settings(),
+        )
+        if execution.status != "filled":
+            severity = "warning" if execution.stage in {"quote", "execute"} else "info"
+            self.runtime.log(
+                severity=severity,
+                component="paper_trader",
+                event_type="execution_rejected",
+                status=execution.status,
+                message=execution.message,
+                signal_key=normalized_signal.signal_key,
+                token_address=token_address,
+                payload=execution.to_dict(),
+            )
+            return {
+                "event_type": "skipped",
+                "status": "skipped",
+                "reason": execution.reason,
+                "snapshot": snapshot,
+                "sizing": sizing,
+                "execution": execution.to_dict(),
+            }
+
+        entry_price = float(execution.effective_price_usd or entry_price)
+        token_amount = float(execution.token_amount or 0)
         position = PaperPosition(
             token_address=token_address,
             token_ticker=signal.get("token_ticker") or snapshot["ticker"] or "UNKNOWN",
             entry_price=entry_price,
-            entry_size_usd=sizing.recommended_usd,
+            entry_size_usd=float(execution.executed_usd),
             token_amount=token_amount,
             wallet_count=int(signal.get("wallet_count") or 1),
             signal_type=sizing.signal_type,
@@ -312,6 +370,7 @@ class PaperTrader:
             "reason": "entered",
             "snapshot": snapshot,
             "sizing": sizing,
+            "execution": execution.to_dict(),
             "position": position,
         }
 
@@ -406,6 +465,7 @@ class PaperTrader:
                     "signal": signal,
                     "snapshot": outcome.get("snapshot"),
                     "recommended_usd": outcome["sizing"].recommended_usd,
+                    "execution": outcome.get("execution"),
                 },
                 "opened_at": _utc_now_iso(),
                 "last_checked_at": _utc_now_iso(),
@@ -415,6 +475,17 @@ class PaperTrader:
             }
         ).execute()
         self._log_entry_event(position, signal, outcome)
+        self.runtime.log(
+            severity="info",
+            component="paper_trader",
+            event_type="entry_filled",
+            status="filled",
+            message="Paper entry filled",
+            signal_key=position.signal_key,
+            token_address=position.token_address,
+            payload=outcome.get("execution") or {},
+        )
+        self.runtime.update_active_run_summary(self.get_summary())
 
     def _take_profit(self, position: PaperPosition, current_price: float, multiple: float, target: float):
         sell_fraction = EXIT_FRACTIONS[target]
@@ -531,6 +602,7 @@ class PaperTrader:
                     "signal": signal,
                     "snapshot": outcome.get("snapshot"),
                     "token_amount": position.token_amount,
+                    "execution": outcome.get("execution"),
                 },
             }
         ).execute()

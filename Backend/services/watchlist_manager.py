@@ -78,6 +78,46 @@ class WatchlistLeagueManager:
         return self.supabase.schema(self.schema).table(name)
 
 
+    def get_premier_league_table(self, user_id: str) -> Dict:
+        """
+        Return the current watchlist in the same ranking model used by weekly rerank.
+
+        This is intentionally read-oriented: it ranks the stored metrics without
+        refreshing wallet activity on every page load. Use rerank_user_watchlist()
+        for the expensive refresh + persist cycle.
+        """
+        watchlist = self._get_watchlist(user_id)
+        if not watchlist:
+            return {'wallets': [], 'promotion_queue': [], 'stats': {}}
+
+        old_positions = {w['wallet_address']: w.get('position', 999) for w in watchlist}
+        ranked = self._calculate_league_positions(watchlist)
+        ranked = self._update_position_movements(ranked, old_positions)
+
+        for wallet in ranked:
+            if not wallet.get('form'):
+                wallet['form'] = self._calculate_form(wallet['wallet_address'])
+            self._detect_degradation(wallet)
+
+        promotion_queue = []
+        if any(w.get('status') == 'critical' for w in ranked):
+            promotion_queue = self._generate_promotion_queue(user_id, ranked)
+
+        avg_roi = (
+            sum(float(w.get('roi_30d') or 0) for w in ranked) / len(ranked)
+            if ranked else 0
+        )
+        return {
+            'wallets': ranked,
+            'promotion_queue': promotion_queue,
+            'stats': {
+                'avg_watchlist_roi': round(avg_roi, 2),
+                'platform_avg_roi': 234,
+                'performance_vs_platform': round(avg_roi - 234, 2),
+            },
+        }
+
+
     def rerank_user_watchlist(self, user_id: str):
         """
         Recalculate positions for ONE user's watchlist.
@@ -175,7 +215,6 @@ class WatchlistLeagueManager:
                 mult = trade.get('price_multiplier')
                 if mult is not None:
                     by_token[token]['entry_multipliers'].append(float(mult))
-                    entry_price_multipliers.append(float(mult))
             else:
                 by_token[token]['sells'].append(price)
 
@@ -188,6 +227,8 @@ class WatchlistLeagueManager:
 
             if invested < MIN_SPEND_USD:
                 continue
+
+            entry_price_multipliers.extend(data['entry_multipliers'])
 
             if data['buys'] and data['ath_price'] > 0:
                 avg_entry = sum(data['buys']) / len(data['buys'])
@@ -232,7 +273,7 @@ class WatchlistLeagueManager:
                 else:
                     token_real[tok] += usd
                 # track most recent price seen regardless of side
-                if price > 0:
+                if price > 0 and tok not in token_latest_price:
                     token_latest_price[tok] = price   # trades ordered desc, first = latest
 
             total_inv  = 0.0
@@ -284,7 +325,7 @@ class WatchlistLeagueManager:
                 token_inv_30d[tok] += usd
             else:
                 token_real_30d[tok] += usd
-            if price > 0:
+            if price > 0 and tok not in token_latest_price_30d:
                 token_latest_price_30d[tok] = price
 
         total_inv_30d  = 0.0
@@ -826,7 +867,7 @@ class WatchlistLeagueManager:
                 token_inv[tok] += usd
             else:
                 token_real[tok] += usd
-            if price > 0:
+            if price > 0 and tok not in token_latest_price:
                 token_latest_price[tok] = price
 
         total_inv  = 0.0

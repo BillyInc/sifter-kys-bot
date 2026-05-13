@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Send, Check, X, RefreshCw, Bell, BellOff, ExternalLink } from 'lucide-react';
+import { Send, Check, X, RefreshCw, Bell, BellOff, ExternalLink, Play, Square, Activity, AlertTriangle } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 export default function TelegramSettings({ userId, apiUrl }) {
@@ -9,6 +9,8 @@ export default function TelegramSettings({ userId, apiUrl }) {
   const [isLoading, setIsLoading] = useState(false);
   const [alertsEnabled, setAlertsEnabled] = useState(true);
   const [error, setError] = useState(null);
+  const [operatorStatus, setOperatorStatus] = useState(null);
+  const [operatorLoading, setOperatorLoading] = useState(false);
 
   // Helper for Auth
   async function getHeaders() {
@@ -20,7 +22,10 @@ export default function TelegramSettings({ userId, apiUrl }) {
   }
 
   useEffect(() => {
-    if (userId) checkTelegramStatus();
+    if (userId) {
+      checkTelegramStatus();
+      loadOperatorStatus();
+    }
   }, [userId]);
 
   const checkTelegramStatus = async () => {
@@ -125,6 +130,45 @@ export default function TelegramSettings({ userId, apiUrl }) {
       toast.error('Failed to disconnect');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadOperatorStatus = async () => {
+    try {
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/telegram/operator/status`, { headers });
+      if (response.status === 403 || response.status === 401) {
+        setOperatorStatus(null);
+        return;
+      }
+      const data = await response.json();
+      if (data.success) {
+        setOperatorStatus(data);
+      }
+    } catch (error) {
+      console.error('Operator status error:', error);
+    }
+  };
+
+  const runOperatorAction = async (path, method = 'POST', body = {}) => {
+    setOperatorLoading(true);
+    try {
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      toast.success('Operator action completed');
+      await loadOperatorStatus();
+    } catch (error) {
+      toast.error(error.message || 'Operator action failed');
+    } finally {
+      setOperatorLoading(false);
     }
   };
 
@@ -264,6 +308,99 @@ export default function TelegramSettings({ userId, apiUrl }) {
           </div>
         )}
       </div>
+
+      {operatorStatus && (
+        <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold flex items-center gap-2">
+                <Activity size={18} className="text-purple-400" />
+                Paper Trader Ops
+              </h4>
+              <p className="text-xs text-gray-400 mt-1">Runtime controls and critical execution health</p>
+            </div>
+            <button
+              onClick={loadOperatorStatus}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
+              title="Refresh"
+            >
+              <RefreshCw size={16} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div className="bg-black/20 rounded-lg p-3">
+              <div className="text-xs text-gray-400">Runtime</div>
+              <div className={operatorStatus.status?.settings?.paper_trader_enabled ? 'text-green-400 font-bold' : 'text-gray-300 font-bold'}>
+                {operatorStatus.status?.settings?.paper_trader_enabled ? 'ON' : 'OFF'}
+              </div>
+            </div>
+            <div className="bg-black/20 rounded-lg p-3">
+              <div className="text-xs text-gray-400">Entries</div>
+              <div className="font-bold">{operatorStatus.summary?.signals?.entered || 0}</div>
+            </div>
+            <div className="bg-black/20 rounded-lg p-3">
+              <div className="text-xs text-gray-400">Skipped</div>
+              <div className="font-bold">{operatorStatus.summary?.signals?.skipped || 0}</div>
+            </div>
+            <div className="bg-black/20 rounded-lg p-3">
+              <div className="text-xs text-gray-400">Critical Logs</div>
+              <div className={operatorStatus.status?.critical_count ? 'text-red-400 font-bold' : 'font-bold'}>
+                {operatorStatus.status?.critical_count || 0}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => runOperatorAction('/api/telegram/operator/paper-trader/start')}
+              disabled={operatorLoading}
+              className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg text-sm font-semibold flex items-center gap-2"
+            >
+              <Play size={16} /> Start
+            </button>
+            <button
+              onClick={() => runOperatorAction('/api/telegram/operator/paper-trader/stop')}
+              disabled={operatorLoading}
+              className="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg text-sm font-semibold flex items-center gap-2"
+            >
+              <Square size={16} /> Stop
+            </button>
+            <button
+              onClick={() => runOperatorAction('/api/telegram/operator/paper-trader/test-signal')}
+              disabled={operatorLoading}
+              className="px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm font-semibold flex items-center gap-2"
+            >
+              <Activity size={16} /> Test Signal
+            </button>
+          </div>
+
+          {operatorStatus.failure_report?.issues?.length > 0 && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-red-300 text-sm font-semibold mb-2">
+                <AlertTriangle size={16} />
+                Failure Report
+              </div>
+              <div className="text-xs text-gray-300">
+                {operatorStatus.failure_report.issues.join(', ')}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <h5 className="text-sm font-semibold">Recent Logs</h5>
+            {(operatorStatus.status?.recent_logs || []).slice(0, 5).map((row) => (
+              <div key={row.id || `${row.created_at}-${row.message}`} className="flex items-start justify-between gap-3 rounded-lg bg-black/20 p-3 text-xs">
+                <span className="text-gray-400 uppercase">{row.severity || 'info'}</span>
+                <span className="flex-1 text-gray-200">{row.message || row.event_type}</span>
+              </div>
+            ))}
+            {(operatorStatus.status?.recent_logs || []).length === 0 && (
+              <div className="text-xs text-gray-500">No paper trader logs yet.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
