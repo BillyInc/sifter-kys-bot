@@ -1,6 +1,9 @@
 """Wallet analysis routes - CORRECTLY FIXED for TOKEN OVERLAP ranking."""
+import logging
 from flask import Blueprint, request, jsonify, Response
 import json
+
+logger = logging.getLogger(__name__)
 
 from config import Config
 from auth import require_auth, optional_auth
