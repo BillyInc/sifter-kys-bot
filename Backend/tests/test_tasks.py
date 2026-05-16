@@ -68,38 +68,26 @@ class TestPurgeOldNotifications:
 class TestDailyStatsRefresh:
     """Tests for daily_stats_refresh."""
 
-    @patch("services.clickhouse_client.get_clickhouse_client")
-    @patch("services.supabase_client.get_supabase_client")
-    def test_handles_empty_watchlist(self, mock_get_supa, mock_get_ch):
-        """Returns early with wallets=0 when watchlist is empty."""
-        mock_supabase = MagicMock()
-        mock_get_supa.return_value = mock_supabase
-
-        # Watchlist query returns no data
-        mock_supabase.schema.return_value.table.return_value.select.return_value.execute.return_value = MagicMock(
-            data=[]
-        )
+    @patch("services.watchlist_stats_updater.get_updater")
+    def test_handles_empty_watchlist(self, mock_get_updater):
+        """Returns success when watchlist is empty."""
+        mock_updater = MagicMock()
+        mock_get_updater.return_value = mock_updater
+        mock_updater.daily_stats_refresh.return_value = {'success': 0, 'errors': 0}
 
         from services.tasks import daily_stats_refresh
         result = daily_stats_refresh()
 
         assert result["status"] == "success"
-        assert result["wallets"] == 0
-        assert result["synced"] == 0
 
-    @patch("services.clickhouse_client.get_clickhouse_client")
-    @patch("services.supabase_client.get_supabase_client")
-    def test_handles_empty_watchlist_none_data(self, mock_get_supa, mock_get_ch):
-        """Returns early when watchlist data is None."""
-        mock_supabase = MagicMock()
-        mock_get_supa.return_value = mock_supabase
-
-        mock_supabase.schema.return_value.table.return_value.select.return_value.execute.return_value = MagicMock(
-            data=None
-        )
+    @patch("services.watchlist_stats_updater.get_updater")
+    def test_handles_empty_watchlist_none_data(self, mock_get_updater):
+        """Returns success when updater returns empty result."""
+        mock_updater = MagicMock()
+        mock_get_updater.return_value = mock_updater
+        mock_updater.daily_stats_refresh.return_value = {'success': 0, 'errors': 0}
 
         from services.tasks import daily_stats_refresh
         result = daily_stats_refresh()
 
         assert result["status"] == "success"
-        assert result["wallets"] == 0

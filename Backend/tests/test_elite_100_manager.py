@@ -253,15 +253,16 @@ class TestGetCachedElite100:
             mgr = Elite100Manager()
         return mgr, mock_supabase
 
-    def test_returns_cache_when_fresh(self):
+    @patch("services.elite_100_manager.Elite100Manager._get_elite_from_clickhouse")
+    @patch("services.elite_100_manager.Elite100Manager._get_elite_from_redis")
+    def test_returns_cache_when_fresh(self, mock_redis, mock_ch):
+        """Redis cache returns data — should be used directly."""
         mgr, mock_sb = self._setup()
-        table_mock = mock_sb.schema.return_value.table.return_value
 
-        recent = (datetime.utcnow() - timedelta(minutes=30)).isoformat()
-        table_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
-            {"wallets": [{"wallet_address": "cached_W1"}], "generated_at": recent}
-        ]
+        mock_redis.return_value = [{"wallet_address": "cached_W1", "rank": 1}]
+        mock_ch.return_value = []
 
         result = mgr.get_cached_elite_100()
         assert len(result) == 1
         assert result[0]["wallet_address"] == "cached_W1"
+        mock_ch.assert_not_called()  # Should not fall through to ClickHouse
