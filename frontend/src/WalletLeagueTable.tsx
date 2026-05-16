@@ -171,8 +171,8 @@ export default function WalletLeagueTable({
             onClick={() => toggleExpand(walletAddr)}
           >
             <div className="flex items-center gap-2">
-              <code style={{ color: 'var(--text-secondary)' }} className="text-sm font-mono">
-                {walletAddr?.slice(0, 6)}...
+              <code style={{ color: 'var(--text-secondary)' }} className="text-sm font-mono cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(walletAddr || ''); }} title={walletAddr || ''}>
+                {walletAddr}
               </code>
               <button
                 onClick={(e) => {
@@ -621,8 +621,8 @@ export default function WalletLeagueTable({
               >
                 <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs text-gray-500">#{idx + 1}</span>
-                  <code className="text-sm font-mono text-purple-300">
-                    {(candidate.wallet || candidate.wallet_address)?.slice(0, 12)}...
+                  <code className="text-sm font-mono text-purple-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText((candidate.wallet || candidate.wallet_address) || ''); }} title={(candidate.wallet || candidate.wallet_address) || ''}>
+                    {candidate.wallet || candidate.wallet_address}
                   </code>
                   <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                     candidate.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400' :

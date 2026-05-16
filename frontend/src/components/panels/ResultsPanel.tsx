@@ -130,8 +130,8 @@ const PerTokenTable = ({ roiDetails, copyToClipboard, copiedRunnerAddress }: Per
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 {row.runner_address && (
                   <>
-                    <span style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81' }}>
-                      {row.runner_address.slice(0, 4)}…{row.runner_address.slice(-4)}
+                    <span style={{ fontFamily: 'monospace', fontSize: 8, color: '#5d6a81', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120, display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(row.runner_address); toast.success('Copied!'); }} title={row.runner_address}>
+                      {row.runner_address}
                     </span>
                     <button
                       onClick={(e) => { e.stopPropagation(); copyToClipboard(row.runner_address, 'runner'); }}
@@ -781,8 +781,8 @@ export default function ResultsPanel({ data, onClose, onAddToWatchlist, onSimula
                               <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                                 {r.address && (
                                   <>
-                                    <span style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81' }}>
-                                      {r.address.slice(0, 4)}…{r.address.slice(-4)}
+                                    <span style={{ fontFamily: 'monospace', fontSize: 7, color: '#5d6a81', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120, display: 'inline-block', verticalAlign: 'bottom', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(r.address); toast.success('Copied!'); }} title={r.address}>
+                                      {r.address}
                                     </span>
                                     <button onClick={(e) => { e.stopPropagation(); copyToClipboard(r.address, 'runner'); }} style={{ background: 'none', border: 'none', padding: 2, color: copiedRunnerAddress === r.address ? '#22c55e' : '#7c879c', cursor: 'pointer' }}>
                                       <Copy size={9} />

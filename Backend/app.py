@@ -29,6 +29,7 @@ from routes import diary_bp # ✅ NEW
 from routes import simulator_bp
 from routes import abm_state_bp
 from routes import kill_switch_bp
+from routes.helius_webhook import helius_bp
 
 
 telegram_polling_started = False
@@ -157,6 +158,7 @@ def create_app() -> Flask:
     app.register_blueprint(simulator_bp)
     app.register_blueprint(abm_state_bp)
     app.register_blueprint(kill_switch_bp)
+    app.register_blueprint(helius_bp)
 
     redis_conn = Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
     app.config['REDIS_CONN'] = redis_conn  # Keep for other Redis uses
@@ -211,14 +213,14 @@ def start_wallet_monitoring():
 
         monitor = WalletActivityMonitor(
             solanatracker_api_key=Config.SOLANATRACKER_API_KEY,
-            poll_interval=120,
+            poll_interval=21600,
             telegram_notifier=telegram_notifier,
             paper_trader=paper_trader,
         )
         current_app.config['WALLET_MONITOR'] = monitor
         current_app.config['PAPER_TRADER'] = paper_trader
         monitor.start()
-        print("  ✅ Wallet monitoring started (polling every 2 minutes)\n")
+        print("  ✅ Wallet monitoring started (6-hour fallback poll — Helius webhook is primary)\n")
     except Exception as e:
         print(f"  ⚠️ Monitoring start failed: {e}\n")
         import traceback

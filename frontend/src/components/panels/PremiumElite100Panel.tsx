@@ -101,7 +101,7 @@ export default function PremiumElite100Panel({
                     {idx < 3 ? ['🥇', '🥈', '🥉'][idx] : `#${idx + 1}`}
                   </div>
                   <div className="flex-1">
-                    <code className="text-sm font-mono text-gray-300">{wallet.wallet_address?.slice(0, 16)}...</code>
+                    <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(wallet.wallet_address || ''); }} title={wallet.wallet_address || ''}>{wallet.wallet_address}</code>
                     <div className="flex items-center gap-3 mt-1 text-xs">
                       <span className="text-yellow-400 font-bold">{wallet.professional_score} ⭐</span>
                       <span className="text-green-400">+{wallet.roi_30d}% ROI</span>

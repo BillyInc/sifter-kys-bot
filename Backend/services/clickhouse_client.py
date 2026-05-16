@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _tracer = get_tracer("clickhouse")
 
 _client = None
-CH_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'kys')
+CH_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'sifter-kys')
 
 
 def get_clickhouse_client():

@@ -12,6 +12,7 @@ Tasks:
   flush_redis_to_duckdb        — every hour (:30)
   invalidate_stale_ath_caches  — every hour (:45)  NEW
   purge_stale_analysis_cache   — one-time / on-demand  NEW
+  sync_elite_15_to_monitor     — every hour (:05)
   send_telegram_alert_async    — on-demand (queued by wallet monitor)
 """
 from celery_app import celery
@@ -1045,3 +1046,199 @@ def send_paper_trader_daily_digest():
         return {'status': 'sent' if sent else 'skipped'}
     except Exception as e:
         return {'status': 'error', 'error': str(e)}
+
+
+# =============================================================================
+# NOTIFICATION TTL — PURGE OLD NOTIFICATIONS
+# =============================================================================
+
+@celery.task(name='tasks.purge_old_notifications')
+def purge_old_notifications():
+    """Delete notifications older than 30 days."""
+    print(f"[CELERY TASK] Purging old notifications - {datetime.utcnow().isoformat()}")
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from datetime import timedelta
+        supabase = get_supabase_client()
+        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        result = supabase.schema(SCHEMA_NAME).table('wallet_notifications').delete().lt('sent_at', cutoff).execute()
+        count = len(result.data) if result.data else 0
+        print(f"[PURGE] Deleted {count} notifications older than 30 days")
+        return {'status': 'success', 'deleted': count}
+    except Exception as e:
+        print(f"[PURGE] Failed: {e}")
+        return {'status': 'error', 'error': str(e)}
+
+
+# =============================================================================
+# ELITE 15 MONITOR SYNC
+# =============================================================================
+
+ELITE_SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001'
+
+
+@celery.task(name='tasks.sync_elite_15_to_monitor')
+def sync_elite_15_to_monitor():
+    """
+    Sync top 15 Elite wallets into wallet_watchlist with alerts enabled.
+    Runs every hour at :05 (after Elite 100 refresh at :00).
+    The wallet monitor will then poll these wallets and fire notifications.
+    """
+    print(f"\n{'='*80}")
+    print(f"[CELERY TASK] Elite 15 Monitor Sync - {datetime.utcnow().isoformat()}")
+    print(f"{'='*80}\n")
+
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.elite_100_manager import get_elite_manager
+
+        supabase = get_supabase_client()
+        manager = get_elite_manager()
+
+        # 1. Get current Elite 100, take top 15
+        elite_100 = manager.get_cached_elite_100('score')
+        if not elite_100:
+            print("[ELITE SYNC] No Elite 100 data — regenerating...")
+            elite_100 = manager.generate_elite_100('score')
+
+        elite_15 = elite_100[:15]
+        elite_15_addresses = {w.get('wallet_address') for w in elite_15 if w.get('wallet_address')}
+        print(f"[ELITE SYNC] Current Elite 15: {len(elite_15_addresses)} wallets")
+
+        # 2. Get existing system-user watchlist entries
+        existing_resp = (
+            supabase.schema(SCHEMA_NAME)
+            .table('wallet_watchlist')
+            .select('wallet_address')
+            .eq('user_id', ELITE_SYSTEM_USER_ID)
+            .execute()
+        )
+        existing_addresses = {row['wallet_address'] for row in existing_resp.data} if existing_resp.data else set()
+
+        # 3. Add new Elite 15 wallets
+        to_add = elite_15_addresses - existing_addresses
+        added = 0
+        for addr in to_add:
+            wallet_data = next((w for w in elite_15 if w.get('wallet_address') == addr), {})
+            try:
+                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').insert({
+                    'user_id': ELITE_SYSTEM_USER_ID,
+                    'wallet_address': addr,
+                    'alert_enabled': True,
+                    'tier': wallet_data.get('tier', ''),
+                    'professional_score': float(wallet_data.get('professional_score', 0)),
+                    'added_at': datetime.utcnow().isoformat(),
+                }).execute()
+                added += 1
+            except Exception as e:
+                print(f"[ELITE SYNC] Error adding {addr[:12]}...: {e}")
+
+        # 4. Remove wallets that dropped out of Elite 15
+        to_remove = existing_addresses - elite_15_addresses
+        removed = 0
+        for addr in to_remove:
+            try:
+                supabase.schema(SCHEMA_NAME).table('wallet_watchlist').delete().eq(
+                    'user_id', ELITE_SYSTEM_USER_ID
+                ).eq('wallet_address', addr).execute()
+                removed += 1
+            except Exception as e:
+                print(f"[ELITE SYNC] Error removing {addr[:12]}...: {e}")
+
+        print(f"\n[ELITE SYNC] Complete")
+        print(f"  Elite 15 wallets:  {len(elite_15_addresses)}")
+        print(f"  Already monitored: {len(existing_addresses & elite_15_addresses)}")
+        print(f"  Added:             {added}")
+        print(f"  Removed:           {removed}")
+
+        return {
+            'status': 'success',
+            'elite_15': len(elite_15_addresses),
+            'added': added,
+            'removed': removed,
+            'timestamp': datetime.utcnow().isoformat(),
+        }
+
+    except Exception as e:
+        print(f"\n[ELITE SYNC] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'status': 'error', 'error': str(e)}
+
+
+# =============================================================================
+# DAILY EMAIL SUMMARIES
+# =============================================================================
+
+@celery.task(name='tasks.send_daily_email_summaries')
+def send_daily_email_summaries():
+    """Send daily paper trading + Elite summary emails at 8am UTC."""
+    print(f"\n[CELERY TASK] Daily Email Summaries - {datetime.utcnow().isoformat()}")
+
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.email_service import get_email_service
+
+        supabase = get_supabase_client()
+        email_svc = get_email_service()
+
+        # Get users with email alerts enabled
+        result = (
+            supabase.schema(SCHEMA_NAME)
+            .table('user_settings')
+            .select('user_id, email')
+            .eq('email_alerts', True)
+            .execute()
+        )
+        users = result.data if result.data else []
+        print(f"[EMAIL] Found {len(users)} users with email alerts enabled")
+
+        sent = 0
+        errors = 0
+        for user in users:
+            email = user.get('email')
+            user_id = user.get('user_id')
+            if not email or not user_id:
+                continue
+            try:
+                email_svc.send_daily_summary(user_id, email)
+                sent += 1
+            except Exception as e:
+                errors += 1
+                print(f"[EMAIL] Error sending to {email}: {e}")
+
+        print(f"[EMAIL] Sent {sent} daily summaries, {errors} errors")
+        return {'status': 'success', 'sent': sent, 'errors': errors}
+
+    except Exception as e:
+        print(f"[EMAIL] Daily summary task failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'status': 'error', 'error': str(e)}
+
+
+# =============================================================================
+# PAPER TRADER EXIT CHECKER — runs every 2 minutes independently
+# =============================================================================
+
+@celery.task(name='tasks.check_paper_trader_exits')
+def check_paper_trader_exits():
+    """
+    Check all open paper trade positions for take-profit and stop-loss exits.
+
+    Runs every 2 minutes on its own Celery beat schedule, completely independent
+    of the wallet monitor polling interval. This ensures open positions are
+    evaluated frequently even when the wallet monitor is running slowly.
+
+    Take-profit tiers: 5x (sell 25%), 10x (sell 33%), 20x (sell 50%), 30x (sell 100%)
+    Stop-loss: closes position if price drops to 0.30x of entry (dead token)
+    Max age: closes position after 14 days regardless of price
+    """
+    try:
+        from services.paper_trading_manager import get_paper_trading_manager
+        ptm = get_paper_trading_manager()
+        result = ptm.check_exits()
+        return {"status": "ok", **result}
+    except Exception as exc:
+        print(f"[EXIT CHECKER] Failed: {exc}")
+        return {"status": "error", "error": str(exc)}

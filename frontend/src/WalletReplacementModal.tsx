@@ -102,8 +102,8 @@ export default function WalletReplacementModal({
               <div>
                 <div className="text-xs text-gray-400 mb-1">Address</div>
                 <div className="flex items-center gap-2">
-                  <code className="text-sm font-mono text-gray-300">
-                    {currentWallet?.wallet_address?.slice(0, 12)}...
+                  <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(currentWallet?.wallet_address || ''); toast.success('Copied!'); }} title={currentWallet?.wallet_address || ''}>
+                    {currentWallet?.wallet_address}
                   </code>
                   <button
                     onClick={() => handleCopy(currentWallet?.wallet_address, 'current')}
@@ -196,8 +196,8 @@ export default function WalletReplacementModal({
                           
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <code className="text-sm font-mono text-gray-300">
-                                {suggestion.wallet?.slice(0, 16)}...
+                              <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(suggestion.wallet || ''); toast.success('Copied!'); }} title={suggestion.wallet || ''}>
+                                {suggestion.wallet}
                               </code>
                               {idx === 0 && (
                                 <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold">

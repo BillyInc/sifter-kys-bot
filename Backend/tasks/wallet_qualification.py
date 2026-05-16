@@ -309,24 +309,25 @@ def _compute_outcome(
 ) -> tuple[str, int]:
     """Determine outcome and qualifies flag for second-pass.
 
-    Win:  wallet >5x AND token >30x launch-to-ATH
-    Draw: wallet exactly 5x OR token exactly 30x
-    Loss: wallet <5x OR token <30x OR spend <$75
+    Win:  wallet >5x realized ROI AND spend >= $75
+    Draw: wallet within 0.5x of the 5x threshold
+    Loss: everything else
+
+    Note: token_ath_mult is accepted for interface compatibility but no longer
+    used as a hard gate — SolanaTracker rarely provides launch prices, so
+    requiring token >30x ATH caused 100% of rows to be marked as losses.
     """
-    wallet_wins = realized_mult > WIN_WALLET_MULT
-    token_wins = token_ath_mult > WIN_TOKEN_MULT
-
-    wallet_exact = abs(realized_mult - WIN_WALLET_MULT) < 0.01
-    token_exact = abs(token_ath_mult - WIN_TOKEN_MULT) < 0.5
-
     if total_invested < SECOND_PASS_MIN_SPEND:
         return "loss", 0
 
-    if wallet_exact or token_exact:
-        return "draw", 0
+    wallet_wins = realized_mult > WIN_WALLET_MULT  # >5x
 
-    if wallet_wins and token_wins:
+    if wallet_wins:
         return "win", 1
+
+    wallet_near = abs(realized_mult - WIN_WALLET_MULT) < 0.5
+    if wallet_near:
+        return "draw", 0
 
     return "loss", 0
 
@@ -589,3 +590,93 @@ def second_pass_patch(self, token_address: str, token_data: dict | None = None):
     except Exception as exc:
         logger.exception("second_pass_patch FAILED token=%s", token_address[:12])
         raise self.retry(exc=exc)
+
+
+# ===================================================================
+# One-time requalification task
+# ===================================================================
+
+@celery.task(name='tasks.requalify_existing_data', bind=True, max_retries=0,
+             time_limit=7200, soft_time_limit=6600)
+def requalify_existing_data(self, batch_size=5000):
+    """Re-insert all wallet_token_stats with corrected qualifies/outcome.
+
+    Triggered on-demand:
+        celery -A celery_app call tasks.requalify_existing_data
+    """
+    from services.clickhouse_client import get_clickhouse_client, CH_DATABASE
+
+    ch = get_clickhouse_client()
+    if ch is None:
+        return {"status": "error", "error": "ClickHouse unavailable"}
+
+    count_result = ch.query("SELECT count() FROM wallet_token_stats FINAL")
+    total_rows = count_result.first_row[0]
+    logger.info("[REQUALIFY] Total rows: %d", total_rows)
+
+    columns = [
+        'wallet_address', 'token_address', 'scan_id',
+        'first_entry_price', 'first_entry_usd', 'first_entry_timestamp',
+        'entry_price_to_launch_mult', 'avg_entry_price', 'avg_entry_to_ath_mult',
+        'all_buys', 'all_sells', 'buy_count', 'sell_count',
+        'total_spent_usd', 'realized_pnl_usd', 'unrealized_pnl_usd',
+        'total_pnl_usd', 'realized_roi_mult', 'total_roi_mult',
+        'qualifies', 'outcome', 'disqualify_reason', 'wallet_source',
+    ]
+
+    stats = {'wins': 0, 'draws': 0, 'losses': 0, 'total': 0, 'changed': 0}
+    offset = 0
+
+    while offset < total_rows:
+        result = ch.query(
+            f"SELECT {', '.join(columns)} FROM wallet_token_stats FINAL "
+            f"ORDER BY wallet_address, token_address LIMIT {batch_size} OFFSET {offset}"
+        )
+        rows = list(result.named_results())
+        if not rows:
+            break
+
+        insert_data = []
+        insert_columns = columns + ['updated_at']
+
+        for row in rows:
+            new_outcome, new_qualifies = _compute_outcome(
+                row['realized_roi_mult'], 0.0, row['total_spent_usd']
+            )
+
+            disqualify_reason = row['disqualify_reason']
+            if new_qualifies == 1:
+                disqualify_reason = ''
+
+            stats['total'] += 1
+            if new_outcome == 'win':
+                stats['wins'] += 1
+            elif new_outcome == 'draw':
+                stats['draws'] += 1
+            else:
+                stats['losses'] += 1
+            if new_outcome != row['outcome'] or new_qualifies != row['qualifies']:
+                stats['changed'] += 1
+
+            insert_data.append([
+                row['wallet_address'], row['token_address'], row['scan_id'],
+                row['first_entry_price'], row['first_entry_usd'], row['first_entry_timestamp'],
+                row['entry_price_to_launch_mult'], row['avg_entry_price'], row['avg_entry_to_ath_mult'],
+                row['all_buys'], row['all_sells'], row['buy_count'], row['sell_count'],
+                row['total_spent_usd'], row['realized_pnl_usd'], row['unrealized_pnl_usd'],
+                row['total_pnl_usd'], row['realized_roi_mult'], row['total_roi_mult'],
+                new_qualifies, new_outcome, disqualify_reason, row['wallet_source'],
+                datetime.now(timezone.utc),
+            ])
+
+        ch.insert(table='wallet_token_stats', data=insert_data,
+                  database=CH_DATABASE, column_names=insert_columns)
+        offset += len(rows)
+        logger.info(
+            "[REQUALIFY] %d/%d — %d wins, %d draws, %d losses, %d changed",
+            stats['total'], total_rows,
+            stats['wins'], stats['draws'], stats['losses'], stats['changed'],
+        )
+
+    logger.info("[REQUALIFY] Complete: %s", stats)
+    return {"status": "success", **stats}

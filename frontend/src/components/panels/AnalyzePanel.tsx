@@ -217,7 +217,7 @@ export default function AnalyzePanel({
                           {token.hasSocials && <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">✓ Social</span>}
                         </div>
                         <div className="text-xs text-gray-400">{token.name}</div>
-                        <div className="text-xs text-gray-500 mt-1 font-mono">{address?.slice(0, 12)}…</div>
+                        <div className="text-xs text-gray-500 mt-1 font-mono cursor-pointer truncate max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(address || ''); }} title={address || ''}>{address}</div>
                         {liquidity && <div className="text-xs text-gray-500">Liq: {formatNumber(liquidity)}</div>}
                       </div>
                       {isSelected && <div className="text-purple-400 text-xs mt-1">✓</div>}

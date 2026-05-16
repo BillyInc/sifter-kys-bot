@@ -363,7 +363,7 @@ class TelegramNotifier:
             if user_id:
                 self.send_message(
                     chat_id,
-                    "✅ <b>Connected!</b>\n\n"
+                    "\u2705 <b>Connected!</b>\n\n"
                     "Your Sifter account is now linked.\n\n"
                     "<b>Auto-trading:</b>\n"
                     "/autotrade on\n"
@@ -372,11 +372,11 @@ class TelegramNotifier:
                     "/setamount 200",
                 )
             else:
-                self.send_message(chat_id, "❌ <b>Link failed.</b> Generate a new link from the dashboard.")
+                self.send_message(chat_id, "\u274c <b>Link failed.</b> Generate a new link from the dashboard.")
             return
 
         if text == "/start":
-            self.send_message(chat_id, "👋 <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
+            self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
             return
 
         if text.startswith("/autotrade"):
@@ -386,7 +386,7 @@ class TelegramNotifier:
                 "user_id, auto_trade_enabled, auto_trade_max_usd"
             ).eq("telegram_chat_id", chat_id).limit(1).execute()
             if not result.data:
-                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                self.send_message(chat_id, "\u274c Not connected. Use /start first.")
                 return
 
             row = result.data[0]
@@ -395,21 +395,21 @@ class TelegramNotifier:
             if action == "on":
                 has_wallet = self._table("bot_wallets").select("id").eq("user_id", user_id).limit(1).execute()
                 if not has_wallet.data:
-                    self.send_message(chat_id, "⚠️ No bot wallet registered in the dashboard yet.")
+                    self.send_message(chat_id, "\u26a0\ufe0f No bot wallet registered in the dashboard yet.")
                     return
                 self._table("telegram_users").update({"auto_trade_enabled": True}).eq("user_id", user_id).execute()
                 self.send_message(
                     chat_id,
-                    f"✅ <b>Auto-trading enabled</b>\nMax per trade: <b>${float(row.get('auto_trade_max_usd', 100)):.0f}</b>",
+                    f"\u2705 <b>Auto-trading enabled</b>\nMax per trade: <b>${float(row.get('auto_trade_max_usd', 100)):.0f}</b>",
                 )
             elif action == "off":
                 self._table("telegram_users").update({"auto_trade_enabled": False}).eq("user_id", user_id).execute()
-                self.send_message(chat_id, "🛑 <b>Auto-trading disabled</b>")
+                self.send_message(chat_id, "\U0001f6d1 <b>Auto-trading disabled</b>")
             else:
                 enabled = row.get("auto_trade_enabled", False)
                 self.send_message(
                     chat_id,
-                    f"⚙️ <b>Auto-trade status</b>\n\n"
+                    f"\u2699\ufe0f <b>Auto-trade status</b>\n\n"
                     f"Status: {'ON' if enabled else 'OFF'}\n"
                     f"Max per trade: <b>${float(row.get('auto_trade_max_usd', 100)):.0f}</b>",
                 )
@@ -433,13 +433,13 @@ class TelegramNotifier:
                 "telegram_chat_id", chat_id
             ).limit(1).execute()
             if not result.data:
-                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                self.send_message(chat_id, "\u274c Not connected. Use /start first.")
                 return
 
             self._table("telegram_users").update({"auto_trade_max_usd": amount}).eq(
                 "user_id", result.data[0]["user_id"]
             ).execute()
-            self.send_message(chat_id, f"✅ Max trade amount set to <b>${amount:,.0f}</b>")
+            self.send_message(chat_id, f"\u2705 Max trade amount set to <b>${amount:,.0f}</b>")
             return
 
         if text == "/settings":
@@ -447,12 +447,12 @@ class TelegramNotifier:
                 "user_id, auto_trade_enabled, auto_trade_max_usd"
             ).eq("telegram_chat_id", chat_id).limit(1).execute()
             if not result.data:
-                self.send_message(chat_id, "❌ Not connected.")
+                self.send_message(chat_id, "\u274c Not connected.")
                 return
             row = result.data[0]
             self.send_message(
                 chat_id,
-                f"⚙️ <b>Settings</b>\n\n"
+                f"\u2699\ufe0f <b>Settings</b>\n\n"
                 f"Auto-trade: {'ON' if row.get('auto_trade_enabled') else 'OFF'}\n"
                 f"Max per trade: ${float(row.get('auto_trade_max_usd', 100)):.0f}\n\n"
                 f"/autotrade on|off|status\n"
@@ -505,16 +505,16 @@ class TelegramNotifier:
             if result.data:
                 row = result.data[0]
                 text = (
-                    f"⚙️ <b>Settings</b>\n\n"
+                    f"\u2699\ufe0f <b>Settings</b>\n\n"
                     f"Alerts: {'ON' if row.get('alerts_enabled', True) else 'OFF'}\n"
                     f"Auto-trade: {'ON' if row.get('auto_trade_enabled', False) else 'OFF'}\n"
                     f"Max per trade: ${float(row.get('auto_trade_max_usd', 100)):.0f}"
                 )
             else:
-                text = "⚙️ <b>Settings</b>\n\nNo Telegram settings found yet."
+                text = "\u2699\ufe0f <b>Settings</b>\n\nNo Telegram settings found yet."
             return self.send_message(chat_id, text)
         except Exception:
-            return self.send_message(chat_id, "⚙️ <b>Settings</b>\n\nUnable to load settings.")
+            return self.send_message(chat_id, "\u2699\ufe0f <b>Settings</b>\n\nUnable to load settings.")
 
     def generate_connection_code(self, user_id: str) -> str:
         return secrets.token_hex(3).upper()

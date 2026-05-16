@@ -12,9 +12,25 @@ class Config:
     TWITTER_BEARER_TOKEN = os.environ.get('TWITTER_BEARER_TOKEN', '')
     BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', '')
     SOLANATRACKER_API_KEY = os.environ.get('SOLANATRACKER_API_KEY', '')
+    HELIUS_API_KEY = os.environ.get("HELIUS_API_KEY", "")
+    HELIUS_WEBHOOK_SECRET = os.environ.get("HELIUS_WEBHOOK_SECRET", "")
+
+    # Telegram
+    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_OPERATOR_CHAT_IDS = [
+        int(x.strip())
+        for x in os.environ.get("TELEGRAM_OPERATOR_CHAT_IDS", "").split(",")
+        if x.strip().isdigit()
+    ]
+    TELEGRAM_OPERATOR_USER_IDS = [
+        int(x.strip())
+        for x in os.environ.get("TELEGRAM_OPERATOR_USER_IDS", "").split(",")
+        if x.strip().isdigit()
+    ]
+    WALLET_ENCRYPTION_SECRET = os.environ.get("WALLET_ENCRYPTION_SECRET", "")
 
     # Rate limiting
-    RATELIMIT_STORAGE_URI = "memory://"
+    RATELIMIT_STORAGE_URI = os.environ.get("REDIS_URL", "redis://localhost:6379")
     RATELIMIT_STRATEGY = "fixed-window"
     RATELIMIT_DEFAULT = ["10000 per day", "1000 per hour"]  # ✅ Much higher
 
@@ -35,7 +51,20 @@ class Config:
     CLICKHOUSE_PORT = int(os.environ.get('CLICKHOUSE_PORT', 8443))
     CLICKHOUSE_USER = os.environ.get('CLICKHOUSE_USER', 'default')
     CLICKHOUSE_PASSWORD = os.environ.get('CLICKHOUSE_PASSWORD', '')
-    CLICKHOUSE_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'kys')
+    CLICKHOUSE_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'sifter-kys')
+
+    # Email (Resend)
+    RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+    FROM_EMAIL = os.environ.get('FROM_EMAIL', 'alerts@sifter.app')
+    ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', '')
+
+    # SMTP fallback
+    SMTP_HOST = os.environ.get("SMTP_HOST", "")
+    SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+    SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "")
+    PAPER_TRADER_EMAIL_TO = os.environ.get("PAPER_TRADER_EMAIL_TO", "")
 
     # Worker mode flag — set to true on Celery worker processes
     WORKER_MODE = os.environ.get('WORKER_MODE', 'false').lower() == 'true'
