@@ -41,13 +41,6 @@ celery.conf.beat_schedule = {
         'options': {'expires': 3600}
     },
 
-    # Paper trader daily operator digest at 8am UTC
-    'paper-trader-daily-digest': {
-        'task': 'tasks.send_paper_trader_daily_digest',
-        'schedule': crontab(hour=8, minute=0),
-        'options': {'expires': 3600}
-    },
-
     # Weekly rerank on Sunday at 4am UTC
     'weekly-rerank': {
         'task': 'tasks.weekly_rerank_all',
@@ -99,13 +92,6 @@ celery.conf.beat_schedule = {
         'task': 'tasks.sync_elite_15_to_monitor',
         'schedule': crontab(minute=5),
         'options': {'expires': 3600, 'queue': 'rankings'}
-    },
-
-    # Pre-warm trending runners cache every 10 minutes
-    'warm-trending-cache': {
-        'task': 'tasks.warm_trending_cache',
-        'schedule': crontab(minute='*/10'),
-        'options': {'expires': 540, 'queue': 'stats'}
     },
 
     # Purge notifications older than 30 days — daily at 2:30 AM UTC

@@ -3,7 +3,7 @@ Helius webhook receiver — push notifications for Elite wallet activity.
 Replaces SolanaTracker polling as the primary wallet monitoring signal source.
 """
 from __future__ import annotations
-import hashlib, hmac, logging, os
+import hmac, logging, os
 from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
@@ -17,8 +17,8 @@ def _verify_secret(auth_header: str) -> bool:
     """Verify the Authorization header matches our webhook secret."""
     secret = os.environ.get("HELIUS_WEBHOOK_SECRET", "")
     if not secret:
-        logger.warning("[HELIUS] HELIUS_WEBHOOK_SECRET not set — skipping auth check")
-        return True
+        logger.error("[HELIUS] HELIUS_WEBHOOK_SECRET not set — rejecting request")
+        return False
     return hmac.compare_digest(auth_header, secret)
 
 
@@ -83,7 +83,7 @@ def _process_signal(signal: Dict[str, Any]) -> None:
 
     # Find all users watching this wallet with alerts enabled
     try:
-        result = supabase.table("wallet_watchlist").select(
+        result = supabase.schema(SCHEMA_NAME).table("wallet_watchlist").select(
             "user_id, alert_enabled, alert_threshold_usd, min_trade_usd, alert_on_buy, alert_on_sell"
         ).eq("wallet_address", wallet_address).eq("alert_enabled", True).execute()
         watchers = result.data or []
@@ -114,7 +114,7 @@ def _process_signal(signal: Dict[str, Any]) -> None:
 
         # Insert notification
         try:
-            supabase.table("wallet_notifications").insert({
+            supabase.schema(SCHEMA_NAME).table("wallet_notifications").insert({
                 "user_id": user_id,
                 "wallet_address": wallet_address,
                 "notification_type": "buy",
@@ -179,6 +179,9 @@ def _maybe_record_paper_trades(signal: Dict[str, Any], watchers: List[Dict]) -> 
 
         for watcher in watchers:
             user_id = watcher["user_id"]
+            # Only record paper trades for users with auto-trade enabled
+            if not watcher.get("auto_trade_enabled"):
+                continue
             try:
                 ptm.record_trade(
                     user_id=user_id,

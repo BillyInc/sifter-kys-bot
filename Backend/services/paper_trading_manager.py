@@ -68,9 +68,9 @@ class PaperTradingManager:
         event_type: str,
         details: dict,
     ) -> None:
-        """Insert a row into paper_trade_log."""
+        """Insert a row into paper_trade_logs."""
         try:
-            self._table("paper_trade_log").insert({
+            self._table("paper_trade_logs").insert({
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "event_type": event_type,
@@ -515,7 +515,21 @@ class PaperTradingManager:
                         pass
 
                 # Check take-profit tiers (highest first)
+                # Track triggered tiers via metadata to avoid repeated sells
+                triggered_tiers = set()
+                meta = pos.get("metadata") or {}
+                if isinstance(meta, str):
+                    try:
+                        import json as _json
+                        meta = _json.loads(meta)
+                    except Exception:
+                        meta = {}
+                triggered_tiers = set(meta.get("tp_tiers_triggered", []))
+
                 for tp_mult, tp_pct in reversed(self.TP_TIERS):
+                    tier_key = f"{tp_mult}x"
+                    if tier_key in triggered_tiers:
+                        continue  # Already sold at this tier
                     if multiplier >= tp_mult:
                         if tp_pct == 100:
                             self._close_position_by_id(pos, reason=f"tp_{tp_mult}x")
@@ -524,6 +538,14 @@ class PaperTradingManager:
                                 user_id, token_address, tp_pct,
                                 reason=f"tp_{tp_mult}x_{tp_pct}pct",
                             )
+                            # Record that this tier was triggered
+                            triggered_tiers.add(tier_key)
+                            try:
+                                self._table("paper_portfolio").update({
+                                    "metadata": {"tp_tiers_triggered": list(triggered_tiers)},
+                                }).eq("id", pos["id"]).execute()
+                            except Exception:
+                                pass
                         stats["tp_exits"] += 1
                         print(f"[PAPER EXIT] TP {symbol} — {multiplier:.1f}x → sell {tp_pct}%")
                         break

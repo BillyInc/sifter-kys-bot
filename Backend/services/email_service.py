@@ -164,7 +164,7 @@ class EmailService:
 
         # --- Open positions ---
         positions_resp = (
-            supabase.table("paper_portfolio")
+            supabase.schema(SCHEMA_NAME).table("paper_portfolio")
             .select("*")
             .eq("user_id", user_id)
             .execute()
@@ -173,7 +173,7 @@ class EmailService:
 
         # --- Trades in last 24 h ---
         trades_resp = (
-            supabase.table("paper_trades")
+            supabase.schema(SCHEMA_NAME).table("paper_trades")
             .select("*")
             .eq("user_id", user_id)
             .gte("created_at", yesterday_iso)
