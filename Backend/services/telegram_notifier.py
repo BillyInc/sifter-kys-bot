@@ -163,12 +163,44 @@ class TelegramNotifier:
             return {"ok": False, "error": str(e)}
 
     def _is_operator(self, chat_id: str) -> bool:
-        """Check if a chat_id belongs to a configured operator."""
-        from config import Config
+        """Check if chat_id belongs to an operator."""
         try:
-            return int(chat_id) in Config.TELEGRAM_OPERATOR_CHAT_IDS
-        except (ValueError, TypeError):
+            from config import Config
+            cid = int(chat_id)
+            return cid in (Config.TELEGRAM_OPERATOR_CHAT_IDS or []) or cid in (Config.TELEGRAM_OPERATOR_USER_IDS or [])
+        except (ValueError, AttributeError):
             return False
+
+    def _notify_paper_trade_event(self, user_id: str, event_type: str, details: dict) -> None:
+        """Send paper trade notification to user's Telegram."""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return
+
+        symbol = details.get("token_symbol", "???")
+
+        if event_type == "open":
+            usd = details.get("amount_usd", 0)
+            trigger = details.get("trigger_type", "manual")
+            tag = " [Elite 15]" if trigger == "auto_elite" else ""
+            self.send_message(chat_id, f"📝 <b>Paper Trade Opened</b>{tag}\n\nBUY {symbol}\nAmount: ${usd:,.2f}")
+
+        elif event_type == "tp_exit":
+            pct = details.get("pct", 0)
+            mult = details.get("multiplier", 0)
+            self.send_message(chat_id, f"🎯 <b>Take Profit Hit</b>\n\n{symbol} reached {mult:.1f}x\nSold {pct}% of position")
+
+        elif event_type == "sl_exit":
+            mult = details.get("multiplier", 0)
+            self.send_message(chat_id, f"🛑 <b>Stop Loss Triggered</b>\n\n{symbol} dropped to {mult:.2f}x\nPosition closed")
+
+        elif event_type == "age_exit":
+            days = details.get("age_days", 14)
+            self.send_message(chat_id, f"⏰ <b>Max Age Exit</b>\n\n{symbol} open for {days:.0f} days\nPosition closed")
+
+        elif event_type == "close":
+            reason = details.get("reason", "manual")
+            self.send_message(chat_id, f"📕 <b>Position Closed</b>\n\n{symbol} — {reason}")
 
     def _get_redis(self):
         """Return a Redis connection."""
@@ -604,6 +636,7 @@ class TelegramNotifier:
         # ── Operator commands ─────────────────────────────────────────────────
         if text == "/kill":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             self._get_redis().set("sifter:kill_switch", "1")
             self.send_message(chat_id, "🛑 <b>Kill switch ACTIVATED.</b> All auto-trading halted.")
@@ -611,6 +644,7 @@ class TelegramNotifier:
 
         if text == "/resume":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             self._get_redis().delete("sifter:kill_switch")
             self.send_message(chat_id, "✅ <b>Kill switch CLEARED.</b> Auto-trading resumed.")
@@ -618,6 +652,7 @@ class TelegramNotifier:
 
         if text == "/sys":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             try:
                 r = self._get_redis()
@@ -643,6 +678,7 @@ class TelegramNotifier:
 
         if text == "/openpositions":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             try:
                 result = self._table("paper_portfolio").select("*").eq("status", "open").execute()
@@ -666,6 +702,7 @@ class TelegramNotifier:
 
         if text == "/closeall":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             r = self._get_redis()
             r.set("sifter:confirm_closeall", "1", ex=60)
@@ -678,6 +715,7 @@ class TelegramNotifier:
 
         if text == "/confirmcloseall":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             r = self._get_redis()
             if not r.get("sifter:confirm_closeall"):
@@ -692,6 +730,7 @@ class TelegramNotifier:
 
         if text == "/paperstats":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             from services.paper_trading_manager import get_paper_trading_manager
             ptm = get_paper_trading_manager()
@@ -713,6 +752,7 @@ class TelegramNotifier:
 
         if text == "/users":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             try:
                 all_users = self._table("telegram_users").select("id, auto_trade_enabled").execute().data or []
@@ -730,6 +770,7 @@ class TelegramNotifier:
 
         if text == "/digest":
             if not self._is_operator(chat_id):
+                self.send_message(chat_id, "🔒 Operator access required.")
                 return
             try:
                 from services.tasks import send_daily_digest

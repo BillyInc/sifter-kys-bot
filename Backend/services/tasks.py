@@ -849,6 +849,13 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
         else:
             telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
 
+        try:
+            from services.alert_router import alert, P1, P2
+            alert(P2, "TELEGRAM", f"Signal processed: {alert_type} for user {user_id[:8]}",
+                  details={"alert_type": alert_type, "token": alert_data.get("token_ticker", "UNKNOWN")})
+        except ImportError:
+            pass
+
         return {
             'status': 'sent',
             'user_id': user_id,
@@ -859,6 +866,12 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
         print(f"[TELEGRAM TASK] Error: {e}")
         import traceback
         traceback.print_exc()
+        try:
+            from services.alert_router import alert, P1
+            alert(P1, "TELEGRAM", f"Signal processing failed: {e}",
+                  details={"user_id": user_id, "alert_type": alert_type, "error": str(e)})
+        except ImportError:
+            pass
         return {
             'status': 'error',
             'error': str(e)
@@ -880,6 +893,37 @@ def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema
         hourly_limit = int(row_cfg.get('auto_trade_hourly_limit') or 1)
         daily_limit = int(row_cfg.get('auto_trade_daily_limit') or 8)
         usd_amount = min(float(alert_data.get('usd_value') or 0), max_usd)
+
+        # Portfolio-based position cap (40% per token)
+        try:
+            from services.supabase_client import get_supabase_client, SCHEMA_NAME
+            sb = get_supabase_client()
+            token_address = alert_data.get('token_address', '')
+            # Check existing position in this token
+            existing = sb.schema(SCHEMA_NAME).table("paper_portfolio").select(
+                "total_invested_usd"
+            ).eq("user_id", user_id).eq("token_address", token_address).eq("status", "open").execute()
+            existing_usd = float(existing.data[0]["total_invested_usd"]) if existing.data else 0
+
+            # Get total portfolio value
+            all_positions = sb.schema(SCHEMA_NAME).table("paper_portfolio").select(
+                "total_invested_usd"
+            ).eq("user_id", user_id).eq("status", "open").execute()
+            portfolio_total = sum(float(p["total_invested_usd"]) for p in (all_positions.data or []))
+
+            # Per-token cap: 40% of portfolio (minimum $1000 assumed portfolio if no positions)
+            effective_portfolio = max(portfolio_total, 1000.0)
+            per_token_cap = effective_portfolio * 0.40
+            headroom = max(0, per_token_cap - existing_usd)
+
+            if headroom <= 0:
+                print(f"[TRADE] Position cap reached for {token_address[:8]} — user {user_id[:8]}")
+                return {"status": "skipped", "reason": "position_cap_reached"}
+
+            usd_amount = min(usd_amount, headroom)
+        except Exception as cap_exc:
+            print(f"[TRADE] Position cap check failed (proceeding): {cap_exc}")
+
         signal_key = alert_data.get('signal_key')
 
         now = datetime.utcnow()
@@ -931,6 +975,22 @@ def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema
 @celery.task(name='tasks.execute_bot_auto_trade', max_retries=2)
 def execute_bot_auto_trade(trade_id: int):
     """Execute a queued bot auto-trade via TelegramNotifier."""
+    # Kill switch check — block execution if active
+    try:
+        import redis as redis_lib
+        _r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+        if _r.get("sifter:kill_switch") == b"1":
+            print(f"[KILL SWITCH] Blocked trade {trade_id} — kill switch active")
+            try:
+                from services.alert_router import alert, P0
+                alert(P0, "KILL_SWITCH", f"Trade {trade_id} blocked by kill switch")
+            except ImportError:
+                pass
+            return {"status": "skipped", "reason": "kill_switch_active"}
+    except Exception as _ks_exc:
+        print(f"[KILL SWITCH] Redis check failed: {_ks_exc}")
+        # Fail open — do not block trading if Redis itself is down
+
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
     supabase = get_supabase_client()
@@ -991,6 +1051,11 @@ def execute_bot_auto_trade(trade_id: int):
     except Exception as e:
         print(f"[BOT TRADE] Error for {trade_id}: {e}")
         try:
+            from services.alert_router import alert, P0
+            alert(P0, "TRADE", f"Trade execution failed: {e}", details={"trade_id": trade_id})
+        except ImportError:
+            pass
+        try:
             supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
                 'status': 'failed',
                 'error_message': str(e)[:500],
@@ -1043,6 +1108,15 @@ def send_paper_trader_daily_digest():
             message='Paper trader daily digest sent' if sent else 'Paper trader daily digest skipped',
             payload={'configured': PaperTradeEmailService().is_configured()},
         )
+        # Include buffered P2 alerts in digest
+        try:
+            from services.alert_router import flush_digest_buffer
+            buffered = flush_digest_buffer()
+            if buffered:
+                print(f"[DIGEST] Flushed {len(buffered)} buffered alerts")
+        except ImportError:
+            pass
+
         return {'status': 'sent' if sent else 'skipped'}
     except Exception as e:
         return {'status': 'error', 'error': str(e)}
@@ -1241,4 +1315,9 @@ def check_paper_trader_exits():
         return {"status": "ok", **result}
     except Exception as exc:
         print(f"[EXIT CHECKER] Failed: {exc}")
+        try:
+            from services.alert_router import alert, P0
+            alert(P0, "EXIT_CHECKER", f"Exit checker task crashed: {exc}")
+        except ImportError:
+            pass
         return {"status": "error", "error": str(exc)}

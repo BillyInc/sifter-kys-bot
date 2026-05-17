@@ -5,9 +5,12 @@ and position lifecycle for users following Elite wallets.
 """
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from config import Config
 from services.http_session import get_http_session
@@ -15,6 +18,12 @@ from services.redis_pool import get_redis_client
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
 KILL_SWITCH_KEY = "sifter:kill_switch"
+
+try:
+    from services.alert_router import alert, P0, P1, P2
+except ImportError:
+    def alert(*a, **kw): pass
+    P0 = P1 = P2 = "P3"
 
 
 class PaperTradingManager:
@@ -46,7 +55,7 @@ class PaperTradingManager:
             }
             resp = get_http_session().get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
-                print(f"[PAPER] SolanaTracker returned {resp.status_code} for {token_address}")
+                logger.warning("[PAPER] action=fetch_price status=http_%d token=%s", resp.status_code, token_address[:16])
                 return None
 
             data = resp.json()
@@ -59,7 +68,7 @@ class PaperTradingManager:
             if price is not None:
                 return float(price)
         except Exception as exc:
-            print(f"[PAPER] Error fetching price for {token_address}: {exc}")
+            logger.error("[PAPER] action=fetch_price status=failed token=%s error=%s", token_address[:16], str(exc)[:200])
         return None
 
     def _log_event(
@@ -78,7 +87,7 @@ class PaperTradingManager:
                 "created_at": self._now_iso(),
             }).execute()
         except Exception as exc:
-            print(f"[PAPER] Failed to write trade log: {exc}")
+            logger.error("[PAPER] action=log_event status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
 
     # ── Kill Switch ────────────────────────────────────────────────────────
 
@@ -91,8 +100,13 @@ class PaperTradingManager:
                 data = json.loads(raw)
                 return bool(data.get("active", False))
         except Exception as exc:
-            print(f"[PAPER] Could not read kill switch: {exc}")
-        return False
+            logger.error("[PAPER] action=kill_switch status=redis_fail error=%s", str(exc)[:200])
+            try:
+                from services.alert_router import alert, P0
+                alert(P0, "REDIS", f"Kill switch Redis read failed — trading blocked: {exc}")
+            except ImportError:
+                pass
+            return True  # Fail closed — block trading when Redis is unreachable
 
     # ── Trade Recording ────────────────────────────────────────────────────
 
@@ -123,7 +137,7 @@ class PaperTradingManager:
             The inserted trade record dict, or None on failure.
         """
         if self.is_kill_switch_active():
-            print("[PAPER] Kill switch active — trade rejected")
+            logger.warning("[PAPER] action=trade status=blocked user=%s reason=kill_switch", user_id[:8])
             self._log_event(user_id, "kill_switch", {
                 "action": "trade_rejected",
                 "token": token_symbol,
@@ -169,11 +183,13 @@ class PaperTradingManager:
                 "trigger_type": trigger_type,
             })
 
-            print(f"[PAPER] Recorded {side} ${amount_usd:.2f} of {token_symbol} for user {user_id}")
+            logger.info("[PAPER] action=%s status=ok user=%s token=%s size_usd=%.2f trigger=%s", side, user_id[:8], token_symbol, amount_usd, trigger_type)
             return trade
 
         except Exception as exc:
-            print(f"[PAPER] Error recording trade: {exc}")
+            logger.error("[PAPER] action=trade status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
+            alert(P0, "TRADE", f"Paper trade recording failed: {exc}",
+                  details={"user_id": user_id, "token": token_symbol, "side": side})
             self._log_event(user_id, "error", {
                 "action": "record_trade",
                 "error": str(exc),
@@ -255,10 +271,10 @@ class PaperTradingManager:
                             "total_invested_usd": remaining,
                         }).eq("id", pos["id"]).execute()
                 else:
-                    print(f"[PAPER] Sell ignored — no open position for {token_symbol}")
+                    logger.warning("[PAPER] action=sell status=ignored token=%s reason=no_open_position", token_symbol)
 
         except Exception as exc:
-            print(f"[PAPER] Error updating portfolio: {exc}")
+            logger.error("[PAPER] action=update_portfolio status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
 
     # ── Portfolio Reads ────────────────────────────────────────────────────
 
@@ -278,7 +294,7 @@ class PaperTradingManager:
             )
             positions = result.data or []
         except Exception as exc:
-            print(f"[PAPER] Error fetching portfolio: {exc}")
+            logger.error("[PAPER] action=get_portfolio status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
             return []
 
         enriched: List[Dict] = []
@@ -325,7 +341,7 @@ class PaperTradingManager:
             )
             return result.data or []
         except Exception as exc:
-            print(f"[PAPER] Error fetching trade history: {exc}")
+            logger.error("[PAPER] action=get_trade_history status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
             return []
 
     # ── PnL Summary ────────────────────────────────────────────────────────
@@ -355,7 +371,7 @@ class PaperTradingManager:
             )
             positions = result.data or []
         except Exception as exc:
-            print(f"[PAPER] Error fetching PnL summary: {exc}")
+            logger.error("[PAPER] action=get_pnl status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
             return summary
 
         for pos in positions:
@@ -414,7 +430,7 @@ class PaperTradingManager:
             )
 
             if not existing.data:
-                print(f"[PAPER] No open position to close for {token_address}")
+                logger.warning("[PAPER] action=close status=no_position token=%s", token_address[:16])
                 return False
 
             pos = existing.data[0]
@@ -431,11 +447,11 @@ class PaperTradingManager:
                 "token_symbol": pos.get("token_symbol"),
             })
 
-            print(f"[PAPER] Closed position {pos.get('token_symbol')} for user {user_id}")
+            logger.info("[PAPER] action=close token=%s user=%s", pos.get("token_symbol"), user_id[:8])
             return True
 
         except Exception as exc:
-            print(f"[PAPER] Error closing position: {exc}")
+            logger.error("[PAPER] action=close status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
             self._log_event(user_id, "error", {
                 "action": "close_position",
                 "error": str(exc),
@@ -467,7 +483,7 @@ class PaperTradingManager:
             )
             positions = result.data or []
         except Exception as exc:
-            print(f"[PAPER EXIT] Failed to fetch open positions: {exc}")
+            logger.error("[PAPER] action=check_exits status=fetch_failed error=%s", str(exc)[:200])
             return {"error": str(exc)}
 
         if not positions:
@@ -497,7 +513,19 @@ class PaperTradingManager:
                 if multiplier <= self.STOP_LOSS_MULT:
                     self._close_position_by_id(pos, reason="stop_loss")
                     stats["sl_exits"] += 1
-                    print(f"[PAPER EXIT] SL {symbol} — {multiplier:.2f}x (< {self.STOP_LOSS_MULT}x)")
+                    logger.info("[PAPER] action=sl_exit token=%s mult=%.2f", symbol, multiplier)
+                    # Notify user of stop-loss
+                    try:
+                        import os
+                        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                        if bot_token:
+                            from services.telegram_notifier import TelegramNotifier
+                            tn = TelegramNotifier(bot_token)
+                            tn._notify_paper_trade_event(user_id, "sl_exit", {
+                                "token_symbol": symbol, "multiplier": multiplier,
+                            })
+                    except Exception:
+                        pass
                     continue
 
                 # Check max age
@@ -509,7 +537,19 @@ class PaperTradingManager:
                         if age_days >= self.MAX_AGE_DAYS:
                             self._close_position_by_id(pos, reason="max_age")
                             stats["age_exits"] += 1
-                            print(f"[PAPER EXIT] AGE {symbol} — {age_days:.1f} days")
+                            logger.info("[PAPER] action=age_exit token=%s days=%.1f", symbol, age_days)
+                            # Notify user of age exit
+                            try:
+                                import os
+                                bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                                if bot_token:
+                                    from services.telegram_notifier import TelegramNotifier
+                                    tn = TelegramNotifier(bot_token)
+                                    tn._notify_paper_trade_event(user_id, "age_exit", {
+                                        "token_symbol": symbol, "multiplier": multiplier,
+                                    })
+                            except Exception:
+                                pass
                             continue
                     except (ValueError, TypeError):
                         pass
@@ -547,15 +587,32 @@ class PaperTradingManager:
                             except Exception:
                                 pass
                         stats["tp_exits"] += 1
-                        print(f"[PAPER EXIT] TP {symbol} — {multiplier:.1f}x → sell {tp_pct}%")
+                        logger.info("[PAPER] action=tp_exit token=%s mult=%.1f pct=%d", symbol, multiplier, tp_pct)
+                        # Notify user of take-profit exit
+                        try:
+                            import os
+                            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                            if bot_token:
+                                from services.telegram_notifier import TelegramNotifier
+                                tn = TelegramNotifier(bot_token)
+                                tn._notify_paper_trade_event(user_id, "tp_exit", {
+                                    "token_symbol": symbol, "multiplier": multiplier,
+                                })
+                        except Exception:
+                            pass
                         break
 
             except Exception as exc:
                 stats["errors"] += 1
-                print(f"[PAPER EXIT] Error checking {symbol}: {exc}")
+                logger.error("[PAPER] action=check_exit status=failed token=%s error=%s", symbol, str(exc)[:200])
+                alert(P1, "EXIT_CHECKER", f"Error checking position {symbol}: {exc}",
+                      details={"token": token_address, "user_id": user_id})
 
-        print(f"[PAPER EXIT] Checked {stats['checked']} positions — "
-              f"TP:{stats['tp_exits']} SL:{stats['sl_exits']} AGE:{stats['age_exits']} ERR:{stats['errors']}")
+        logger.info("[PAPER] action=check_exits checked=%d tp=%d sl=%d age=%d errors=%d",
+                    stats["checked"], stats["tp_exits"], stats["sl_exits"], stats["age_exits"], stats["errors"])
+        if stats["errors"] > 0 and stats["errors"] >= stats["checked"] // 2:
+            alert(P0, "EXIT_CHECKER", f"High error rate: {stats['errors']}/{stats['checked']} positions failed",
+                  details=stats)
         return stats
 
     def _close_position_by_id(self, pos: dict, reason: str = "manual") -> bool:
@@ -578,7 +635,7 @@ class PaperTradingManager:
             })
             return True
         except Exception as exc:
-            print(f"[PAPER] Error closing position {pos.get('token_symbol')}: {exc}")
+            logger.error("[PAPER] action=close_by_id status=failed token=%s error=%s", pos.get("token_symbol"), str(exc)[:200])
             return False
 
     def partial_close_position(
@@ -622,6 +679,15 @@ class PaperTradingManager:
                 "current_value_usd": round(remaining_value, 2),
             }).eq("id", pos["id"]).execute()
 
+            # Verify update was applied (basic race condition detection)
+            verify = self._table("paper_portfolio").select("total_invested_usd").eq("id", pos["id"]).execute()
+            if verify.data:
+                actual = float(verify.data[0].get("total_invested_usd", 0))
+                expected = round(remaining_invested, 2)
+                if abs(actual - expected) > 0.01:
+                    alert(P0, "TRADE", f"Race condition detected in partial_close: expected={expected} actual={actual}",
+                          details={"user_id": user_id, "token": token_address, "pct": pct})
+
             self._log_event(user_id, "trade", {
                 "action": "partial_close",
                 "pct": pct,
@@ -631,11 +697,11 @@ class PaperTradingManager:
                 "sold_value_usd": round(sold_value, 2),
             })
 
-            print(f"[PAPER] Partial close {pct}% of {pos.get('token_symbol')} — ${sold_value:.2f}")
+            logger.info("[PAPER] action=partial_close token=%s pct=%d sold_usd=%.2f", pos.get("token_symbol"), pct, sold_value)
             return {"sol_received": sold_value}
 
         except Exception as exc:
-            print(f"[PAPER] Partial close error: {exc}")
+            logger.error("[PAPER] action=partial_close status=failed user=%s error=%s", user_id[:8], str(exc)[:200])
             return {"sol_received": 0.0}
 
     def close_all_positions(self, reason: str = "manual") -> int:
@@ -654,11 +720,11 @@ class PaperTradingManager:
                 if self._close_position_by_id(pos, reason=reason):
                     closed += 1
 
-            print(f"[PAPER] close_all_positions({reason}) — {closed}/{len(positions)} closed")
+            logger.info("[PAPER] action=close_all reason=%s closed=%d total=%d", reason, closed, len(positions))
             return closed
 
         except Exception as exc:
-            print(f"[PAPER] close_all_positions error: {exc}")
+            logger.error("[PAPER] action=close_all status=failed error=%s", str(exc)[:200])
             return 0
 
     def generate_daily_report(self) -> dict:
@@ -702,7 +768,7 @@ class PaperTradingManager:
             }
 
         except Exception as exc:
-            print(f"[PAPER] generate_daily_report error: {exc}")
+            logger.error("[PAPER] action=daily_report status=failed error=%s", str(exc)[:200])
             return {"error": str(exc)}
 
 
@@ -716,5 +782,5 @@ def get_paper_trading_manager() -> PaperTradingManager:
     global _paper_trading_manager
     if _paper_trading_manager is None:
         _paper_trading_manager = PaperTradingManager()
-        print("[PAPER] PaperTradingManager initialized")
+        logger.info("[PAPER] action=init status=ok")
     return _paper_trading_manager

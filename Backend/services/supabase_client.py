@@ -23,8 +23,11 @@ def get_supabase_client() -> Client:
                 "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY."
             )
 
-        # Use ClientOptions with schema for database isolation
-        options = ClientOptions(schema=SCHEMA_NAME)
+        # Use ClientOptions with schema for database isolation and connection timeout
+        options = ClientOptions(
+            schema=SCHEMA_NAME,
+            postgrest_client_timeout=15,  # 15 second timeout for PostgREST queries
+        )
 
         _supabase_client = create_client(
             Config.SUPABASE_URL,
