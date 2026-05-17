@@ -9,6 +9,12 @@ from flask import Blueprint, current_app, jsonify, request
 
 from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
+try:
+    from services.alert_router import alert, P0, P1
+except ImportError:
+    def alert(*a, **kw): pass
+    P0 = P1 = "P3"
+
 logger = logging.getLogger(__name__)
 helius_bp = Blueprint("helius", __name__)
 
@@ -209,6 +215,8 @@ def helius_wallet_alert():
     auth_header = request.headers.get("Authorization", "")
     if not _verify_secret(auth_header):
         logger.warning("[HELIUS] Invalid webhook secret")
+        alert(P0, "HELIUS", "Unauthorized webhook request received",
+              details={"ip": request.remote_addr, "auth_header_present": bool(auth_header)})
         return jsonify({"status": "unauthorized"}), 200  # Still 200 to avoid retries
 
     try:

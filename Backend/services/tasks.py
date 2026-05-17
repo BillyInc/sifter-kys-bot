@@ -1241,4 +1241,9 @@ def check_paper_trader_exits():
         return {"status": "ok", **result}
     except Exception as exc:
         print(f"[EXIT CHECKER] Failed: {exc}")
+        try:
+            from services.alert_router import alert, P0
+            alert(P0, "EXIT_CHECKER", f"Exit checker task crashed: {exc}")
+        except ImportError:
+            pass
         return {"status": "error", "error": str(exc)}

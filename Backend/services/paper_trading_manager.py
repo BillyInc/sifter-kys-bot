@@ -16,6 +16,12 @@ from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
 KILL_SWITCH_KEY = "sifter:kill_switch"
 
+try:
+    from services.alert_router import alert, P0, P1, P2
+except ImportError:
+    def alert(*a, **kw): pass
+    P0 = P1 = P2 = "P3"
+
 
 class PaperTradingManager:
     """Manages virtual paper trades and portfolio positions."""
@@ -174,6 +180,8 @@ class PaperTradingManager:
 
         except Exception as exc:
             print(f"[PAPER] Error recording trade: {exc}")
+            alert(P0, "TRADE", f"Paper trade recording failed: {exc}",
+                  details={"user_id": user_id, "token": token_symbol, "side": side})
             self._log_event(user_id, "error", {
                 "action": "record_trade",
                 "error": str(exc),
@@ -553,9 +561,14 @@ class PaperTradingManager:
             except Exception as exc:
                 stats["errors"] += 1
                 print(f"[PAPER EXIT] Error checking {symbol}: {exc}")
+                alert(P1, "EXIT_CHECKER", f"Error checking position {symbol}: {exc}",
+                      details={"token": token_address, "user_id": user_id})
 
         print(f"[PAPER EXIT] Checked {stats['checked']} positions — "
               f"TP:{stats['tp_exits']} SL:{stats['sl_exits']} AGE:{stats['age_exits']} ERR:{stats['errors']}")
+        if stats["errors"] > 0 and stats["errors"] >= stats["checked"] // 2:
+            alert(P0, "EXIT_CHECKER", f"High error rate: {stats['errors']}/{stats['checked']} positions failed",
+                  details=stats)
         return stats
 
     def _close_position_by_id(self, pos: dict, reason: str = "manual") -> bool:
