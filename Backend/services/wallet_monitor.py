@@ -17,6 +17,12 @@ import requests
 
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
 
+try:
+    from services.alert_router import alert, P0, P1, P2
+except ImportError:
+    def alert(*a, **kw): pass
+    P0 = P1 = P2 = "P3"
+
 if TYPE_CHECKING:
     from services.paper_trader import PaperTrader
     from services.telegram_notifier import TelegramNotifier
@@ -200,6 +206,9 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
         except Exception as e:
             print(f"[MONITOR] Error getting monitored wallets: {e}")
+            alert(P1, "SUPABASE", "Failed to fetch monitored wallets", details={
+                "error": str(e),
+            })
             return []
 
     def _check_wallet_activity(self, wallet_info):
@@ -345,6 +354,16 @@ WALLET ACTIVITY MONITOR INITIALIZED
             response = requests.get(url, headers=headers, params=params, timeout=15)
             if response.status_code != 200:
                 print(f"    Solana Tracker API returned status {response.status_code}")
+                if response.status_code == 429:
+                    alert(P1, "SOLANATRACKER", "Rate limited (429)", details={
+                        "wallet": wallet_address,
+                        "status_code": 429,
+                    })
+                else:
+                    alert(P2, "SOLANATRACKER", f"API error {response.status_code}", details={
+                        "wallet": wallet_address,
+                        "status_code": response.status_code,
+                    })
                 return []
 
             data = response.json()
@@ -375,6 +394,10 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
         except Exception as e:
             print(f"    Error fetching trades from Solana Tracker: {e}")
+            alert(P1, "SOLANATRACKER", f"Request exception: {e}", details={
+                "wallet": wallet_address,
+                "error": str(e),
+            })
             import traceback
 
             traceback.print_exc()
@@ -428,6 +451,10 @@ WALLET ACTIVITY MONITOR INITIALIZED
             return result.data[0]["id"] if result.data else None
         except Exception as e:
             print(f"    Error saving activity: {e}")
+            alert(P2, "SUPABASE", f"Failed to save wallet activity: {e}", details={
+                "wallet": wallet_address,
+                "tx_hash": tx.get("tx_hash"),
+            })
             return None
 
     def _get_wallet_info(self, user_id: str, wallet_address: str) -> Dict:
@@ -577,6 +604,9 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
         except Exception as e:
             print(f"[MONITOR] Error creating notifications: {e}")
+            alert(P2, "SUPABASE", f"Failed to create notifications: {e}", details={
+                "wallet": wallet_address,
+            })
 
     def _derive_notification_source(self, watcher: Dict, is_elite15: bool) -> str:
         tags = watcher.get("tags") or []
@@ -812,6 +842,9 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
         except Exception as e:
             print(f"[MONITOR] Error updating status: {e}")
+            alert(P2, "SUPABASE", f"Failed to update monitor status: {e}", details={
+                "wallet": wallet_address,
+            })
 
     def get_monitoring_stats(self) -> Dict:
         try:

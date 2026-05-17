@@ -1108,6 +1108,15 @@ def send_paper_trader_daily_digest():
             message='Paper trader daily digest sent' if sent else 'Paper trader daily digest skipped',
             payload={'configured': PaperTradeEmailService().is_configured()},
         )
+        # Include buffered P2 alerts in digest
+        try:
+            from services.alert_router import flush_digest_buffer
+            buffered = flush_digest_buffer()
+            if buffered:
+                print(f"[DIGEST] Flushed {len(buffered)} buffered alerts")
+        except ImportError:
+            pass
+
         return {'status': 'sent' if sent else 'skipped'}
     except Exception as e:
         return {'status': 'error', 'error': str(e)}

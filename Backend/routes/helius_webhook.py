@@ -94,11 +94,11 @@ def _process_signal(signal: Dict[str, Any]) -> None:
         ).eq("wallet_address", wallet_address).eq("alert_enabled", True).execute()
         watchers = result.data or []
     except Exception as e:
-        logger.error(f"[HELIUS] Error querying watchers for {wallet_address}: {e}")
+        logger.error("[HELIUS] action=query_watchers status=failed wallet=%s error=%s", wallet_address[:8], str(e)[:200])
         watchers = []
 
     if not watchers:
-        logger.debug(f"[HELIUS] No watchers for wallet {wallet_address}")
+        logger.debug("[HELIUS] action=process status=no_watchers wallet=%s", wallet_address[:8])
         return
 
     # Create notifications and send Telegram alerts
@@ -136,7 +136,7 @@ def _process_signal(signal: Dict[str, Any]) -> None:
             }).execute()
             notifications_created += 1
         except Exception as e:
-            logger.error(f"[HELIUS] Error creating notification for {user_id}: {e}")
+            logger.error("[HELIUS] action=create_notification status=failed user=%s error=%s", user_id[:8], str(e)[:200])
 
         # Send Telegram alert
         if telegram_notifier:
@@ -154,10 +154,10 @@ def _process_signal(signal: Dict[str, Any]) -> None:
                     },
                 )
             except Exception as e:
-                logger.error(f"[HELIUS] Telegram alert error for {user_id}: {e}")
+                logger.error("[HELIUS] action=telegram_alert status=failed user=%s error=%s", user_id[:8], str(e)[:200])
 
     if notifications_created > 0:
-        logger.info(f"[HELIUS] Created {notifications_created} notification(s) for {wallet_address}")
+        logger.info("[HELIUS] action=notify wallet=%s notifications=%d", wallet_address[:8], notifications_created)
     elif watchers:
         alert(P1, "HELIUS", f"Signal received but 0 notifications created for {len(watchers)} watchers",
               details={"wallet": wallet_address, "token": signal.get("token_ticker")})
@@ -203,10 +203,10 @@ def _maybe_record_paper_trades(signal: Dict[str, Any], watchers: List[Dict]) -> 
                     trigger_type="auto_elite",
                 )
             except Exception as e:
-                logger.error(f"[HELIUS] Paper trade error for {user_id}: {e}")
+                logger.error("[HELIUS] action=paper_trade status=failed user=%s error=%s", user_id[:8], str(e)[:200])
 
     except Exception as e:
-        logger.error(f"[HELIUS] Paper trading module error: {e}")
+        logger.error("[HELIUS] action=paper_trade_module status=failed error=%s", str(e)[:200])
 
 
 @helius_bp.route("/api/webhooks/helius", methods=["POST"])
@@ -234,9 +234,9 @@ def helius_wallet_alert():
                 _process_signal(signal)
                 signals_processed += 1
 
-        logger.info(f"[HELIUS] Processed {signals_processed}/{len(events)} events as swap signals")
+        logger.info("[HELIUS] action=process signals=%d events=%d", signals_processed, len(events))
 
     except Exception as e:
-        logger.error(f"[HELIUS] Error processing webhook: {e}")
+        logger.error("[HELIUS] action=process status=failed error=%s", str(e)[:200])
 
     return jsonify({"status": "ok"}), 200
