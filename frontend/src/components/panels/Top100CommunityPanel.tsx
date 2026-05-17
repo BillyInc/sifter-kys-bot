@@ -54,7 +54,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
                     {idx < 3 ? ['🥇', '🥈', '🥉'][idx] : idx + 1}
                   </div>
                   <div className="flex-1">
-                    <code className="text-sm font-mono text-gray-300">{wallet.wallet_address?.slice(0, 12)}...</code>
+                    <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(wallet.wallet_address || ''); }} title={wallet.wallet_address || ''}>{wallet.wallet_address}</code>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-xs text-gray-400"><TrendingUp size={12} className="inline mr-1" />{wallet.times_added} adds</span>
                       {wallet.avg_score && <span className="text-xs text-purple-400">{wallet.avg_score} ⭐ avg</span>}
@@ -75,7 +75,7 @@ export default function Top100CommunityPanel({ userId, apiUrl, onAddToWatchlist 
           <h4 className="text-sm font-semibold text-green-400 mb-2">📈 Trending Up This Week</h4>
           <div className="space-y-1 text-xs text-gray-300">
             {leaderboard.slice(0, 3).map((wallet: any) => (
-              <div key={wallet.wallet_address}>• {wallet.wallet_address?.slice(0, 8)}... (+{wallet.rank_change || 0} positions)</div>
+              <div key={wallet.wallet_address} className="flex items-center gap-1">• <code className="font-mono text-xs cursor-pointer truncate max-w-[160px] inline-block align-bottom" onClick={() => navigator.clipboard.writeText(wallet.wallet_address || '')} title={wallet.wallet_address || ''}>{wallet.wallet_address}</code> (+{wallet.rank_change || 0} positions)</div>
             ))}
           </div>
         </div>

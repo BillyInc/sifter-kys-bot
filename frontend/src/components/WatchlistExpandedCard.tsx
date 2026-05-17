@@ -329,8 +329,8 @@ export default function WatchlistExpandedCard({ wallet, rank, onRefresh, onDelet
         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
         onMouseLeave={e => e.currentTarget.style.background = isExpanded ? 'var(--bg-secondary)' : 'transparent'}>
         <div style={{ fontFamily: 'monospace', fontSize: rank <= 3 ? 15 : 12, color: 'var(--text-secondary)', textAlign: 'center' }}>{rankDisplay}</div>
-        <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {wallet.wallet_address?.slice(0, 8)}...{wallet.wallet_address?.slice(-4)}
+        <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(wallet.wallet_address || ''); }} title={wallet.wallet_address || ''}>
+          {wallet.wallet_address}
         </div>
         <div style={{ textAlign: 'center' }}>
           <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 3, fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: tc.text, background: tc.bg, border: `1px solid ${tc.border}` }}>{wallet.tier || 'C'}</span>

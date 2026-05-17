@@ -144,11 +144,11 @@ class TestComputeOutcome:
         assert outcome == "loss"
         assert qualifies == 0
 
-    def test_loss_when_token_below(self):
-        """Loss when token <30x even if wallet >5x."""
+    def test_win_regardless_of_token_ath(self):
+        """Win when wallet >5x — token ATH no longer a hard gate."""
         outcome, qualifies = _compute_outcome(6.0, 20.0, 100.0)
-        assert outcome == "loss"
-        assert qualifies == 0
+        assert outcome == "win"
+        assert qualifies == 1
 
     def test_loss_when_spend_below(self):
         """Loss when total_invested below second-pass minimum."""
@@ -156,17 +156,23 @@ class TestComputeOutcome:
         assert outcome == "loss"
         assert qualifies == 0
 
-    def test_draw_for_exact_wallet_threshold(self):
-        """Draw when wallet is exactly at 5x threshold."""
+    def test_draw_for_near_wallet_threshold(self):
+        """Draw when wallet is near the 5x threshold (within 0.5)."""
+        outcome, qualifies = _compute_outcome(4.8, 35.0, 100.0)
+        assert outcome == "draw"
+        assert qualifies == 0
+
+    def test_win_at_exact_wallet_threshold(self):
+        """Win when wallet is exactly at 5x (> not >=, but 5.0 is within 0.5 of 5.0 so draw)."""
         outcome, qualifies = _compute_outcome(WIN_WALLET_MULT, 35.0, 100.0)
         assert outcome == "draw"
         assert qualifies == 0
 
-    def test_draw_for_exact_token_threshold(self):
-        """Draw when token is exactly at 30x threshold."""
+    def test_win_above_wallet_threshold(self):
+        """Win when wallet is above 5x regardless of token ATH."""
         outcome, qualifies = _compute_outcome(6.0, WIN_TOKEN_MULT, 100.0)
-        assert outcome == "draw"
-        assert qualifies == 0
+        assert outcome == "win"
+        assert qualifies == 1
 
 
 class TestDisqualifiedRow:

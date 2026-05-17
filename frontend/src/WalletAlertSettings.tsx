@@ -120,8 +120,8 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }: 
             </button>
           </div>
 
-          <div className="mt-2 text-sm text-gray-400 font-mono">
-            {walletAddress?.slice(0, 12)}...{walletAddress?.slice(-8)}
+          <div className="mt-2">
+            <code className="text-sm text-gray-400 font-mono cursor-pointer truncate block max-w-[280px]" onClick={() => { navigator.clipboard.writeText(walletAddress || ''); toast.success('Copied!'); }} title={walletAddress || ''}>{walletAddress}</code>
           </div>
           
           <div className="mt-2 text-xs text-gray-500">
@@ -263,9 +263,9 @@ export default function WalletAlertSettings({ walletAddress, onClose, onSave }: 
               ) : (
                 <>
                   You'll be notified when{' '}
-                  <span className="font-mono text-purple-300">
-                    {walletAddress?.slice(0, 8)}...
-                  </span>
+                  <code className="font-mono text-purple-300 text-xs cursor-pointer truncate inline-block max-w-[160px] align-bottom" onClick={() => { navigator.clipboard.writeText(walletAddress || ''); toast.success('Copied!'); }} title={walletAddress || ''}>
+                    {walletAddress}
+                  </code>
                   {' '}
                   {settings.alert_on_buy && settings.alert_on_sell ? (
                     <>

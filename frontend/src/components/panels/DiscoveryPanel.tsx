@@ -56,7 +56,7 @@ const DiscoveryResultRow = React.memo(function DiscoveryResultRow(
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-yellow-400 font-bold">#{idx + 1}</span>
-              <code className="text-sm font-mono text-gray-300">{wallet.wallet?.slice(0, 16)}...</code>
+              <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(wallet.wallet || ''); toast.success('Copied!'); }} title={wallet.wallet || ''}>{wallet.wallet}</code>
               {wallet.tier && (
                 <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                   wallet.tier === 'S' ? 'bg-yellow-500/20 text-yellow-400' :

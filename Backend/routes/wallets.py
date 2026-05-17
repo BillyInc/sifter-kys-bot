@@ -1,6 +1,9 @@
 """Wallet analysis routes - CORRECTLY FIXED for TOKEN OVERLAP ranking."""
+import logging
 from flask import Blueprint, request, jsonify, Response
 import json
+
+logger = logging.getLogger(__name__)
 
 from config import Config
 from auth import require_auth, optional_auth
@@ -1548,6 +1551,52 @@ def export_elite_100():
                         headers={'Content-Disposition': f'attachment; filename=elite-100-{int(time.time())}.csv'})
 
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@wallets_bp.route('/elite-15', methods=['GET', 'OPTIONS'])
+@optional_auth
+def get_elite_15():
+    """Top 15 wallets from Elite 100 — used by mobile auto-trader and paper trading."""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        from services.elite_100_manager import get_elite_manager
+        manager = get_elite_manager()
+        wallets = manager.get_cached_elite_100('score')
+        top_15 = wallets[:15] if wallets else []
+        return jsonify({
+            'success': True,
+            'wallets': top_15,
+            'addresses': [w.get('wallet_address', '') for w in top_15],
+            'total': len(top_15),
+        }), 200
+
+    except Exception as e:
+        logger.exception("Elite 15 request failed")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@wallets_bp.route('/debug/test-notification', methods=['POST', 'OPTIONS'])
+@require_auth
+def test_notification_flow():
+    """Admin endpoint to force-check a wallet and test the notification pipeline."""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data = request.json or {}
+        wallet_address = data.get('wallet_address', 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4')
+        monitor = get_wallet_monitor()
+        if not monitor:
+            return jsonify({'error': 'Monitor not initialized'}), 503
+
+        result = monitor.force_check_wallet(wallet_address)
+        return jsonify({'success': True, 'wallet': wallet_address, 'result': result}), 200
+
+    except Exception as e:
+        logger.exception("Test notification failed")
         return jsonify({'error': str(e)}), 500
 
 

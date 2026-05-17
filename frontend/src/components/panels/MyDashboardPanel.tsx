@@ -139,7 +139,7 @@ export default function MyDashboardPanel({ userId, apiUrl, refreshKey }: Props) 
             <div key={wallet.address} className="flex items-center justify-between p-2 rounded" style={{ backgroundColor: 'var(--bg-secondary)' }}>
               <div className="flex items-center gap-2">
                 <span className="text-lg">{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
-                <code className="text-sm font-mono text-gray-300">{wallet.address?.slice(0, 8)}…</code>
+                <code className="text-sm font-mono text-gray-300 cursor-pointer truncate block max-w-[160px]" onClick={() => navigator.clipboard.writeText(wallet.address || '')} title={wallet.address || ''}>{wallet.address}</code>
               </div>
               <span className="text-sm font-bold text-green-400">+{wallet.roi}%</span>
             </div>

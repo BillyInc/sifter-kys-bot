@@ -197,7 +197,7 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
   const [error,        setError]        = useState<string | null>(null);
 
   const addr       = walletData?.wallet || walletData?.wallet_address || '';
-  const shortAddr  = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
+  const shortAddr  = addr || '—';
   const roiDetails = walletData?.roi_details || [];
 
   // ── Clear results ─────────────────────────────────────────────────────────
@@ -298,8 +298,8 @@ export default function SimulatorModal({ walletData, onClose, apiUrl, getAccessT
             <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: C.white, letterSpacing: '0.02em' }}>
               ⚗️ Wallet Simulator
             </div>
-            <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#a78bfa', marginTop: 2 }}>
-              {shortAddr}
+            <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#a78bfa', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200, cursor: 'pointer', display: 'inline-block' }} onClick={() => addr && navigator.clipboard.writeText(addr)} title={addr || undefined}>{shortAddr}</span>
               {roiDetails.length > 0 && (
                 <span style={{ color: C.grayD, marginLeft: 8 }}>
                   {roiDetails.length} trade{roiDetails.length !== 1 ? 's' : ''} available

@@ -164,8 +164,8 @@ export default function WalletHealthDashboard({
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <span className="text-red-400 font-bold text-xs">#{wallet.position}</span>
-                        <code className="text-xs font-mono text-gray-300">
-                          {(wallet.wallet_address || wallet.wallet)?.slice(0, 6)}...
+                        <code className="text-xs font-mono text-gray-300 cursor-pointer truncate max-w-[120px] inline-block align-bottom" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText((wallet.wallet_address || wallet.wallet) || ''); }} title={(wallet.wallet_address || wallet.wallet) || ''}>
+                          {wallet.wallet_address || wallet.wallet}
                         </code>
                         <span className="px-1.5 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
                           {wallet.tier}
@@ -229,8 +229,8 @@ export default function WalletHealthDashboard({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-yellow-400 font-bold text-xs">#{wallet.position}</span>
-                        <code className="text-xs font-mono text-gray-300">
-                          {(wallet.wallet_address || wallet.wallet)?.slice(0, 6)}...
+                        <code className="text-xs font-mono text-gray-300 cursor-pointer truncate max-w-[120px] inline-block align-bottom" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText((wallet.wallet_address || wallet.wallet) || ''); }} title={(wallet.wallet_address || wallet.wallet) || ''}>
+                          {wallet.wallet_address || wallet.wallet}
                         </code>
                         <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">
                           {wallet.tier}

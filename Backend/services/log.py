@@ -5,6 +5,8 @@ Usage: from services.log import get_logger
        logger.info("event_name", key="value")
 """
 import logging
+import logging.handlers
+import os
 import sys
 
 import structlog
@@ -23,6 +25,15 @@ def _add_otel_context(logger, method_name, event_dict):
 
 def setup_logging(log_level: str = "INFO"):
     """Configure structlog with JSON output for production, pretty for dev."""
+
+    root = logging.getLogger()
+
+    # Guard against double-init
+    if root.handlers:
+        return
+
+    # Create logs directory
+    os.makedirs("logs", exist_ok=True)
 
     shared_processors = [
         structlog.contextvars.merge_contextvars,
@@ -51,13 +62,43 @@ def setup_logging(log_level: str = "INFO"):
         ],
     )
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
+    file_formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
-    root = logging.getLogger()
-    root.handlers.clear()
-    root.addHandler(handler)
+    # Console handler (stdout)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+
+    # Rotating file handler — general log (10MB, 5 backups)
+    file_handler = logging.handlers.RotatingFileHandler(
+        "logs/sifter.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(file_formatter)
+
+    # Rotating file handler — errors only (5MB, 3 backups)
+    error_handler = logging.handlers.RotatingFileHandler(
+        "logs/errors.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(file_formatter)
+
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
+    root.addHandler(error_handler)
     root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    # Suppress noisy loggers
+    for noisy in ("urllib3", "httpx", "celery", "kombu"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def get_logger(name: str):

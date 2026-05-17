@@ -106,8 +106,8 @@ export default function WalletAlertCard({ notification, onCopyTrade, onViewChart
           <div>
             <p className="text-xs text-gray-400 mb-1">Wallet</p>
             <div className="flex items-center gap-2">
-              <code className="text-sm text-purple-300 font-mono">
-                {notification.wallet_address?.slice(0, 8)}...
+              <code className="text-sm text-purple-300 font-mono cursor-pointer truncate block max-w-[200px]" onClick={() => navigator.clipboard.writeText(notification.wallet_address || '')} title={notification.wallet_address || ''}>
+                {notification.wallet_address}
               </code>
               <button
                 onClick={() => handleCopy(notification.wallet_address!, 'wallet')}

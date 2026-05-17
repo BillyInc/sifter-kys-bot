@@ -152,7 +152,7 @@ ClickHouse is the analytical computation layer. Supabase remains source of truth
 
 **Data flow:** SolanaTracker -> Celery tasks -> ClickHouse -> (MV auto-aggregates) -> Redis cache -> API response
 
-**Tables** (database: `kys`, all ReplacingMergeTree — INSERT only, never UPDATE):
+**Tables** (database: `sifter-kys`, all ReplacingMergeTree — INSERT only, never UPDATE):
 - `token_scans` — one row per token per scan event
 - `wallet_token_stats` — one row per wallet per token (MV fires on INSERT)
 - `wallet_aggregate_stats` — auto-maintained by `mv_wallet_aggregate` materialized view
@@ -195,7 +195,7 @@ CLICKHOUSE_HOST=
 CLICKHOUSE_PORT=8443
 CLICKHOUSE_USER=default
 CLICKHOUSE_PASSWORD=
-CLICKHOUSE_DATABASE=kys
+CLICKHOUSE_DATABASE=sifter-kys
 WHOP_WEBHOOK_SECRET=
 PORT=5000
 ```

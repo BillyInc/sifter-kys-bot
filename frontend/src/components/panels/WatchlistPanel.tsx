@@ -127,9 +127,9 @@ function GlobalDiaryEntry({ entry, onEdit, onDelete }: GlobalDiaryEntryProps) {
         <div className="flex-1 min-w-0">
           {entry.walletRef && (
             <div className="mb-1.5">
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
-                {entry.walletRef.length > 12 ? `${entry.walletRef.slice(0, 8)}…${entry.walletRef.slice(-4)}` : entry.walletRef}
-              </span>
+              <code className="text-[10px] font-mono px-2 py-0.5 rounded cursor-pointer truncate inline-block max-w-[200px] align-bottom" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }} onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(entry.walletRef || ''); }} title={entry.walletRef || ''}>
+                {entry.walletRef}
+              </code>
             </div>
           )}
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'var(--text-primary)' }}>{entry.text}</p>

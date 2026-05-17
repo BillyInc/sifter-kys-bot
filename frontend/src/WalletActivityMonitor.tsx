@@ -127,7 +127,7 @@ export default function WalletActivityMonitor() {
                   </button>
                 </div>
                 <p className="text-sm text-gray-300 mb-2">
-                  <span className="font-mono text-purple-300">{latestNotification.wallet_address?.slice(0, 8)}...</span>
+                  <code className="font-mono text-xs text-purple-300 cursor-pointer truncate inline-block max-w-[200px] align-bottom" onClick={() => navigator.clipboard.writeText(latestNotification.wallet_address || '')} title={latestNotification.wallet_address || ''}>{latestNotification.wallet_address}</code>
                   {' '}just{' '}
                   <span className={latestNotification._side === 'buy' ? 'text-green-400' : 'text-red-400'}>
                     {latestNotification._side}
@@ -206,7 +206,7 @@ export default function WalletActivityMonitor() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2 mb-1">
                             <div className="flex items-center flex-wrap gap-1">
-                              <span className="text-sm font-mono text-gray-300">{notification.wallet_address?.slice(0, 8)}...</span>
+                              <code className="font-mono text-xs text-gray-300 cursor-pointer truncate inline-block max-w-[200px]" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(notification.wallet_address || ''); }} title={notification.wallet_address || ''}>{notification.wallet_address}</code>
                               <span className={`text-sm font-bold ${isBuy ? 'text-green-400' : 'text-red-400'}`}>
                                 {notification._side?.toUpperCase()}
                               </span>
