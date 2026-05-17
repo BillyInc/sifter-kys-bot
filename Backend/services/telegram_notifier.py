@@ -21,6 +21,125 @@ from services.paper_trade_runtime import get_paper_trade_runtime, is_operator_ch
 
 logger = logging.getLogger(__name__)
 
+# ── Module-level state ────────────────────────────────────────────────────────
+
+_wallet_import_pending: dict = {}  # chat_id -> "awaiting_private_key"
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+def _fmt_mcap(usd):
+    """Format a market cap value into human-readable string."""
+    if usd is None:
+        return "?"
+    usd = float(usd)
+    if usd >= 1_000_000_000:
+        return f"${usd / 1_000_000_000:.1f}B"
+    if usd >= 1_000_000:
+        return f"${usd / 1_000_000:.1f}M"
+    if usd >= 1_000:
+        return f"${usd / 1_000:.1f}K"
+    return f"${usd:.0f}"
+
+
+def _fmt_age(seconds):
+    """Format age in seconds to human-readable duration."""
+    if seconds is None:
+        return "?"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def _pnl_dot(pnl_pct):
+    """Return a colored dot based on PnL percentage."""
+    if pnl_pct is None:
+        return "⚪"
+    pnl_pct = float(pnl_pct)
+    if pnl_pct >= 100:
+        return "🟢"
+    if pnl_pct >= 0:
+        return "🟡"
+    if pnl_pct >= -50:
+        return "🟠"
+    return "🔴"
+
+
+def _build_position_card(pos):
+    """Build a formatted text card for a single position."""
+    symbol = html.escape(pos.get("token_symbol") or "???")
+    token_address = pos.get("token_address", "")
+    invested = float(pos.get("total_invested_usd") or 0)
+    current_value = float(pos.get("current_value_usd") or invested)
+    pnl = float(pos.get("unrealized_pnl_usd") or 0)
+    pnl_pct = ((current_value / invested) - 1) * 100 if invested > 0 else 0.0
+    dot = _pnl_dot(pnl_pct)
+
+    lines = [
+        f"{dot} <b>${symbol}</b>",
+        f"   Invested: ${invested:,.2f}",
+        f"   Value: ${current_value:,.2f}",
+        f"   PnL: ${pnl:+,.2f} ({pnl_pct:+.1f}%)",
+        f"   CA: <code>{token_address[:12]}...</code>",
+    ]
+    return "\n".join(lines)
+
+
+def _build_sell_keyboard(token_address, user_id, chat_id):
+    """Build inline keyboard with sell percentage buttons."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Sell 25%", "callback_data": f"sell|{chat_id}|{token_address}|25"},
+                {"text": "Sell 50%", "callback_data": f"sell|{chat_id}|{token_address}|50"},
+            ],
+            [
+                {"text": "Sell 75%", "callback_data": f"sell|{chat_id}|{token_address}|75"},
+                {"text": "Sell 100%", "callback_data": f"sell|{chat_id}|{token_address}|100"},
+            ],
+        ]
+    }
+
+
+def _encrypt_private_key(raw_key_bytes: bytes) -> str:
+    """Encrypt a private key using Fernet with WALLET_ENCRYPTION_SECRET."""
+    from cryptography.fernet import Fernet
+    import base64
+
+    secret = os.environ.get("WALLET_ENCRYPTION_SECRET", "")
+    # Derive a Fernet-compatible key from the secret
+    key_material = hashlib.sha256(secret.encode()).digest()
+    fernet_key = base64.urlsafe_b64encode(key_material)
+    f = Fernet(fernet_key)
+    return f.encrypt(raw_key_bytes).decode()
+
+
+def _decode_solana_private_key(key_str: str) -> bytes:
+    """Decode a Solana private key from base58 or hex string."""
+    import base58
+
+    key_str = key_str.strip()
+    # Try base58 first (most common for Solana)
+    try:
+        decoded = base58.b58decode(key_str)
+        if len(decoded) in (32, 64):
+            return bytes(decoded)
+    except Exception:
+        pass
+    # Try hex
+    try:
+        decoded = bytes.fromhex(key_str)
+        if len(decoded) in (32, 64):
+            return decoded
+    except Exception:
+        pass
+    raise ValueError("Invalid key format. Expected base58 or hex encoded private key.")
+
 
 class TelegramNotifier:
     """Service for sending alerts to Telegram-linked users."""
@@ -42,6 +161,19 @@ class TelegramNotifier:
         except Exception as e:
             logger.error(f"[TELEGRAM] API error: {e}")
             return {"ok": False, "error": str(e)}
+
+    def _is_operator(self, chat_id: str) -> bool:
+        """Check if a chat_id belongs to a configured operator."""
+        from config import Config
+        try:
+            return int(chat_id) in Config.TELEGRAM_OPERATOR_CHAT_IDS
+        except (ValueError, TypeError):
+            return False
+
+    def _get_redis(self):
+        """Return a Redis connection."""
+        from services.redis_pool import get_redis_client
+        return get_redis_client()
 
     def send_message(self, chat_id: str, text: str, reply_markup: dict = None) -> bool:
         payload = {
@@ -357,6 +489,15 @@ class TelegramNotifier:
         first_name = message["from"].get("first_name", "")
         last_name = message["from"].get("last_name")
 
+        # Intercept wallet import flow
+        if chat_id in _wallet_import_pending:
+            if text.lower() == '/cancel':
+                _wallet_import_pending.pop(chat_id, None)
+                self.send_message(chat_id, "❌ Wallet import cancelled.")
+                return
+            self._handle_wallet_key_message(chat_id, text, message)
+            return
+
         if text.startswith("/start "):
             token = text.split(" ", 1)[1]
             user_id = self.verify_connection_token(token, chat_id, username, first_name, last_name)
@@ -460,19 +601,343 @@ class TelegramNotifier:
             )
             return
 
+        # ── Operator commands ─────────────────────────────────────────────────
+        if text == "/kill":
+            if not self._is_operator(chat_id):
+                return
+            self._get_redis().set("sifter:kill_switch", "1")
+            self.send_message(chat_id, "🛑 <b>Kill switch ACTIVATED.</b> All auto-trading halted.")
+            return
+
+        if text == "/resume":
+            if not self._is_operator(chat_id):
+                return
+            self._get_redis().delete("sifter:kill_switch")
+            self.send_message(chat_id, "✅ <b>Kill switch CLEARED.</b> Auto-trading resumed.")
+            return
+
+        if text == "/sys":
+            if not self._is_operator(chat_id):
+                return
+            try:
+                r = self._get_redis()
+                redis_ok = r.ping()
+                user_count = len(
+                    self._table("telegram_users").select("id").execute().data or []
+                )
+                paper_count = len(
+                    self._table("paper_portfolio").select("id").eq("status", "open").execute().data or []
+                )
+                kill_active = r.get("sifter:kill_switch") is not None
+                self.send_message(
+                    chat_id,
+                    "<b>System Health</b>\n\n"
+                    f"Redis: {'✅ OK' if redis_ok else '❌ DOWN'}\n"
+                    f"Kill switch: {'🛑 ACTIVE' if kill_active else '✅ OFF'}\n"
+                    f"Telegram users: <b>{user_count}</b>\n"
+                    f"Open paper positions: <b>{paper_count}</b>",
+                )
+            except Exception as e:
+                self.send_message(chat_id, f"❌ System check failed: <code>{html.escape(str(e)[:200])}</code>")
+            return
+
+        if text == "/openpositions":
+            if not self._is_operator(chat_id):
+                return
+            try:
+                result = self._table("paper_portfolio").select("*").eq("status", "open").execute()
+                positions = result.data or []
+                if not positions:
+                    self.send_message(chat_id, "<b>No open paper positions.</b>")
+                    return
+                lines = [f"<b>Open Paper Positions ({len(positions)})</b>", ""]
+                for pos in positions[:20]:
+                    symbol = html.escape(pos.get("token_symbol") or "???")
+                    invested = float(pos.get("total_invested_usd") or 0)
+                    current = float(pos.get("current_value_usd") or 0)
+                    pnl = current - invested
+                    lines.append(f"• <b>${symbol}</b> — ${invested:.0f} → ${current:.0f} ({pnl:+.0f})")
+                if len(positions) > 20:
+                    lines.append(f"\n<i>...and {len(positions) - 20} more</i>")
+                self.send_message(chat_id, "\n".join(lines))
+            except Exception as e:
+                self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+            return
+
+        if text == "/closeall":
+            if not self._is_operator(chat_id):
+                return
+            r = self._get_redis()
+            r.set("sifter:confirm_closeall", "1", ex=60)
+            self.send_message(
+                chat_id,
+                "⚠️ <b>Confirm close ALL paper positions?</b>\n\n"
+                "Send /confirmcloseall within 60 seconds to proceed.",
+            )
+            return
+
+        if text == "/confirmcloseall":
+            if not self._is_operator(chat_id):
+                return
+            r = self._get_redis()
+            if not r.get("sifter:confirm_closeall"):
+                self.send_message(chat_id, "❌ No pending /closeall. Send /closeall first.")
+                return
+            r.delete("sifter:confirm_closeall")
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            closed = ptm.close_all_positions("operator_force_close")
+            self.send_message(chat_id, f"✅ <b>Closed {closed} positions.</b>")
+            return
+
+        if text == "/paperstats":
+            if not self._is_operator(chat_id):
+                return
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            report = ptm.generate_daily_report()
+            if "error" in report:
+                self.send_message(chat_id, f"❌ Report error: <code>{html.escape(str(report['error'])[:200])}</code>")
+                return
+            self.send_message(
+                chat_id,
+                "<b>Paper Trading Stats</b>\n\n"
+                f"Open positions: <b>{report.get('open_positions', 0)}</b>\n"
+                f"Trades today: <b>{report.get('total_trades', 0)}</b>\n"
+                f"Winning: <b>{report.get('winning_trades', 0)}</b>\n"
+                f"Total invested: <b>${report.get('total_invested_usd', 0):,.2f}</b>\n"
+                f"Current value: <b>${report.get('current_value_usd', 0):,.2f}</b>\n"
+                f"PnL: <b>${report.get('total_pnl_usd', 0):+,.2f}</b>",
+            )
+            return
+
+        if text == "/users":
+            if not self._is_operator(chat_id):
+                return
+            try:
+                all_users = self._table("telegram_users").select("id, auto_trade_enabled").execute().data or []
+                total = len(all_users)
+                auto_on = sum(1 for u in all_users if u.get("auto_trade_enabled"))
+                self.send_message(
+                    chat_id,
+                    f"<b>Telegram Users</b>\n\n"
+                    f"Total connected: <b>{total}</b>\n"
+                    f"Auto-trade enabled: <b>{auto_on}</b>",
+                )
+            except Exception as e:
+                self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+            return
+
+        if text == "/digest":
+            if not self._is_operator(chat_id):
+                return
+            try:
+                from services.tasks import send_daily_digest
+                send_daily_digest.delay()
+                self.send_message(chat_id, "✅ <b>Daily digest task queued.</b>")
+            except Exception as e:
+                self.send_message(chat_id, f"❌ Failed to queue digest: <code>{html.escape(str(e)[:100])}</code>")
+            return
+
+        # ── User commands ─────────────────────────────────────────────────────
+        if text == "/importwallet":
+            # DM-only check
+            if message["chat"].get("type") != "private":
+                self.send_message(chat_id, "⚠️ For security, use this command in a <b>direct message</b> to the bot.")
+                return
+            _wallet_import_pending[chat_id] = "awaiting_private_key"
+            self.send_message(
+                chat_id,
+                "🔐 <b>Wallet Import</b>\n\n"
+                "Send your Solana private key (base58 or hex).\n\n"
+                "⚠️ <b>Security notice:</b>\n"
+                "• Your key will be encrypted at rest\n"
+                "• The message containing your key will be deleted immediately\n"
+                "• Use a dedicated trading wallet, not your main wallet\n\n"
+                "Send /cancel to abort.",
+            )
+            return
+
+        if text == "/cancel":
+            _wallet_import_pending.pop(chat_id, None)
+            self.send_message(chat_id, "Cancelled.")
+            return
+
+        if text == "/mywallet":
+            result = self._table("telegram_users").select(
+                "wallet_address, wallet_imported"
+            ).eq("telegram_chat_id", chat_id).limit(1).execute()
+            if not result.data or not result.data[0].get("wallet_address"):
+                self.send_message(chat_id, "No wallet imported. Use /importwallet to link one.")
+                return
+            row = result.data[0]
+            self.send_message(
+                chat_id,
+                f"💳 <b>Your Wallet</b>\n\n"
+                f"Address: <code>{html.escape(row['wallet_address'])}</code>\n"
+                f"Imported: {'✅' if row.get('wallet_imported') else '❌'}",
+            )
+            return
+
+        if text == "/stop":
+            result = self._table("telegram_users").select("user_id").eq(
+                "telegram_chat_id", chat_id
+            ).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            self._table("telegram_users").update({"auto_trade_enabled": False}).eq(
+                "user_id", result.data[0]["user_id"]
+            ).execute()
+            self.send_message(chat_id, "🛑 <b>Auto-trading disabled.</b> Use /autotrade on to re-enable.")
+            return
+
+        if text.startswith("/setmax"):
+            parts = text.split()
+            try:
+                amount = float(parts[1])
+                if amount < 1 or amount > 10000:
+                    raise ValueError("out of range")
+            except (IndexError, ValueError):
+                self.send_message(chat_id, "Usage: /setmax &lt;amount&gt; (1-10000)")
+                return
+            result = self._table("telegram_users").select("user_id").eq(
+                "telegram_chat_id", chat_id
+            ).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            self._table("telegram_users").update({"auto_trade_max_usd": amount}).eq(
+                "user_id", result.data[0]["user_id"]
+            ).execute()
+            self.send_message(chat_id, f"✅ Max trade amount set to <b>${amount:,.0f}</b>")
+            return
+
+        if text == "/mypositions":
+            result = self._table("telegram_users").select(
+                "user_id, wallet_address"
+            ).eq("telegram_chat_id", chat_id).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            user_id = result.data[0]["user_id"]
+            wallet_addr = result.data[0].get("wallet_address") or "No wallet"
+
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            positions = ptm.get_portfolio(user_id)
+
+            if not positions:
+                self.send_message(chat_id, "📊 <b>No open positions.</b>\n\nYou'll see positions here when auto-trade enters a token.")
+                return
+
+            header = f"💼 <b>My Positions</b>\n🔑 <code>{html.escape(wallet_addr[:8])}...</code>\n"
+            for pos in positions[:10]:
+                card_text = _build_position_card(pos)
+                keyboard = _build_sell_keyboard(pos["token_address"], user_id, chat_id)
+                self.send_message(chat_id, header + "\n" + card_text, keyboard)
+                header = ""  # Only show header on first card
+            return
+
+        if text == "/portfolio":
+            result = self._table("telegram_users").select("user_id").eq(
+                "telegram_chat_id", chat_id
+            ).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            positions = ptm.get_portfolio(result.data[0]["user_id"])
+            if not positions:
+                self.send_message(chat_id, "📊 No open positions.")
+                return
+            lines = ["<b>Portfolio</b>", ""]
+            total_invested = 0.0
+            total_value = 0.0
+            for pos in positions[:15]:
+                symbol = html.escape(pos.get("token_symbol") or "???")
+                invested = float(pos.get("total_invested_usd") or 0)
+                current = float(pos.get("current_value_usd") or invested)
+                pnl_pct = ((current / invested) - 1) * 100 if invested > 0 else 0
+                dot = _pnl_dot(pnl_pct)
+                lines.append(f"{dot} <b>${symbol}</b> — ${current:,.0f} ({pnl_pct:+.0f}%)")
+                total_invested += invested
+                total_value += current
+            total_pnl = total_value - total_invested
+            lines.append(f"\n<b>Total:</b> ${total_value:,.0f} (PnL: ${total_pnl:+,.0f})")
+            self.send_message(chat_id, "\n".join(lines))
+            return
+
+        if text == "/pnl":
+            result = self._table("telegram_users").select("user_id").eq(
+                "telegram_chat_id", chat_id
+            ).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            summary = ptm.get_pnl_summary(result.data[0]["user_id"])
+            win_rate = summary.get("win_rate", 0)
+            self.send_message(
+                chat_id,
+                "<b>PnL Summary</b>\n\n"
+                f"Total invested: <b>${summary.get('total_invested', 0):,.2f}</b>\n"
+                f"Current value: <b>${summary.get('current_total_value', 0):,.2f}</b>\n"
+                f"Total PnL: <b>${summary.get('total_pnl', 0):+,.2f}</b>\n"
+                f"Win/Loss: <b>{summary.get('win_count', 0)}W / {summary.get('loss_count', 0)}L</b>\n"
+                f"Win rate: <b>{win_rate:.0f}%</b>",
+            )
+            return
+
+        if text == "/history":
+            result = self._table("telegram_users").select("user_id").eq(
+                "telegram_chat_id", chat_id
+            ).limit(1).execute()
+            if not result.data:
+                self.send_message(chat_id, "❌ Not connected. Use /start first.")
+                return
+            from services.paper_trading_manager import get_paper_trading_manager
+            ptm = get_paper_trading_manager()
+            trades = ptm.get_trade_history(result.data[0]["user_id"], limit=10)
+            if not trades:
+                self.send_message(chat_id, "📜 No trade history yet.")
+                return
+            lines = ["<b>Recent Trades</b>", ""]
+            for t in trades:
+                side = (t.get("side") or "buy").upper()
+                symbol = html.escape(t.get("token_symbol") or "???")
+                amount = float(t.get("usd_amount") or 0)
+                created = t.get("created_at", "")[:10]
+                lines.append(f"• {side} <b>${symbol}</b> — ${amount:,.0f} ({created})")
+            self.send_message(chat_id, "\n".join(lines))
+            return
+
         if text == "/help":
             self.send_message(
                 chat_id,
                 "<b>Sifter KYS Bot Commands</b>\n\n"
-                "/settings\n"
-                "/paper_status\n"
-                "/paper_start\n"
-                "/paper_stop\n"
-                "/paper_logs\n"
-                "/paper_failures\n"
-                "/paper_test\n"
+                "<b>Trading</b>\n"
                 "/autotrade on|off|status\n"
                 "/setamount 200\n"
+                "/setmax 500\n"
+                "/stop — disable auto-trade\n\n"
+                "<b>Wallet</b>\n"
+                "/importwallet — import trading wallet\n"
+                "/mywallet — show linked wallet\n\n"
+                "<b>Positions</b>\n"
+                "/mypositions — positions with sell buttons\n"
+                "/portfolio — portfolio overview\n"
+                "/pnl — profit/loss summary\n"
+                "/history — recent trades\n\n"
+                "<b>Paper Trading</b>\n"
+                "/paper_status\n"
+                "/paper_start /paper_stop\n"
+                "/paper_logs /paper_failures\n"
+                "/paper_test\n\n"
+                "<b>Settings</b>\n"
+                "/settings\n"
                 "/help",
             )
             return
@@ -494,8 +959,136 @@ class TelegramNotifier:
                 "sendMessage",
                 {"chat_id": chat_id, "text": f"<code>{cmd}</code>", "parse_mode": "HTML"},
             )
+        elif data.startswith("sell|"):
+            parts = data.split("|")
+            if len(parts) == 4:
+                _, owner_chat_id, token_address, pct_str = parts
+                if chat_id != owner_chat_id:
+                    self._make_request(
+                        "answerCallbackQuery",
+                        {"callback_query_id": query_id, "text": "❌ Not your button.", "show_alert": True},
+                    )
+                    return
+                try:
+                    pct = int(pct_str)
+                except ValueError:
+                    self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
+                    return
+
+                # Look up user_id
+                user_result = self._table("telegram_users").select("user_id").eq(
+                    "telegram_chat_id", chat_id
+                ).limit(1).execute()
+                if not user_result.data:
+                    self._make_request(
+                        "answerCallbackQuery",
+                        {"callback_query_id": query_id, "text": "❌ User not found.", "show_alert": True},
+                    )
+                    return
+
+                user_id = user_result.data[0]["user_id"]
+                from services.paper_trading_manager import get_paper_trading_manager
+                ptm = get_paper_trading_manager()
+
+                if pct >= 100:
+                    success = ptm.close_position(user_id, token_address)
+                    result_text = "✅ Position closed." if success else "❌ Failed to close position."
+                else:
+                    result = ptm.partial_close_position(user_id, token_address, pct, reason="telegram_sell")
+                    sold_value = result.get("sol_received", 0)
+                    result_text = f"✅ Sold {pct}% — ${sold_value:,.2f}" if sold_value > 0 else f"❌ Failed to sell {pct}%."
+
+                self._make_request(
+                    "answerCallbackQuery",
+                    {"callback_query_id": query_id, "text": result_text, "show_alert": True},
+                )
+                # Edit the message to show result
+                message_id = query.get("message", {}).get("message_id")
+                if message_id:
+                    self._make_request("editMessageText", {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "text": f"{result_text}\n\nToken: <code>{token_address[:12]}...</code>",
+                        "parse_mode": "HTML",
+                    })
+            else:
+                self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
         else:
             self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
+
+    def _handle_wallet_key_message(self, chat_id: str, raw_text: str, message: dict):
+        """Process a private key message during wallet import flow."""
+        # Remove pending state immediately
+        _wallet_import_pending.pop(chat_id, None)
+
+        # Delete the message containing the key for security
+        message_id = message.get("message_id")
+        if message_id:
+            self._make_request("deleteMessage", {
+                "chat_id": chat_id,
+                "message_id": message_id,
+            })
+
+        # Decode the private key
+        try:
+            raw_bytes = _decode_solana_private_key(raw_text)
+        except ValueError as e:
+            self.send_message(chat_id, f"❌ <b>Invalid key:</b> {html.escape(str(e))}\n\nUse /importwallet to try again.")
+            return
+
+        # Encrypt the key
+        try:
+            encrypted = _encrypt_private_key(raw_bytes)
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Encryption error: {e}")
+            self.send_message(chat_id, "❌ Encryption failed. Contact support.")
+            return
+
+        # Derive public address from the key
+        try:
+            import base58
+            # For Solana, if 64 bytes the first 32 are the secret key, last 32 are public key
+            if len(raw_bytes) == 64:
+                public_key_bytes = raw_bytes[32:]
+            else:
+                # 32-byte secret key — derive pubkey via ed25519
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+                private_key = Ed25519PrivateKey.from_private_bytes(raw_bytes[:32])
+                public_key_bytes = private_key.public_key().public_bytes_raw()
+            wallet_address = base58.b58encode(public_key_bytes).decode()
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Pubkey derivation error: {e}")
+            self.send_message(chat_id, "❌ Could not derive wallet address. Invalid key format.")
+            return
+
+        # Look up user_id from telegram_users
+        result = self._table("telegram_users").select("user_id").eq(
+            "telegram_chat_id", chat_id
+        ).limit(1).execute()
+        if not result.data:
+            self.send_message(chat_id, "❌ Not connected. Use /start first, then try /importwallet again.")
+            return
+
+        user_id = result.data[0]["user_id"]
+
+        # Upsert wallet info
+        try:
+            self._table("telegram_users").update({
+                "encrypted_private_key": encrypted,
+                "wallet_address": wallet_address,
+                "wallet_imported": True,
+            }).eq("user_id", user_id).execute()
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Wallet upsert error: {e}")
+            self.send_message(chat_id, "❌ Failed to save wallet. Please try again.")
+            return
+
+        self.send_message(
+            chat_id,
+            "✅ <b>Wallet imported successfully!</b>\n\n"
+            f"Address: <code>{wallet_address}</code>\n\n"
+            "Your private key has been encrypted and the original message deleted.",
+        )
 
     def show_settings(self, chat_id: str, user_id: str) -> bool:
         try:
