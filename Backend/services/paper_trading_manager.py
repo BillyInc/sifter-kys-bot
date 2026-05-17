@@ -97,8 +97,13 @@ class PaperTradingManager:
                 data = json.loads(raw)
                 return bool(data.get("active", False))
         except Exception as exc:
-            print(f"[PAPER] Could not read kill switch: {exc}")
-        return False
+            print(f"[PAPER] Could not read kill switch — FAIL CLOSED: {exc}")
+            try:
+                from services.alert_router import alert, P0
+                alert(P0, "REDIS", f"Kill switch Redis read failed — trading blocked: {exc}")
+            except ImportError:
+                pass
+            return True  # Fail closed — block trading when Redis is unreachable
 
     # ── Trade Recording ────────────────────────────────────────────────────
 
@@ -506,6 +511,18 @@ class PaperTradingManager:
                     self._close_position_by_id(pos, reason="stop_loss")
                     stats["sl_exits"] += 1
                     print(f"[PAPER EXIT] SL {symbol} — {multiplier:.2f}x (< {self.STOP_LOSS_MULT}x)")
+                    # Notify user of stop-loss
+                    try:
+                        import os
+                        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                        if bot_token:
+                            from services.telegram_notifier import TelegramNotifier
+                            tn = TelegramNotifier(bot_token)
+                            tn._notify_paper_trade_event(user_id, "sl_exit", {
+                                "token_symbol": symbol, "multiplier": multiplier,
+                            })
+                    except Exception:
+                        pass
                     continue
 
                 # Check max age
@@ -518,6 +535,18 @@ class PaperTradingManager:
                             self._close_position_by_id(pos, reason="max_age")
                             stats["age_exits"] += 1
                             print(f"[PAPER EXIT] AGE {symbol} — {age_days:.1f} days")
+                            # Notify user of age exit
+                            try:
+                                import os
+                                bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                                if bot_token:
+                                    from services.telegram_notifier import TelegramNotifier
+                                    tn = TelegramNotifier(bot_token)
+                                    tn._notify_paper_trade_event(user_id, "age_exit", {
+                                        "token_symbol": symbol, "multiplier": multiplier,
+                                    })
+                            except Exception:
+                                pass
                             continue
                     except (ValueError, TypeError):
                         pass
@@ -556,6 +585,18 @@ class PaperTradingManager:
                                 pass
                         stats["tp_exits"] += 1
                         print(f"[PAPER EXIT] TP {symbol} — {multiplier:.1f}x → sell {tp_pct}%")
+                        # Notify user of take-profit exit
+                        try:
+                            import os
+                            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+                            if bot_token:
+                                from services.telegram_notifier import TelegramNotifier
+                                tn = TelegramNotifier(bot_token)
+                                tn._notify_paper_trade_event(user_id, "tp_exit", {
+                                    "token_symbol": symbol, "multiplier": multiplier,
+                                })
+                        except Exception:
+                            pass
                         break
 
             except Exception as exc:
@@ -634,6 +675,15 @@ class PaperTradingManager:
                 "total_invested_usd": round(remaining_invested, 2),
                 "current_value_usd": round(remaining_value, 2),
             }).eq("id", pos["id"]).execute()
+
+            # Verify update was applied (basic race condition detection)
+            verify = self._table("paper_portfolio").select("total_invested_usd").eq("id", pos["id"]).execute()
+            if verify.data:
+                actual = float(verify.data[0].get("total_invested_usd", 0))
+                expected = round(remaining_invested, 2)
+                if abs(actual - expected) > 0.01:
+                    alert(P0, "TRADE", f"Race condition detected in partial_close: expected={expected} actual={actual}",
+                          details={"user_id": user_id, "token": token_address, "pct": pct})
 
             self._log_event(user_id, "trade", {
                 "action": "partial_close",

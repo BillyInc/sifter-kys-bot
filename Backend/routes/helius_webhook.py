@@ -158,6 +158,9 @@ def _process_signal(signal: Dict[str, Any]) -> None:
 
     if notifications_created > 0:
         logger.info(f"[HELIUS] Created {notifications_created} notification(s) for {wallet_address}")
+    elif watchers:
+        alert(P1, "HELIUS", f"Signal received but 0 notifications created for {len(watchers)} watchers",
+              details={"wallet": wallet_address, "token": signal.get("token_ticker")})
 
     # Record paper trades for eligible users
     _maybe_record_paper_trades(signal, watchers)
