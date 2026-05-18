@@ -231,7 +231,8 @@ def helius_wallet_alert():
         for event in events:
             signal = _extract_swap_signal(event)
             if signal:
-                _process_signal(signal)
+                from services.tasks import ingest_helius_signal
+                ingest_helius_signal.delay(signal)
                 signals_processed += 1
 
         logger.info("[HELIUS] action=process signals=%d events=%d", signals_processed, len(events))

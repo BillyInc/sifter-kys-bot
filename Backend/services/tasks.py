@@ -15,9 +15,13 @@ Tasks:
   sync_elite_15_to_monitor     — every hour (:05)
   send_telegram_alert_async    — on-demand (queued by wallet monitor)
 """
+import logging
+
 from celery_app import celery
 from datetime import datetime
 import os
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -1320,4 +1324,70 @@ def check_paper_trader_exits():
             alert(P0, "EXIT_CHECKER", f"Exit checker task crashed: {exc}")
         except ImportError:
             pass
+        return {"status": "error", "error": str(exc)}
+
+
+# =============================================================================
+# SIGNAL AGGREGATOR TASKS
+# =============================================================================
+
+@celery.task(name='tasks.ingest_helius_signal')
+def ingest_helius_signal(signal: dict):
+    """Receive one raw Helius signal and pass to the aggregator."""
+    try:
+        from services.signal_aggregator import get_aggregator
+        get_aggregator().receive(signal)
+        logger.info(
+            "[SIGNAL] action=ingest status=ok token=%s wallet=%s",
+            signal.get("token_address", "")[:8],
+            signal.get("wallet_address", "")[:8],
+        )
+        return {"status": "ok"}
+    except Exception as exc:
+        logger.error("[SIGNAL] action=ingest status=error error=%s", str(exc)[:200])
+        return {"status": "error", "error": str(exc)}
+
+
+@celery.task(name='tasks.flush_signal_aggregator')
+def flush_signal_aggregator():
+    """Called every 10s by Celery beat. Emits grouped signals whose window expired."""
+    try:
+        from services.signal_aggregator import get_aggregator
+        from services.paper_trader import PaperTrader
+
+        agg = get_aggregator()
+        trader = PaperTrader()
+
+        def emit(grouped_signal: dict):
+            trader.process_signal(grouped_signal)
+
+            from services.supabase_client import get_supabase_client, SCHEMA_NAME
+            supabase = get_supabase_client()
+            users = (
+                supabase.schema(SCHEMA_NAME)
+                .table("telegram_users")
+                .select("user_id, auto_trade_enabled, auto_trade_max_usd, auto_trade_source, alerts_enabled")
+                .eq("alerts_enabled", True)
+                .eq("auto_trade_enabled", True)
+                .execute()
+                .data or []
+            )
+
+            for user in users:
+                user_id = user.get("user_id")
+                if not user_id:
+                    continue
+                if user.get("auto_trade_source", "elite15") not in ("elite15", "all"):
+                    continue
+                send_telegram_alert_async.delay(
+                    user_id,
+                    "elite15_trade",
+                    {**grouped_signal, "auto_trade_max_usd": user.get("auto_trade_max_usd", 100)},
+                )
+
+        emitted = agg.flush_expired(emit_callback=emit)
+        return {"status": "ok", "emitted": emitted, "pending": agg.get_pending_count()}
+
+    except Exception as exc:
+        logger.error("[AGGREGATOR] action=flush status=error error=%s", str(exc)[:200])
         return {"status": "error", "error": str(exc)}

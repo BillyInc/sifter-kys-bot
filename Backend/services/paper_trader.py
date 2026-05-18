@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 from config import Config
 from services.execution_adapters import NormalizedTradeSignal, PaperExecutionAdapter
@@ -20,6 +23,8 @@ from services.trading_rules import (
     DEFAULT_HOURLY_TRADE_LIMIT,
     DEFAULT_MIN_ELITE_USD,
     EXIT_FRACTIONS,
+    MAX_CONCURRENT_POSITIONS,
+    MAX_DEPLOYMENT_PCT,
     TAKE_PROFIT_MULTIPLIERS,
     calculate_position_size,
 )
@@ -286,6 +291,38 @@ class PaperTrader:
         if self._count_recent_entries(86400) >= self.daily_limit:
             return {"event_type": "skipped", "status": "skipped", "reason": "daily_limit"}
 
+        token_address = signal.get("token_address", "")
+
+        logger.info(
+            "[PAPER] action=evaluate token=%s wallet_count=%d open_positions=%d",
+            token_address[:8],
+            int(signal.get("wallet_count") or 1),
+            len(self.open_positions),
+        )
+
+        if len(self.open_positions) >= MAX_CONCURRENT_POSITIONS:
+            logger.info(
+                "[PAPER] action=skip status=skipped token=%s reason=max_positions_reached "
+                "open=%d max=%d",
+                token_address[:8], len(self.open_positions), MAX_CONCURRENT_POSITIONS,
+            )
+            return {"event_type": "skipped", "status": "skipped", "reason": "max_positions_reached"}
+
+        portfolio = self._portfolio_state()
+        deployment_pct = portfolio.get("deployment_pct", 0.0)
+        if deployment_pct >= MAX_DEPLOYMENT_PCT:
+            logger.info(
+                "[PAPER] action=skip status=skipped token=%s reason=deployment_cap_reached "
+                "deployed_pct=%.1f%% cap=%.1f%%",
+                token_address[:8], deployment_pct * 100, MAX_DEPLOYMENT_PCT * 100,
+            )
+            return {
+                "event_type": "skipped",
+                "status": "skipped",
+                "reason": "deployment_cap_reached",
+                "metadata": {"deployed_pct": round(deployment_pct * 100, 1)},
+            }
+
         qualifying_usd = max(
             [float(trade.get("usd_value") or 0) for trade in signal.get("trades") or []] or [0.0]
         )
@@ -298,7 +335,6 @@ class PaperTrader:
         if not snapshot["safe"]:
             return {"event_type": "skipped", "status": "skipped", "reason": snapshot["reason"]}
 
-        portfolio = self._portfolio_state()
         sizing = calculate_position_size(
             portfolio_total=portfolio["portfolio_total_usd"],
             wallet_count=int(signal.get("wallet_count") or 1),
@@ -427,24 +463,44 @@ class PaperTrader:
     def _portfolio_state(self) -> Dict:
         try:
             rows = self._table("paper_trade_positions").select("*").execute().data or []
-        except Exception:
+        except Exception as exc:
+            logger.error("[PORTFOLIO] action=fetch status=error error=%s", str(exc)[:200])
             rows = []
+
         realized = sum(float(row.get("realized_pnl_usd") or 0) for row in rows)
-        deployed = sum(
-            float(row.get("entry_size_usd") or 0)
-            for row in rows
-            if row.get("status") == "open"
-        )
+
+        deployed = 0.0
+        for row in rows:
+            if row.get("status") != "open":
+                continue
+            entry_size = float(row.get("entry_size_usd") or 0)
+            token_amount = float(row.get("token_amount") or 0)
+            remaining = float(row.get("remaining_amount") or 0)
+            if token_amount > 0:
+                deployed += entry_size * (remaining / token_amount)
+            else:
+                deployed += entry_size
+
         available = self.starting_balance_usd + realized - deployed
+        portfolio_total = max(self.starting_balance_usd + realized, 0.0)
+        deployment_pct = deployed / max(portfolio_total, 1.0)
+
+        logger.info(
+            "[PORTFOLIO] total_usd=%.2f deployed_usd=%.2f available_usd=%.2f "
+            "realized_pnl=%.2f deployment_pct=%.1f%%",
+            portfolio_total, deployed, available, realized, deployment_pct * 100,
+        )
+
         return {
             "starting_balance_usd": round(self.starting_balance_usd, 2),
             "available_cash_usd": round(available, 2),
             "deployed_usd": round(deployed, 2),
             "realized_pnl_usd": round(realized, 2),
-            "portfolio_total_usd": round(max(self.starting_balance_usd + realized, 0), 2),
-            "change_pct": round((((self.starting_balance_usd + realized) / self.starting_balance_usd) - 1) * 100, 2)
-            if self.starting_balance_usd
-            else 0.0,
+            "portfolio_total_usd": round(portfolio_total, 2),
+            "deployment_pct": round(deployment_pct, 4),
+            "change_pct": round(
+                (((self.starting_balance_usd + realized) / self.starting_balance_usd) - 1) * 100, 2
+            ) if self.starting_balance_usd else 0.0,
         }
 
     def _persist_new_position(self, position: PaperPosition, signal: Dict, outcome: Dict):
@@ -497,6 +553,13 @@ class PaperTrader:
         position.realized_pnl_usd += pnl
         position.exits_taken = tuple(sorted((*position.exits_taken, target)))
 
+        logger.info(
+            "[PAPER] action=tp status=ok token=%s target=%.0fx multiple=%.2f "
+            "proceeds_usd=%.2f pnl_usd=%.2f remaining=%.6f",
+            position.token_address[:8], target, multiple,
+            round(proceeds, 2), round(pnl, 2), position.remaining_amount,
+        )
+
         self._table("paper_trade_events").insert(
             {
                 "token_address": position.token_address,
@@ -535,6 +598,13 @@ class PaperTrader:
             cost_basis = position.remaining_amount * position.entry_price
             pnl = proceeds - cost_basis
             position.realized_pnl_usd += pnl
+
+            logger.info(
+                "[PAPER] action=close status=ok token=%s reason=%s multiple=%.2f "
+                "pnl_usd=%.2f peak_multiple=%.2f",
+                position.token_address[:8], reason, multiple,
+                round(pnl, 2), position.peak_multiple,
+            )
 
             self._table("paper_trade_events").insert(
                 {
