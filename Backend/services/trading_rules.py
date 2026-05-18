@@ -20,6 +20,18 @@ DEFAULT_HOURLY_TRADE_LIMIT = 1
 DEFAULT_DAILY_TRADE_LIMIT = 8
 DEFAULT_MIN_ELITE_USD = 100.0
 
+# ── Concurrent position limits ────────────────────────────────────────────────
+MAX_CONCURRENT_POSITIONS = 8
+MAX_DEPLOYMENT_PCT = 0.70
+
+# ── Signal aggregation window ─────────────────────────────────────────────────
+AGGREGATION_WINDOW_SECONDS = 120
+
+# ── Exit thresholds ───────────────────────────────────────────────────────────
+DEAD_TOKEN_MULTIPLE = 0.30
+MAX_POSITION_AGE_DAYS = 14
+MIN_LIQUIDITY_USD = 10_000
+
 
 @dataclass(frozen=True)
 class PositionSizingResult:
