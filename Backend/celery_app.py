@@ -117,6 +117,13 @@ celery.conf.beat_schedule = {
         'options': {'expires': 110}
     },
 
+    # Signal aggregator flush — every 10 seconds
+    'flush-signal-aggregator': {
+        'task': 'tasks.flush_signal_aggregator',
+        'schedule': 10.0,
+        'options': {'expires': 9},
+    },
+
     # Paper trader daily digest — 7:00 AM UTC
     'paper-trader-daily-digest': {
         'task': 'tasks.send_paper_trader_daily_digest',
@@ -155,6 +162,8 @@ celery.conf.task_routes = {
     'tasks.send_daily_email_summaries':  {'queue': 'stats'},
     'tasks.check_paper_trader_exits':    {'queue': 'alerts'},
     'tasks.send_paper_trader_daily_digest': {'queue': 'stats'},
+    'tasks.ingest_helius_signal':    {'queue': 'alerts'},
+    'tasks.flush_signal_aggregator': {'queue': 'alerts'},
     'tasks.send_telegram_alert_async':    {'queue': 'alerts'},
     'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
     # ── Analysis pipeline tasks (migrated from RQ) ──────────────
@@ -190,6 +199,7 @@ print("""
   👥 Community Top 100:        Every hour (:15)
   💾 Redis → DuckDB flush:     Every hour (:30)
   🔄 ATH cache invalidation:   Every hour (:45)
+  📡 Signal aggregator flush:    Every 10 seconds
   📈 Paper trader exit checks:  Every 2 minutes
   📧 Paper trader digest:      Daily 7am UTC
   🗑️  Notification TTL purge:    Daily 2:30am UTC
