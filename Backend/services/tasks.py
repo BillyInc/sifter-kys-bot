@@ -1387,16 +1387,26 @@ def check_paper_trader_exits():
 
 @celery.task(name='tasks.ingest_helius_signal')
 def ingest_helius_signal(signal: dict):
-    """Receive one raw Helius signal and pass to the aggregator."""
+    """Receive one raw Helius signal, annotate with qualification status, pass to aggregator."""
     try:
+        token_address = signal.get("token_address", "")
+        wallet_address = signal.get("wallet_address", "")
+
+        # Qualification gate — annotate signal (soft gate, doesn't block)
+        from services.redis_pool import get_redis_client
+        r = get_redis_client()
+        is_qualified = r.sismember("kys:qualified_tokens", token_address)
+        is_known = r.sismember("kys:known_tokens", token_address) or r.sismember("kys:pending_tokens", token_address)
+        signal["token_qualified"] = bool(is_qualified)
+        signal["token_known"] = bool(is_known)
+
         from services.signal_aggregator import get_aggregator
         get_aggregator().receive(signal)
         logger.info(
-            "[SIGNAL] action=ingest status=ok token=%s wallet=%s",
-            signal.get("token_address", "")[:8],
-            signal.get("wallet_address", "")[:8],
+            "[SIGNAL] action=ingest status=ok token=%s wallet=%s qualified=%s",
+            token_address[:8], wallet_address[:8], is_qualified,
         )
-        return {"status": "ok"}
+        return {"status": "ok", "qualified": bool(is_qualified)}
     except Exception as exc:
         logger.error("[SIGNAL] action=ingest status=error error=%s", str(exc)[:200])
         return {"status": "error", "error": str(exc)}

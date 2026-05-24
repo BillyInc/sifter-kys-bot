@@ -176,8 +176,9 @@ SELECT
     )                                                       AS consistency_score,
     ''                                                      AS entry_price_multipliers,
     (
-        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.avg_entry_to_ath_mult, qualifies=1), 0)) * 100) * 0.60 +
-        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.total_roi_mult, qualifies=1), 0)) * 100)        * 0.30 +
+        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.avg_entry_to_ath_mult, qualifies=1), 0)) * 100) * 0.50 +
+        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.entry_price_to_launch_mult, qualifies=1), 0)) * 100) * 0.20 +
+        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.total_roi_mult, qualifies=1), 0)) * 100) * 0.20 +
         greatest(0, 100 - ifNull(
             stddevPopIf(wallet_token_stats.entry_price_to_launch_mult, qualifies=1)
             / nullIf(avgIf(wallet_token_stats.entry_price_to_launch_mult, qualifies=1), 0)
@@ -190,3 +191,5 @@ SELECT
 FROM wallet_token_stats
 GROUP BY wallet_address
 """
+
+DROP_MV_WALLET_AGGREGATE_SQL = "DROP VIEW IF EXISTS mv_wallet_aggregate"

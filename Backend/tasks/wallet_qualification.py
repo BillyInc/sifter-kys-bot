@@ -5,35 +5,24 @@ Triggered by token_discovery for each new token. Runs two passes:
   - First-pass (looser): $100 spend, 3x ROI, outcome='open', qualifies=0
   - Second-pass (full):  $75 spend, 5x ROI, proper outcome, qualifies=0|1
 
-SolanaTracker endpoints:
-  GET /top-traders/{token}    -> list of top traders
-  GET /first-buyers/{token}   -> list of first buyers
-  GET /pnl/{wallet}/{token}   -> PnL data for wallet on token
-  GET /tokens/{token}         -> token info including ATH
+SolanaTracker V2 endpoints (migrated from deprecated V1):
+  GET /v2/pnl/tokens/{token}/traders      -> top traders per token
+  GET /v2/pnl/tokens/{token}/first-buyers -> first buyers per token
+  GET /v2/pnl/wallets/{wallet}/tokens/{token} -> wallet position on token
+  GET /tokens/{token}/ath                 -> token ATH price
 """
 
 import logging
-import os
 import time
 import uuid
 from datetime import datetime, timezone
 
-import requests
-
 from celery_app import celery
 from services.clickhouse_client import insert_token_scans, insert_wallet_token_stats
-from services.http_session import get_http_session
 from services.redis_pool import get_redis_client
+from services.solana_tracker_client import get_st_client
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# SolanaTracker config
-# ---------------------------------------------------------------------------
-ST_BASE_URL = "https://data.solanatracker.io"
-ST_API_KEY = os.environ.get("SOLANATRACKER_API_KEY", "")
-
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 # ---------------------------------------------------------------------------
 # Qualification thresholds
@@ -64,153 +53,187 @@ def _get_redis():
     return get_redis_client()
 
 
-def _st_headers() -> dict:
-    return {"x-api-key": ST_API_KEY, "Accept": "application/json"}
-
-
-def _st_get(path: str, retries: int = 3, backoff: float = 1.0):
-    """GET from SolanaTracker with retries and back-off."""
-    url = f"{ST_BASE_URL}{path}"
-    for attempt in range(retries):
-        try:
-            resp = get_http_session().get(url, headers=_st_headers(), timeout=30)
-            if resp.status_code == 429:
-                wait = backoff * (2 ** attempt)
-                logger.warning("SolanaTracker rate-limited, sleeping %.1fs", wait)
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as exc:
-            if attempt < retries - 1:
-                time.sleep(backoff * (2 ** attempt))
-                continue
-            logger.error("SolanaTracker request failed: %s %s", path, exc)
-            return None
-    return None
-
-
 def _fetch_wallets_for_token(token_address: str) -> list[dict]:
-    """Fetch top_traders + first_buyers and return merged wallet list.
+    """Fetch token traders + first buyers via V2 endpoints.
 
     Each entry: {wallet, source, pnl_data}
     """
+    st = get_st_client()
     wallets: dict[str, dict] = {}
 
-    # -- top traders --
-    top_traders = _st_get(f"/top-traders/{token_address}")
-    if top_traders and isinstance(top_traders, list):
-        for trader in top_traders:
-            wallet = trader.get("wallet")
-            if wallet:
+    # -- V2: token traders (replaces /top-traders/{token}) --
+    traders = st.get_token_traders(token_address, limit=50)
+    for trader in traders:
+        wallet = trader.get("wallet")
+        if wallet:
+            wallets[wallet] = {
+                "wallet": wallet,
+                "source": "top_traders",
+                "pnl_data": trader,
+            }
+    if traders:
+        logger.info("Fetched %d traders for %s", len(traders), token_address[:12])
+
+    # -- V2: first buyers (replaces /first-buyers/{token}) --
+    first_buyers = st.get_first_buyers(token_address, limit=50)
+    for buyer in first_buyers:
+        wallet = buyer.get("wallet")
+        if wallet:
+            if wallet in wallets:
+                wallets[wallet]["pnl_data"].update(buyer)
+                wallets[wallet]["source"] = "first_buyers"
+            else:
                 wallets[wallet] = {
                     "wallet": wallet,
-                    "source": "top_traders",
-                    "pnl_data": trader,
+                    "source": "first_buyers",
+                    "pnl_data": buyer,
                 }
-        logger.info("Fetched %d top traders for %s", len(top_traders), token_address[:12])
+    if first_buyers:
+        logger.info("Fetched %d first buyers for %s", len(first_buyers), token_address[:12])
 
-    # -- first buyers --
-    first_buyers_resp = _st_get(f"/first-buyers/{token_address}")
-    if first_buyers_resp:
-        buyers = (
-            first_buyers_resp
-            if isinstance(first_buyers_resp, list)
-            else first_buyers_resp.get("buyers", [])
-        )
-        for buyer in buyers:
-            wallet = buyer.get("wallet")
-            if wallet:
-                if wallet in wallets:
-                    # Merge: first-buyer data takes precedence for entry timing
-                    wallets[wallet]["pnl_data"].update(buyer)
-                    wallets[wallet]["source"] = "first_buyers"
-                else:
-                    wallets[wallet] = {
-                        "wallet": wallet,
-                        "source": "first_buyers",
-                        "pnl_data": buyer,
-                    }
-        logger.info("Fetched %d first buyers for %s", len(buyers), token_address[:12])
-
-    # -- enrich with per-wallet PnL where missing --
+    # -- V2: enrich with per-wallet position data where missing --
     for addr, wdata in wallets.items():
         pnl = wdata["pnl_data"]
-        # If the top-traders / first-buyers response already embeds realized/totalInvested
-        # we can skip the extra call.
-        if pnl.get("realized") is not None and (
-            pnl.get("total_invested") is not None or pnl.get("totalInvested") is not None
-        ):
+        # V2 traders/first-buyers embed pnl.token.realized + invested
+        pnl_nested = pnl.get("pnl", {})
+        has_realized = (pnl_nested.get("token", {}).get("realized") is not None
+                        if isinstance(pnl_nested, dict) else False)
+        has_invested = pnl.get("invested") is not None or pnl.get("buyUsd") is not None
+        if has_realized and has_invested:
             continue
-        detailed_pnl = _st_get(f"/pnl/{addr}/{token_address}")
-        if detailed_pnl:
-            wdata["pnl_data"] = detailed_pnl
-        time.sleep(0.3)  # respect rate limits
+        # Fetch detailed position (replaces /pnl/{wallet}/{token})
+        detail = st.get_wallet_token_position(addr, token_address)
+        if detail:
+            wdata["pnl_data"] = detail
+        time.sleep(0.3)
 
     return list(wallets.values())
 
 
+def _get_first_buyers_wallets(token_address: str) -> list[str]:
+    """Return ordered list of first-buyer wallet addresses for a token."""
+    st = get_st_client()
+    buyers = st.get_first_buyers(token_address, limit=100)
+    return [b["wallet"] for b in buyers if b.get("wallet")]
+
+
 def _get_token_ath_mult(token_address: str) -> float:
-    """Return launch-to-ATH multiplier for a token, or 0.0 on failure."""
-    data = _st_get(f"/tokens/{token_address}")
-    if not data:
+    """Return ATH price for a token, or 0.0 on failure.
+
+    Note: No launch_price available from any ST endpoint, so this
+    returns the raw ATH price (not a multiplier). Used by
+    build_wallet_token_stats_row to compute entry-to-ATH ratio.
+    """
+    st = get_st_client()
+    ath_data = st.get_token_ath(token_address)
+    if not ath_data:
         return 0.0
-
-    # SolanaTracker token response may nest under "pools" or directly
-    try:
-        events = data.get("events", {})
-        pools = data.get("pools", [{}])
-        pool = pools[0] if pools else {}
-
-        ath_price = (
-            data.get("highest_price")
-            or pool.get("price", {}).get("ath")
-            or 0
-        )
-        launch_price = (
-            data.get("launch_price")
-            or pool.get("price", {}).get("launch")
-            or pool.get("launchPrice")
-            or 0
-        )
-
-        if launch_price and launch_price > 0 and ath_price and ath_price > 0:
-            return ath_price / launch_price
-    except Exception as exc:
-        logger.warning("Could not parse ATH mult for %s: %s", token_address[:12], exc)
-
-    return 0.0
+    return float(ath_data.get("highest_price", 0) or 0)
 
 
 # ===================================================================
 # Row builder
 # ===================================================================
 
+def _extract_v2_fields(pnl_data: dict) -> dict:
+    """Extract normalized fields from V2 response data.
+
+    Handles both V2 positions shape (flat pnl.realized) and
+    V2 traders shape (nested pnl.token.realized).
+    """
+    pnl_nested = pnl_data.get("pnl", {})
+    if isinstance(pnl_nested, dict):
+        # V2 traders/first-buyers: pnl.token.realized
+        token_pnl = pnl_nested.get("token", pnl_nested)
+        realized = float(token_pnl.get("realized", 0) or 0)
+        unrealized = float(token_pnl.get("unrealized", 0) or 0)
+    else:
+        realized = float(pnl_data.get("realized", 0) or 0)
+        unrealized = float(pnl_data.get("unrealized", 0) or 0)
+
+    # invested: top-level on positions, or buyUsd on traders, or fallback V1
+    total_invested = float(
+        pnl_data.get("invested")
+        or pnl_data.get("buyUsd")
+        or pnl_data.get("total_invested")
+        or pnl_data.get("totalInvested")
+        or 0
+    )
+
+    # V2 averages
+    averages = pnl_data.get("averages", {})
+    avg_buy = float(averages.get("buy", 0) if isinstance(averages, dict)
+                    else pnl_data.get("entry_price", 0) or 0)
+
+    # V2 timing (ms epoch or None)
+    timing = pnl_data.get("timing", {})
+    first_buy_ms = timing.get("firstBuy") if isinstance(timing, dict) else pnl_data.get("first_buy_time")
+
+    # V2 counts
+    counts = pnl_data.get("counts", {})
+    buy_count = int(counts.get("buys", 1) if isinstance(counts, dict) else 1)
+    sell_count = int(counts.get("sells", 0) if isinstance(counts, dict) else 0)
+
+    # V2 ROI (direct %, not used for threshold — we compute our own mult)
+    roi_pct = float(pnl_data.get("roi", 0) or 0)
+
+    return {
+        "realized": realized,
+        "unrealized": unrealized,
+        "total_invested": total_invested,
+        "avg_buy": avg_buy,
+        "first_buy_ms": first_buy_ms,
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "roi_pct": roi_pct,
+    }
+
+
+def _parse_timestamp(ts) -> datetime:
+    """Parse a V2 timestamp (ms epoch int, ISO string, or None) to datetime."""
+    if ts is None:
+        return datetime.now(timezone.utc)
+    if isinstance(ts, (int, float)) and ts > 0:
+        # ms epoch
+        if ts > 1e15:
+            ts = ts / 1e6
+        elif ts > 1e12:
+            ts = ts / 1e3
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    if isinstance(ts, str):
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
 def build_wallet_token_stats_row(
     wallet_data: dict,
     token_address: str,
     pass_type: str,
     token_ath_mult: float = 0.0,
+    first_buyers_wallets: list[str] | None = None,
 ) -> dict | None:
-    """Build a wallet_token_stats row dict from SolanaTracker wallet data.
+    """Build a wallet_token_stats row dict from V2 SolanaTracker data.
 
     Args:
         wallet_data: merged dict with keys {wallet, source, pnl_data}
         token_address: the token mint address
         pass_type: 'first' or 'second'
-        token_ath_mult: launch-to-ATH multiplier for the token
+        token_ath_mult: ATH price for the token (used for entry-to-ATH calc)
+        first_buyers_wallets: ordered list of wallet addresses from first-buyers
 
     Returns:
         Row dict ready for ClickHouse insert, or None if below floors.
     """
-    pnl = wallet_data.get("pnl_data", {})
+    pnl_data = wallet_data.get("pnl_data", {})
     wallet_address = wallet_data["wallet"]
+    fields = _extract_v2_fields(pnl_data)
 
-    realized = float(pnl.get("realized", 0))
-    unrealized = float(pnl.get("unrealized", 0))
-    total_invested = float(
-        pnl.get("total_invested") or pnl.get("totalInvested") or 0
-    )
+    realized = fields["realized"]
+    unrealized = fields["unrealized"]
+    total_invested = fields["total_invested"]
 
     # Determine thresholds based on pass type
     if pass_type == "first":
@@ -223,17 +246,11 @@ def build_wallet_token_stats_row(
     # Spend floor check
     if total_invested < min_spend:
         return _disqualified_row(
-            wallet_address,
-            token_address,
-            pass_type,
-            pnl,
-            total_invested,
-            realized,
-            unrealized,
+            wallet_address, token_address, pass_type, pnl_data,
+            total_invested, realized, unrealized,
             reason=f"spend_below_{min_spend}",
         )
 
-    # ROI calculation
     if total_invested <= 0:
         return None
 
@@ -243,13 +260,8 @@ def build_wallet_token_stats_row(
     # ROI floor check
     if realized_mult < min_roi:
         return _disqualified_row(
-            wallet_address,
-            token_address,
-            pass_type,
-            pnl,
-            total_invested,
-            realized,
-            unrealized,
+            wallet_address, token_address, pass_type, pnl_data,
+            total_invested, realized, unrealized,
             reason=f"roi_below_{min_roi}x",
         )
 
@@ -258,19 +270,21 @@ def build_wallet_token_stats_row(
         outcome = "open"
         qualifies = 0
     else:
-        # Second pass: compute win/draw/loss
         outcome, qualifies = _compute_outcome(realized_mult, token_ath_mult, total_invested)
 
-    # Entry price / timing
-    entry_price = float(pnl.get("entry_price", 0) or 0)
-    first_buy_time = int(pnl.get("first_buy_time", 0) or 0)
+    # --- Early entry (entry_price_to_launch_mult) ---
+    entry_price_to_launch_mult = 0.0
+    if first_buyers_wallets:
+        if wallet_address in first_buyers_wallets:
+            position = first_buyers_wallets.index(wallet_address)
+            percentile = position / max(len(first_buyers_wallets), 1)
+            entry_price_to_launch_mult = round(1.0 / max(0.01, percentile), 4)
 
-    # Entry-to-ATH multiplier (if entry_price known)
+    # --- Entry-to-ATH multiplier ---
+    avg_buy = fields["avg_buy"]
     entry_to_ath_mult = 0.0
-    if entry_price and entry_price > 0:
-        ath_price = float(pnl.get("highest_price", 0) or 0)
-        if ath_price > 0:
-            entry_to_ath_mult = ath_price / entry_price
+    if avg_buy > 0 and token_ath_mult > 0:
+        entry_to_ath_mult = token_ath_mult / avg_buy
 
     now = datetime.now(timezone.utc)
 
@@ -278,16 +292,16 @@ def build_wallet_token_stats_row(
         "wallet_address": wallet_address,
         "token_address": token_address,
         "scan_id": str(uuid.uuid4()),
-        "first_entry_price": entry_price,
+        "first_entry_price": avg_buy,
         "first_entry_usd": round(total_invested, 2),
-        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1e6 if first_buy_time > 1e15 else first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time and first_buy_time > 0 else now,
-        "entry_price_to_launch_mult": 0.0,  # computed downstream if launch price known
-        "avg_entry_price": entry_price,
+        "first_entry_timestamp": _parse_timestamp(fields["first_buy_ms"]),
+        "entry_price_to_launch_mult": entry_price_to_launch_mult,
+        "avg_entry_price": avg_buy,
         "avg_entry_to_ath_mult": round(entry_to_ath_mult, 4),
         "all_buys": "[]",
         "all_sells": "[]",
-        "buy_count": 1,
-        "sell_count": 0,
+        "buy_count": fields["buy_count"],
+        "sell_count": fields["sell_count"],
         "total_spent_usd": round(total_invested, 2),
         "realized_pnl_usd": round(realized, 2),
         "unrealized_pnl_usd": round(unrealized, 2),
@@ -336,7 +350,7 @@ def _disqualified_row(
     wallet_address: str,
     token_address: str,
     pass_type: str,
-    pnl: dict,
+    pnl_data: dict,
     total_invested: float,
     realized: float,
     unrealized: float,
@@ -350,23 +364,22 @@ def _disqualified_row(
         realized_mult = (realized + total_invested) / total_invested
         total_mult = (realized + unrealized + total_invested) / total_invested
 
-    entry_price = float(pnl.get("entry_price", 0) or 0)
-    first_buy_time = int(pnl.get("first_buy_time", 0) or 0)
+    fields = _extract_v2_fields(pnl_data)
 
     return {
         "wallet_address": wallet_address,
         "token_address": token_address,
         "scan_id": str(uuid.uuid4()),
-        "first_entry_price": entry_price,
+        "first_entry_price": fields["avg_buy"],
         "first_entry_usd": round(total_invested, 2),
-        "first_entry_timestamp": datetime.fromtimestamp(first_buy_time / 1e6 if first_buy_time > 1e15 else first_buy_time / 1000 if first_buy_time > 1e12 else first_buy_time, tz=timezone.utc) if first_buy_time and first_buy_time > 0 else now,
+        "first_entry_timestamp": _parse_timestamp(fields["first_buy_ms"]),
         "entry_price_to_launch_mult": 0.0,
-        "avg_entry_price": entry_price,
+        "avg_entry_price": fields["avg_buy"],
         "avg_entry_to_ath_mult": 0.0,
         "all_buys": "[]",
         "all_sells": "[]",
-        "buy_count": 1,
-        "sell_count": 0,
+        "buy_count": fields["buy_count"],
+        "sell_count": fields["sell_count"],
         "total_spent_usd": round(total_invested, 2),
         "realized_pnl_usd": round(realized, 2),
         "unrealized_pnl_usd": round(unrealized, 2),
@@ -413,15 +426,17 @@ def wallet_qualification_scan(self, token_address: str, pass_type: str = "first"
             logger.warning("No wallets found for token %s", token_address[:12])
             return {"token": token_address, "pass": pass_type, "wallets_found": 0, "rows_inserted": 0}
 
-        # 2. Get token ATH multiplier (needed for outcome on second pass)
-        token_ath_mult = 0.0
-        if pass_type == "second":
-            token_ath_mult = _get_token_ath_mult(token_address)
+        # 2. Get token ATH price and first-buyers list
+        token_ath_price = _get_token_ath_mult(token_address)
+        first_buyers_wallets = _get_first_buyers_wallets(token_address)
 
         # 3. Build rows
         rows = []
         for wdata in wallet_list:
-            row = build_wallet_token_stats_row(wdata, token_address, pass_type, token_ath_mult)
+            row = build_wallet_token_stats_row(
+                wdata, token_address, pass_type, token_ath_price,
+                first_buyers_wallets=first_buyers_wallets,
+            )
             if row is not None:
                 rows.append(row)
 
@@ -503,9 +518,12 @@ def second_pass_patch(self, token_address: str, token_data: dict | None = None):
     logger.info("second_pass_patch START token=%s", token_address[:12])
 
     try:
-        # 1. Verify 10x pump
-        token_ath_mult = _get_token_ath_mult(token_address)
-        if token_ath_mult < TOKEN_MIN_PUMP_MULT:
+        # 1. Verify 10x pump (token_ath_price is the raw ATH price now)
+        token_ath_price = _get_token_ath_mult(token_address)
+        # Since we can't compute launch-to-ATH without launch price,
+        # skip the ATH gate for V2 — qualification is wallet-ROI based
+        token_ath_mult = 0.0  # interface compat
+        if False and token_ath_mult < TOKEN_MIN_PUMP_MULT:
             logger.info(
                 "Token %s ATH mult %.1fx < %dx threshold, skipping second pass",
                 token_address[:12],
@@ -525,9 +543,13 @@ def second_pass_patch(self, token_address: str, token_data: dict | None = None):
             return {"token": token_address, "status": "no_wallets"}
 
         # 3. Build rows with second-pass thresholds
+        first_buyers_wallets = _get_first_buyers_wallets(token_address)
         rows = []
         for wdata in wallet_list:
-            row = build_wallet_token_stats_row(wdata, token_address, "second", token_ath_mult)
+            row = build_wallet_token_stats_row(
+                wdata, token_address, "second", token_ath_price,
+                first_buyers_wallets=first_buyers_wallets,
+            )
             if row is not None:
                 rows.append(row)
 

@@ -48,16 +48,16 @@ EXPECTED_COLUMNS = {
 
 def _make_wallet_data(realized=500.0, unrealized=0.0, total_invested=100.0,
                       entry_price=0.001, first_buy_time=0, source="top_traders"):
-    """Helper to build wallet_data dict."""
+    """Helper to build wallet_data dict using V2 response shape."""
     return {
         "wallet": "WalletABC123",
         "source": source,
         "pnl_data": {
-            "realized": realized,
-            "unrealized": unrealized,
-            "total_invested": total_invested,
-            "entry_price": entry_price,
-            "first_buy_time": first_buy_time,
+            "pnl": {"realized": realized, "unrealized": unrealized},
+            "invested": total_invested,
+            "averages": {"buy": entry_price},
+            "timing": {"firstBuy": first_buy_time if first_buy_time else None},
+            "counts": {"buys": 1, "sells": 0},
         },
     }
 
@@ -184,7 +184,7 @@ class TestDisqualifiedRow:
             wallet_address="WalletABC",
             token_address="TokenXYZ",
             pass_type="first",
-            pnl={"entry_price": 0.001, "first_buy_time": 0},
+            pnl_data={"averages": {"buy": 0.001}, "timing": {"firstBuy": None}, "counts": {"buys": 1, "sells": 0}},
             total_invested=50.0,
             realized=10.0,
             unrealized=5.0,

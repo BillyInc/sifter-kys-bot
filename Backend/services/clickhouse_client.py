@@ -165,8 +165,9 @@ def query_top20_for_tokens(token_list: list[str]) -> list:
                         / nullIf(avg(entry_price_to_launch_mult), 0)
                     ) * 100) AS consistency_score,
                     (
-                        least(1000, log(1 + avg(avg_entry_to_ath_mult)) * 100) * 0.60 +
-                        least(1000, log(1 + avg(total_roi_mult)) * 100) * 0.30 +
+                        least(1000, log(1 + avg(avg_entry_to_ath_mult)) * 100) * 0.50 +
+                        least(1000, log(1 + avg(entry_price_to_launch_mult)) * 100) * 0.20 +
+                        least(1000, log(1 + avg(total_roi_mult)) * 100) * 0.20 +
                         greatest(0, 100 - (
                             stddevPop(entry_price_to_launch_mult)
                             / nullIf(avg(entry_price_to_launch_mult), 0)

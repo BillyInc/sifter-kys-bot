@@ -16,6 +16,7 @@ celery = Celery(
         'tasks.token_discovery',
         'tasks.wallet_qualification',
         'tasks.clickhouse_backup',
+        'tasks.leaderboard_discovery',
     ],
 )
 
@@ -131,6 +132,15 @@ celery.conf.beat_schedule = {
         'options': {'expires': 3600, 'queue': 'stats'}
     },
 
+    # ── Leaderboard Discovery ───────────────────────────────
+
+    # Wallet-first discovery via V2 leaderboard — every 6 hours at :20
+    'leaderboard-discovery-scan': {
+        'task': 'tasks.leaderboard_discovery_scan',
+        'schedule': crontab(hour='*/6', minute=20),
+        'options': {'expires': 7200, 'queue': 'discovery'}
+    },
+
     # ── Disaster Recovery ────────────────────────────────────
 
     # ClickHouse → Supabase backup every Monday at 2:00 AM UTC
@@ -158,6 +168,7 @@ celery.conf.task_routes = {
     'tasks.purge_old_notifications':     {'queue': 'stats'},
     'tasks.backup_clickhouse_to_supabase': {'queue': 'stats'},
     'tasks.requalify_existing_data':     {'queue': 'stats'},
+    'tasks.leaderboard_discovery_scan':  {'queue': 'discovery'},
     'tasks.sync_elite_15_to_monitor':    {'queue': 'rankings'},
     'tasks.send_daily_email_summaries':  {'queue': 'stats'},
     'tasks.check_paper_trader_exits':    {'queue': 'alerts'},
