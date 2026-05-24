@@ -1155,6 +1155,53 @@ def purge_old_notifications():
 ELITE_SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001'
 
 
+def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
+    """Update the Helius webhook to monitor the given wallet addresses."""
+    import requests as req
+    from config import Config
+
+    api_key = Config.HELIUS_API_KEY
+    if not api_key:
+        logger.warning("[ELITE SYNC] HELIUS_API_KEY not set, skipping webhook sync")
+        return False
+
+    webhook_url = os.environ.get(
+        "WEBHOOK_URL", "https://sifter-kys.duckdns.org/api/webhooks/helius"
+    )
+
+    try:
+        # Find existing webhook for our URL
+        resp = req.get(
+            f"https://api.helius.xyz/v0/webhooks?api-key={api_key}", timeout=15
+        )
+        if resp.status_code != 200:
+            logger.error("[ELITE SYNC] Helius list webhooks failed: %d", resp.status_code)
+            return False
+
+        hooks = resp.json()
+        matching = [h for h in hooks if h.get("webhookURL") == webhook_url]
+
+        if matching:
+            # Update existing webhook
+            wh_id = matching[0]["webhookID"]
+            resp = req.put(
+                f"https://api.helius.xyz/v0/webhooks/{wh_id}?api-key={api_key}",
+                json={"accountAddresses": wallet_addresses},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                logger.info("[ELITE SYNC] Updated Helius webhook %s with %d wallets", wh_id, len(wallet_addresses))
+                return True
+            logger.error("[ELITE SYNC] Helius update failed: %d %s", resp.status_code, resp.text[:200])
+        else:
+            logger.warning("[ELITE SYNC] No Helius webhook found for %s — run register_helius_webhook.py first", webhook_url)
+
+    except Exception as exc:
+        logger.error("[ELITE SYNC] Helius webhook sync error: %s", str(exc)[:200])
+
+    return False
+
+
 @celery.task(name='tasks.sync_elite_15_to_monitor')
 def sync_elite_15_to_monitor():
     """
@@ -1223,17 +1270,24 @@ def sync_elite_15_to_monitor():
             except Exception as e:
                 print(f"[ELITE SYNC] Error removing {addr[:12]}...: {e}")
 
+        # 5. Sync Helius webhook with updated wallet list
+        helius_synced = False
+        if to_add or to_remove:
+            helius_synced = _sync_helius_webhook(list(elite_15_addresses))
+
         print(f"\n[ELITE SYNC] Complete")
         print(f"  Elite 15 wallets:  {len(elite_15_addresses)}")
         print(f"  Already monitored: {len(existing_addresses & elite_15_addresses)}")
         print(f"  Added:             {added}")
         print(f"  Removed:           {removed}")
+        print(f"  Helius synced:     {helius_synced}")
 
         return {
             'status': 'success',
             'elite_15': len(elite_15_addresses),
             'added': added,
             'removed': removed,
+            'helius_synced': helius_synced,
             'timestamp': datetime.utcnow().isoformat(),
         }
 
