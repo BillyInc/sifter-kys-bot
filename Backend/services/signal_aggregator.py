@@ -6,35 +6,24 @@ Helius fires one webhook per wallet transaction. This module holds signals
 for AGGREGATION_WINDOW_SECONDS, merges concurrent wallet buys, then emits
 one grouped signal. The Celery beat task flush_signal_aggregator calls
 flush_expired() every 10 seconds.
+
+State is stored in Redis so it's shared across Celery worker processes.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import threading
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class _PendingSignal:
-    token_address: str
-    first_seen: float
-    wallet_addresses: List[str] = field(default_factory=list)
-    wallet_count: int = 0
-    total_usd: float = 0.0
-    base_signal: Optional[Dict] = None
-    committed: bool = False
-
-    def age_seconds(self) -> float:
-        return time.time() - self.first_seen
+REDIS_PREFIX = "sifter:sigagg:"
 
 
 class SignalAggregator:
-    """Thread-safe signal grouping window for Elite 15 wallet buys."""
+    """Redis-backed signal grouping window for Elite 15 wallet buys."""
 
     def __init__(self):
         try:
@@ -43,9 +32,12 @@ class SignalAggregator:
         except ImportError:
             self._window = 120
 
-        self._pending: Dict[str, _PendingSignal] = {}
-        self._lock = threading.Lock()
+        from services.redis_pool import get_redis_client
+        self._redis = get_redis_client()
         logger.info("[AGGREGATOR] action=init status=ok window_seconds=%d", self._window)
+
+    def _key(self, token_address: str) -> str:
+        return f"{REDIS_PREFIX}{token_address}"
 
     def receive(self, signal: Dict) -> None:
         token_address = signal.get("token_address", "")
@@ -56,85 +48,95 @@ class SignalAggregator:
             logger.warning("[AGGREGATOR] action=receive status=skipped reason=missing_fields")
             return
 
-        with self._lock:
-            if token_address not in self._pending:
-                self._pending[token_address] = _PendingSignal(
-                    token_address=token_address,
-                    first_seen=time.time(),
-                    wallet_addresses=[wallet_address],
-                    wallet_count=1,
-                    total_usd=usd_value,
-                    base_signal=signal,
-                )
+        key = self._key(token_address)
+        existing = self._redis.get(key)
+
+        if existing is None:
+            entry = {
+                "token_address": token_address,
+                "first_seen": time.time(),
+                "wallet_addresses": [wallet_address],
+                "wallet_count": 1,
+                "total_usd": usd_value,
+                "base_signal": signal,
+                "committed": False,
+            }
+            # TTL = 3x window to auto-cleanup stale entries
+            self._redis.setex(key, self._window * 3, json.dumps(entry, default=str))
+            logger.info(
+                "[AGGREGATOR] action=receive status=new token=%s wallet=%s usd=%.2f window=%ds",
+                token_address[:8], wallet_address[:8], usd_value, self._window,
+            )
+        else:
+            entry = json.loads(existing)
+            if wallet_address not in entry["wallet_addresses"]:
+                entry["wallet_addresses"].append(wallet_address)
+                entry["wallet_count"] += 1
+                entry["total_usd"] += usd_value
+                ttl = self._redis.ttl(key)
+                self._redis.setex(key, max(ttl, 60), json.dumps(entry, default=str))
                 logger.info(
-                    "[AGGREGATOR] action=receive status=new token=%s wallet=%s usd=%.2f window=%ds",
-                    token_address[:8], wallet_address[:8], usd_value, self._window,
+                    "[AGGREGATOR] action=receive status=grouped token=%s wallet=%s "
+                    "wallet_count_now=%d",
+                    token_address[:8], wallet_address[:8], entry["wallet_count"],
                 )
-            else:
-                agg = self._pending[token_address]
-                if wallet_address not in agg.wallet_addresses:
-                    agg.wallet_addresses.append(wallet_address)
-                    agg.wallet_count += 1
-                    agg.total_usd += usd_value
-                    logger.info(
-                        "[AGGREGATOR] action=receive status=grouped token=%s wallet=%s "
-                        "wallet_count_now=%d age_seconds=%.1f",
-                        token_address[:8], wallet_address[:8],
-                        agg.wallet_count, agg.age_seconds(),
-                    )
 
     def flush_expired(self, emit_callback: Callable[[Dict], None]) -> int:
         now = time.time()
         emitted = 0
 
-        with self._lock:
-            to_emit = [
-                token for token, agg in self._pending.items()
-                if not agg.committed and now - agg.first_seen >= self._window
-            ]
+        # Scan for all pending signal keys
+        keys = list(self._redis.scan_iter(match=f"{REDIS_PREFIX}*", count=100))
 
-            for token_address in to_emit:
-                agg = self._pending[token_address]
+        for key in keys:
+            raw = self._redis.get(key)
+            if raw is None:
+                continue
 
-                from services.trading_rules import classify_signal
-                signal_type = classify_signal(agg.wallet_count)
+            entry = json.loads(raw)
+            if entry.get("committed"):
+                continue
 
-                grouped_signal = {
-                    **agg.base_signal,
-                    "wallet_count": agg.wallet_count,
-                    "total_usd": round(agg.total_usd, 2),
-                    "wallet_addresses": agg.wallet_addresses,
-                    "wallets": [{"wallet": w, "tier": "S"} for w in agg.wallet_addresses],
-                    "trades": [{"usd_value": agg.total_usd}],
-                    "signal_type_resolved": signal_type,
-                    "aggregation_window_seconds": self._window,
-                    "aggregation_first_seen": agg.first_seen,
-                    "aggregation_age_seconds": round(now - agg.first_seen, 1),
-                }
+            first_seen = float(entry["first_seen"])
+            if now - first_seen < self._window:
+                continue
 
-                agg.committed = True
-                logger.info(
-                    "[AGGREGATOR] action=emit status=ok token=%s wallet_count=%d "
-                    "signal_type=%s total_usd=%.2f age_seconds=%.1f",
-                    token_address[:8], agg.wallet_count, signal_type,
-                    agg.total_usd, now - agg.first_seen,
+            # Window expired — emit
+            from services.trading_rules import classify_signal
+            signal_type = classify_signal(entry["wallet_count"])
+
+            grouped_signal = {
+                **entry["base_signal"],
+                "wallet_count": entry["wallet_count"],
+                "total_usd": round(entry["total_usd"], 2),
+                "wallet_addresses": entry["wallet_addresses"],
+                "wallets": [{"wallet": w, "tier": "S"} for w in entry["wallet_addresses"]],
+                "trades": [{"usd_value": entry["total_usd"]}],
+                "signal_type_resolved": signal_type,
+                "aggregation_window_seconds": self._window,
+                "aggregation_first_seen": first_seen,
+                "aggregation_age_seconds": round(now - first_seen, 1),
+            }
+
+            entry["committed"] = True
+            # Keep committed entry briefly for dedup, then let TTL expire
+            self._redis.setex(key, 300, json.dumps(entry, default=str))
+
+            logger.info(
+                "[AGGREGATOR] action=emit status=ok token=%s wallet_count=%d "
+                "signal_type=%s total_usd=%.2f age_seconds=%.1f",
+                entry["token_address"][:8], entry["wallet_count"], signal_type,
+                entry["total_usd"], now - first_seen,
+            )
+
+            try:
+                emit_callback(grouped_signal)
+                emitted += 1
+            except Exception as exc:
+                logger.error(
+                    "[AGGREGATOR] action=emit status=error token=%s error=%s",
+                    entry["token_address"][:8], str(exc)[:200],
                 )
-
-                try:
-                    emit_callback(grouped_signal)
-                    emitted += 1
-                except Exception as exc:
-                    logger.error(
-                        "[AGGREGATOR] action=emit status=error token=%s error=%s",
-                        token_address[:8], str(exc)[:200],
-                    )
-
-            stale = [
-                token for token, agg in self._pending.items()
-                if agg.committed and now - agg.first_seen > self._window * 3
-            ]
-            for token_address in stale:
-                del self._pending[token_address]
 
         pending_count = self.get_pending_count()
         logger.info(
@@ -144,17 +146,21 @@ class SignalAggregator:
         return emitted
 
     def get_pending_count(self) -> int:
-        with self._lock:
-            return sum(1 for agg in self._pending.values() if not agg.committed)
+        count = 0
+        for key in self._redis.scan_iter(match=f"{REDIS_PREFIX}*", count=100):
+            raw = self._redis.get(key)
+            if raw:
+                entry = json.loads(raw)
+                if not entry.get("committed"):
+                    count += 1
+        return count
 
 
 _instance: Optional[SignalAggregator] = None
-_instance_lock = threading.Lock()
 
 
 def get_aggregator() -> SignalAggregator:
     global _instance
-    with _instance_lock:
-        if _instance is None:
-            _instance = SignalAggregator()
+    if _instance is None:
+        _instance = SignalAggregator()
     return _instance
