@@ -256,7 +256,15 @@ class TelegramNotifier:
             if existing.data:
                 self._table("telegram_users").update(payload).eq("user_id", user_id).execute()
             else:
-                self._table("telegram_users").insert({"user_id": user_id, **payload}).execute()
+                self._table("telegram_users").insert({
+                    "user_id": user_id,
+                    **payload,
+                    "auto_trade_enabled": False,
+                    "auto_trade_max_usd": 100,
+                    "auto_trade_source": "elite15",
+                    "auto_trade_hourly_limit": 5,
+                    "auto_trade_daily_limit": 20,
+                }).execute()
 
             return user_id
         except Exception as e:
