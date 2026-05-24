@@ -101,18 +101,18 @@ def leaderboard_discovery_scan(self):
         )
         time.sleep(2)
 
-        winrate_candidates = st.get_leaderboard_top(
-            sort="winRate", min_roi=300, min_invested=75, min_trades=15, limit=200,
+        tokens_candidates = st.get_leaderboard_top(
+            sort="tokens", min_roi=300, min_invested=75, min_trades=15, limit=200,
         )
         time.sleep(2)
 
-        pnl_candidates = st.get_leaderboard_top(
-            sort="pnl", min_roi=200, min_invested=200, min_trades=10, limit=200,
+        volume_candidates = st.get_leaderboard_top(
+            sort="volume", min_roi=200, min_invested=200, min_trades=10, limit=200,
         )
 
         # Merge and deduplicate by wallet address
         all_candidates: dict[str, dict] = {}
-        for candidate in roi_candidates + winrate_candidates + pnl_candidates:
+        for candidate in roi_candidates + tokens_candidates + volume_candidates:
             wallet = candidate.get("wallet") or candidate.get("walletAddress") or ""
             if wallet and wallet not in all_candidates:
                 all_candidates[wallet] = candidate
