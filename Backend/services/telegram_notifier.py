@@ -244,6 +244,13 @@ class TelegramNotifier:
                 {"used": True, "telegram_id": int(telegram_chat_id)}
             ).eq("token", token).execute()
 
+            # Unlink this chat_id from any other user first (unique constraint)
+            self._table("telegram_users").update({
+                "telegram_chat_id": None,
+                "telegram_username": None,
+                "connected_at": None,
+            }).eq("telegram_chat_id", str(telegram_chat_id)).neq("user_id", user_id).execute()
+
             existing = self._table("telegram_users").select("*").eq("user_id", user_id).execute()
             payload = {
                 "telegram_chat_id": str(telegram_chat_id),
