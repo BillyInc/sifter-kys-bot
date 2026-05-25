@@ -185,8 +185,8 @@ def leaderboard_discovery_scan(self):
             # Filter qualifying positions: roi >= 300 (4x) AND invested >= 100
             qualifying = [
                 pos for pos in positions
-                if float(pos.get("roi", 0)) >= 300
-                and float(pos.get("invested", 0)) >= 100
+                if float(pos.get("roi") or 0) >= 300
+                and float(pos.get("invested") or 0) >= 100
             ]
 
             # Discard wallets with < 3 qualifying positions
@@ -289,14 +289,14 @@ def leaderboard_discovery_scan(self):
                     ath_price / avg_buy if avg_buy > 0 and ath_price > 0 else 0.0
                 )
 
-                roi_pct = float(pos.get("roi", 0))
+                roi_pct = float(pos.get("roi") or 0)
 
                 row = {
                     "wallet_address": wallet_address,
                     "token_address": token,
                     "scan_id": str(uuid.uuid4()),
                     "first_entry_price": float(pos.get("averages", {}).get("buy", 0)),
-                    "first_entry_usd": float(pos.get("invested", 0)),
+                    "first_entry_usd": float(pos.get("invested") or 0),
                     "first_entry_timestamp": _parse_timestamp(
                         pos.get("timing", {}).get("firstBuy")
                     ),
@@ -307,7 +307,7 @@ def leaderboard_discovery_scan(self):
                     "all_sells": "[]",
                     "buy_count": int(pos.get("counts", {}).get("buys", 0)),
                     "sell_count": int(pos.get("counts", {}).get("sells", 0)),
-                    "total_spent_usd": round(float(pos.get("invested", 0)), 2),
+                    "total_spent_usd": round(float(pos.get("invested") or 0), 2),
                     "realized_pnl_usd": round(
                         float(pos.get("pnl", {}).get("realized", 0)), 2
                     ),
