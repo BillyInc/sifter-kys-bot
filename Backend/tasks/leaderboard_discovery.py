@@ -198,7 +198,8 @@ def leaderboard_discovery_scan(self):
 
             # Collect token mints
             for pos in qualifying:
-                token = pos.get("token", {}).get("mint") or pos.get("tokenAddress") or ""
+                raw_token = pos.get("token", "")
+                token = raw_token.get("mint") if isinstance(raw_token, dict) else str(raw_token or pos.get("tokenAddress") or "")
                 if token:
                     unique_tokens.add(token)
 
@@ -269,7 +270,8 @@ def leaderboard_discovery_scan(self):
 
         for wallet_address, positions in wallet_positions.items():
             for pos in positions:
-                token = pos.get("token", {}).get("mint") or pos.get("tokenAddress") or ""
+                raw_token = pos.get("token", "")
+                token = raw_token.get("mint") if isinstance(raw_token, dict) else str(raw_token or pos.get("tokenAddress") or "")
                 if not token:
                     continue
 
