@@ -182,12 +182,24 @@ def leaderboard_discovery_scan(self):
                 logger.warning("[LEADERBOARD] Failed to fetch positions for %s: %s", wallet_addr[:12], exc)
                 continue
 
-            # Filter qualifying positions: roi >= 300 (4x) AND invested >= 100
-            qualifying = [
-                pos for pos in positions
-                if float(pos.get("roi") or 0) >= 300
-                and float(pos.get("invested") or 0) >= 100
-            ]
+            # Conviction filter: must have real commitment AND at least 4x return
+            # 4x = realized OR unrealized PnL >= 3x invested (300% profit)
+            def _is_conviction(pos):
+                invested = float(pos.get("invested") or 0)
+                if invested < 100:
+                    return False
+                buys = int((pos.get("counts") or {}).get("buys", 0))
+                if not (buys >= 2 or invested >= 250):
+                    return False
+                # 4x check on REALIZED or UNREALIZED profit
+                pnl = pos.get("pnl") or {}
+                realized = float(pnl.get("realized") or 0)
+                unrealized = float(pnl.get("unrealized") or 0)
+                # 4x means profit >= 3x invested (invested + 3*invested = 4x)
+                threshold = invested * 3
+                return realized >= threshold or unrealized >= threshold
+
+            qualifying = [pos for pos in positions if _is_conviction(pos)]
 
             # Discard wallets with < 3 qualifying positions
             if len(qualifying) < 3:
@@ -292,13 +304,32 @@ def leaderboard_discovery_scan(self):
                 )
 
                 roi_pct = float(pos.get("roi") or 0)
+                invested = float(pos.get("invested") or 0)
+                pnl = pos.get("pnl") or {}
+                realized_pnl = float(pnl.get("realized") or 0)
+                unrealized_pnl = float(pnl.get("unrealized") or 0)
+                total_pnl = float(pnl.get("total") or 0)
+
+                # ROI mult from realized OR unrealized (whichever is higher)
+                best_pnl = max(realized_pnl, unrealized_pnl)
+                best_mult = (best_pnl + invested) / invested if invested > 0 else 1.0
+                total_mult = (roi_pct / 100) + 1
+
+                # Outcome based on 4x realized OR unrealized
+                threshold_4x = invested * 3  # profit >= 3x invested = 4x total
+                if realized_pnl >= threshold_4x or unrealized_pnl >= threshold_4x:
+                    outcome = "win"
+                elif best_pnl >= threshold_4x * 0.85:  # within 15% of 4x
+                    outcome = "draw"
+                else:
+                    outcome = "loss"
 
                 row = {
                     "wallet_address": wallet_address,
                     "token_address": token,
                     "scan_id": str(uuid.uuid4()),
                     "first_entry_price": float(pos.get("averages", {}).get("buy", 0)),
-                    "first_entry_usd": float(pos.get("invested") or 0),
+                    "first_entry_usd": round(invested, 2),
                     "first_entry_timestamp": _parse_timestamp(
                         pos.get("timing", {}).get("firstBuy")
                     ),
@@ -309,23 +340,14 @@ def leaderboard_discovery_scan(self):
                     "all_sells": "[]",
                     "buy_count": int(pos.get("counts", {}).get("buys", 0)),
                     "sell_count": int(pos.get("counts", {}).get("sells", 0)),
-                    "total_spent_usd": round(float(pos.get("invested") or 0), 2),
-                    "realized_pnl_usd": round(
-                        float(pos.get("pnl", {}).get("realized", 0)), 2
-                    ),
-                    "unrealized_pnl_usd": round(
-                        float(pos.get("pnl", {}).get("unrealized", 0)), 2
-                    ),
-                    "total_pnl_usd": round(
-                        float(pos.get("pnl", {}).get("total", 0)), 2
-                    ),
-                    "realized_roi_mult": (roi_pct / 100) + 1,  # roi% to multiplier
-                    "total_roi_mult": (roi_pct / 100) + 1,
+                    "total_spent_usd": round(invested, 2),
+                    "realized_pnl_usd": round(realized_pnl, 2),
+                    "unrealized_pnl_usd": round(unrealized_pnl, 2),
+                    "total_pnl_usd": round(total_pnl, 2),
+                    "realized_roi_mult": round(best_mult, 4),
+                    "total_roi_mult": round(total_mult, 4),
                     "qualifies": 1,
-                    "outcome": (
-                        "win" if roi_pct >= 400
-                        else ("draw" if roi_pct >= 350 else "loss")
-                    ),
+                    "outcome": outcome,
                     "disqualify_reason": "",
                     "wallet_source": "leaderboard",
                     "updated_at": datetime.now(timezone.utc),
