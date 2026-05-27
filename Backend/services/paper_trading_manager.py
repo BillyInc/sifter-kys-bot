@@ -43,28 +43,26 @@ class PaperTradingManager:
         return datetime.now(timezone.utc).isoformat()
 
     def _fetch_token_price(self, token_address: str) -> Optional[float]:
-        """Fetch the current USD price for a token from SolanaTracker.
+        """Fetch the current USD price for a token via shared ST client.
+
+        Uses the centralized SolanaTrackerV2Client which has rate limiting,
+        retries, and Redis caching — prevents 429 storms when other tasks
+        are also making API calls.
 
         Returns None if the price cannot be determined.
         """
         try:
-            url = f"https://data.solanatracker.io/tokens/{token_address}"
-            headers = {
-                "accept": "application/json",
-                "x-api-key": Config.SOLANATRACKER_API_KEY,
-            }
-            resp = get_http_session().get(url, headers=headers, timeout=10)
-            if resp.status_code != 200:
-                logger.warning("[PAPER] action=fetch_price status=http_%d token=%s", resp.status_code, token_address[:16])
+            from services.solana_tracker_client import get_st_client
+            data = get_st_client().get_token_info(token_address)
+            if not data:
                 return None
-
-            data = resp.json()
-            # SolanaTracker nests price under pools[0].price or token.price
+            # Extract price from pools[0].price.usd or token.price_usd
             price = None
-            if "pools" in data and data["pools"]:
-                price = data["pools"][0].get("price", {}).get("usd")
+            pools = data.get("pools") or []
+            if pools:
+                price = (pools[0].get("price") or {}).get("usd")
             if price is None:
-                price = (data.get("token", {}) or {}).get("price_usd")
+                price = (data.get("token") or {}).get("price_usd")
             if price is not None:
                 return float(price)
         except Exception as exc:

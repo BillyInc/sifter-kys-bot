@@ -411,15 +411,12 @@ class PaperTrader:
         }
 
     def _fetch_token_snapshot(self, token_address: str) -> Optional[Dict]:
+        """Fetch token price + safety via shared ST client (rate limited + cached)."""
         try:
-            response = requests.get(
-                f"{self.token_url}/{token_address}",
-                headers=self.headers,
-                timeout=10,
-            )
-            if response.status_code != 200:
+            from services.solana_tracker_client import get_st_client
+            data = get_st_client().get_token_info(token_address)
+            if not data:
                 return None
-            data = response.json()
             pools = data.get("pools") or []
             pool = max(pools, key=lambda row: row.get("liquidity", {}).get("usd", 0)) if pools else {}
             security = pool.get("security") or {}

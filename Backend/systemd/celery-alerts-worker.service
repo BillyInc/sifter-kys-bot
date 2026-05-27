@@ -1,5 +1,5 @@
 [Unit]
-Description=Sifter Celery Worker
+Description=Sifter Celery Alerts Worker (paper trading + signals)
 After=network.target redis.service
 Wants=redis.service
 
@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/sifter-backend
 Environment="PATH=/home/ubuntu/sifter-backend/.venv/bin"
 EnvironmentFile=/home/ubuntu/sifter-backend/.env
-ExecStart=/bin/bash -c 'exec /home/ubuntu/sifter-backend/.venv/bin/celery -A celery_app worker --loglevel=info -Q default,high,batch,compute,stats,rankings,discovery --concurrency=2 -n general@%%h'
+ExecStart=/bin/bash -c 'exec /home/ubuntu/sifter-backend/.venv/bin/celery -A celery_app worker --loglevel=info -Q alerts --concurrency=2 -n alerts@%%h'
 Restart=on-failure
 RestartSec=10
 KillSignal=SIGTERM
