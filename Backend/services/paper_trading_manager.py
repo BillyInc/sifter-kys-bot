@@ -90,13 +90,27 @@ class PaperTradingManager:
     # ── Kill Switch ────────────────────────────────────────────────────────
 
     def is_kill_switch_active(self) -> bool:
-        """Return True if the mobile kill switch is engaged."""
+        """Return True if the kill switch is engaged.
+
+        Accepts both simple truthy values ("1") and JSON ({"active": true}).
+        Fails closed — if Redis is down, trading is blocked.
+        """
         try:
             r = get_redis_client()
             raw = r.get(KILL_SWITCH_KEY)
-            if raw:
+            if not raw:
+                return False
+            # Handle both "1" (from /kill command) and JSON {"active": true}
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="ignore")
+            raw = str(raw).strip()
+            if raw in ("1", "true", "True"):
+                return True
+            try:
                 data = json.loads(raw)
                 return bool(data.get("active", False))
+            except (json.JSONDecodeError, AttributeError):
+                return bool(raw)  # any non-empty value = active
         except Exception as exc:
             logger.error("[PAPER] action=kill_switch status=redis_fail error=%s", str(exc)[:200])
             try:

@@ -1417,10 +1417,16 @@ def flush_signal_aggregator():
     """Called every 10s by Celery beat. Emits grouped signals whose window expired."""
     try:
         from services.signal_aggregator import get_aggregator
-        from services.paper_trader import PaperTrader
+        from services.paper_trade_runtime import get_paper_trade_runtime
 
         agg = get_aggregator()
-        trader = PaperTrader()
+
+        # Use cached PaperTrader from runtime (avoids 2 Supabase queries per tick)
+        runtime = get_paper_trade_runtime()
+        trader = runtime._trader if hasattr(runtime, '_trader') and runtime._trader else None
+        if trader is None:
+            from services.paper_trader import PaperTrader
+            trader = PaperTrader()
 
         def emit(grouped_signal: dict):
             trader.process_signal(grouped_signal)

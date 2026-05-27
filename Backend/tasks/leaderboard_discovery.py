@@ -29,25 +29,29 @@ from services.solana_tracker_client import get_st_client
 
 logger = logging.getLogger(__name__)
 
-LEADERBOARD_SEEN_KEY = "kys:leaderboard_seen_wallets"
-LEADERBOARD_SEEN_TTL = 86400 * 7  # 7 days
+LEADERBOARD_SEEN_PREFIX = "kys:lb_seen:"
+LEADERBOARD_SEEN_TTL = 86400 * 7  # 7 days per wallet
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+_EPOCH_ZERO = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _parse_timestamp(ts) -> datetime:
     """Parse a timestamp value into a datetime.
 
     Handles:
-      - None -> now()
+      - None / 0 -> epoch zero (1970-01-01) — NOT now(), to avoid
+        inflating tokens_traded_30d with rows that have no real timestamp
       - Millisecond epoch int (> 1e12) -> datetime
       - Seconds epoch int -> datetime
       - ISO 8601 string -> datetime
     """
-    if ts is None:
-        return datetime.now(timezone.utc)
+    if ts is None or ts == 0:
+        return _EPOCH_ZERO
 
     if isinstance(ts, (int, float)):
         if ts > 1e12:
@@ -159,7 +163,7 @@ def leaderboard_discovery_scan(self):
 
         wallets_to_process: list[str] = []
         for wallet_addr in top_150_wallets:
-            if r.sismember(LEADERBOARD_SEEN_KEY, wallet_addr):
+            if r.exists(f"{LEADERBOARD_SEEN_PREFIX}{wallet_addr}"):
                 continue
 
             # Check ClickHouse recency — skip if updated within 24 hours
@@ -365,12 +369,22 @@ def leaderboard_discovery_scan(self):
                 fb_rank_map = first_buyer_rank_by_token.get(token, {})
                 fb_rank = fb_rank_map.get(wallet_address, 0)
 
-                if fb_rank > 0 and len(fb_list) > 0 and launch_price > 0:
-                    fb_score = 1.0 / max(0.01, fb_rank / len(fb_list))
-                    price_score = entry_vs_launch_mult
+                # Both signals normalized to 0-100 scale before combining
+                if fb_rank > 0 and len(fb_list) > 0:
+                    # fb_score: percentile-based (top 1% → 100, top 50% → 2)
+                    fb_score = min(100.0, 1.0 / max(0.01, fb_rank / len(fb_list)))
+                else:
+                    fb_score = 0.0
+
+                if entry_vs_launch_mult > 0:
+                    # price_score: capped log scale (ratio 1.0 → ~0, ratio 100 → ~46)
+                    import math
+                    price_score = min(100.0, math.log1p(entry_vs_launch_mult) * 20)
+                else:
+                    price_score = 0.0
+
+                if fb_score > 0 or price_score > 0:
                     entry_price_to_launch_mult = max(fb_score, price_score)
-                elif entry_vs_launch_mult > 0:
-                    entry_price_to_launch_mult = entry_vs_launch_mult
                 else:
                     entry_price_to_launch_mult = 1.0  # neutral
 
@@ -405,12 +419,13 @@ def leaderboard_discovery_scan(self):
                 realized_roi_mult = (roi_pct / 100) + 1
                 total_roi_mult = (roi_pct / 100) + 1
 
-                # --- Outcome based on 4x realized OR unrealized ---
-                threshold_4x = invested * 3  # 4x total = 3x profit
-                threshold_draw = invested * 2.5  # 3.5x total = 2.5x profit
-                if realized_pnl >= threshold_4x or unrealized_pnl >= threshold_4x:
+                # --- Outcome based on ROI (higher bar than conviction filter) ---
+                # Conviction requires 4x (roi >= 300%). Outcome uses higher thresholds
+                # so win_rate is meaningful (not 100% for all qualifying rows).
+                # Win: >= 10x (roi >= 900%), Draw: >= 5x (roi >= 400%), Loss: < 5x
+                if roi_pct >= 900:
                     outcome = "win"
-                elif max(realized_pnl, unrealized_pnl) >= threshold_draw:
+                elif roi_pct >= 400:
                     outcome = "draw"
                 else:
                     outcome = "loss"
@@ -503,9 +518,11 @@ def leaderboard_discovery_scan(self):
             logger.info("[LEADERBOARD] Inserted %d wallet_token_stats rows", len(rows))
 
             # Mark wallets as "seen" AFTER successful CH insert (not before)
+            # Mark each wallet with individual TTL (auto-expires, no unbounded growth)
+            pipe = r.pipeline()
             for wallet_addr in wallet_positions:
-                r.sadd(LEADERBOARD_SEEN_KEY, wallet_addr)
-            r.expire(LEADERBOARD_SEEN_KEY, LEADERBOARD_SEEN_TTL)
+                pipe.setex(f"{LEADERBOARD_SEEN_PREFIX}{wallet_addr}", LEADERBOARD_SEEN_TTL, "1")
+            pipe.execute()
 
         # =================================================================
         # Step 7: Elite 15 from CH with tokens_traded_30d >= 10 filter
