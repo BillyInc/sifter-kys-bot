@@ -204,8 +204,12 @@ def query_elite_100() -> list:
                     avg_roi_mult,
                     consistency_score,
                     tokens_qualified,
+                    tokens_traded_30d,
                     win_rate,
                     total_pnl_usd,
+                    total_realized_pnl_usd,
+                    total_unrealized_pnl_usd,
+                    avg_hold_time_secs,
                     last_active_at
                 FROM wallet_aggregate_stats FINAL
                 WHERE tokens_qualified >= 1

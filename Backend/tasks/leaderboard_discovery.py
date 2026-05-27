@@ -1,16 +1,16 @@
 """
-Leaderboard Discovery Pipeline
+Leaderboard Discovery Pipeline — V3
 
-Discovers top wallets directly from SolanaTracker's V2 leaderboard endpoint,
-then fetches their closed positions to populate ClickHouse wallet_token_stats rows.
-Complements (does not replace) token_discovery.py.
+Discovers Elite wallets from SolanaTracker's V2 leaderboard, fetches their
+paginated positions, enrichment data (first-buyers, ATH, token info, individual
+trades), and inserts full V3 rows into ClickHouse wallet_token_stats.
 
 Flow:
-  1. Fetch leaderboard candidates across 3 sort criteria (roi, winRate, pnl)
-  2. Filter out recently processed wallets (Redis + ClickHouse checks)
-  3. Fetch closed positions per wallet, discard wallets with < 3 qualifying positions
-  4. Fetch first-buyers + ATH for each unique token
-  5. Build ClickHouse wallet_token_stats rows inline
+  1. Fetch leaderboard candidates across 3 sort criteria (tokens, roi, volume)
+  2. Rank by tokensTraded, take top 150, filter out recently processed wallets
+  3. Paginated positions per wallet + conviction filter
+  4. Per-token fetches: first-buyers, ATH, token info, individual trades
+  5. Build full V3 wallet_token_stats rows
   6. Bulk insert to ClickHouse (MV auto-fires)
   7. Enrich top 15 for display cache in Redis
 """
@@ -20,6 +20,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from celery_app import celery
 from services.clickhouse_client import get_clickhouse_client, insert_wallet_token_stats
@@ -28,7 +29,6 @@ from services.solana_tracker_client import get_st_client
 
 logger = logging.getLogger(__name__)
 
-# Redis key for tracking recently seen leaderboard wallets
 LEADERBOARD_SEEN_KEY = "kys:leaderboard_seen_wallets"
 LEADERBOARD_SEEN_TTL = 86400 * 7  # 7 days
 
@@ -42,28 +42,49 @@ def _parse_timestamp(ts) -> datetime:
 
     Handles:
       - None -> now()
-      - Millisecond epoch int -> datetime
+      - Millisecond epoch int (> 1e12) -> datetime
+      - Seconds epoch int -> datetime
       - ISO 8601 string -> datetime
     """
     if ts is None:
         return datetime.now(timezone.utc)
 
     if isinstance(ts, (int, float)):
-        # Millisecond epoch (> 1e12) vs second epoch
         if ts > 1e12:
             return datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
         return datetime.fromtimestamp(ts, tz=timezone.utc)
 
     if isinstance(ts, str):
-        # Try ISO 8601 parsing
         try:
-            # Handle trailing Z
             cleaned = ts.replace("Z", "+00:00")
             return datetime.fromisoformat(cleaned)
         except (ValueError, TypeError):
             pass
 
     return datetime.now(timezone.utc)
+
+
+def _is_conviction(pos: dict) -> bool:
+    """Return True if position shows conviction (real commitment + 4x return)."""
+    invested = float(pos.get("invested") or 0)
+    if invested < 100:
+        return False
+    buys = int((pos.get("counts") or {}).get("buys", 0))
+    if not (buys >= 2 or invested >= 250):
+        return False
+    pnl = pos.get("pnl") or {}
+    realized = float(pnl.get("realized") or 0)
+    unrealized = float(pnl.get("unrealized") or 0)
+    threshold = invested * 3
+    return realized >= threshold or unrealized >= threshold
+
+
+def _extract_token_mint(pos: dict) -> str:
+    """Extract the token mint address from a position dict."""
+    raw_token = pos.get("token", "")
+    if isinstance(raw_token, dict):
+        return raw_token.get("mint", "")
+    return str(raw_token or pos.get("tokenAddress") or "")
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +97,11 @@ def _parse_timestamp(ts) -> datetime:
     max_retries=2,
     default_retry_delay=300,
     acks_late=True,
-    time_limit=1800,  # 30 min max
+    time_limit=1800,
 )
 def leaderboard_discovery_scan(self):
     """Discover top wallets from the SolanaTracker V2 leaderboard, fetch their
-    closed positions, and populate ClickHouse wallet_token_stats rows."""
+    positions and enrichment data, and populate ClickHouse wallet_token_stats rows."""
 
     try:
         st = get_st_client()
@@ -92,17 +113,17 @@ def leaderboard_discovery_scan(self):
             return {"status": "error", "error": "ClickHouse unavailable"}
 
         # =================================================================
-        # Step 1: Fetch leaderboard candidates
+        # Step 1: Fetch leaderboard candidates (3 sweeps)
         # =================================================================
         logger.info("[LEADERBOARD] Fetching leaderboard candidates...")
 
-        roi_candidates = st.get_leaderboard_top(
-            sort="roi", min_roi=500, min_invested=100, min_trades=10, limit=200,
+        tokens_candidates = st.get_leaderboard_top(
+            sort="tokens", min_roi=300, min_invested=75, min_trades=15, limit=200,
         )
         time.sleep(2)
 
-        tokens_candidates = st.get_leaderboard_top(
-            sort="tokens", min_roi=300, min_invested=75, min_trades=15, limit=200,
+        roi_candidates = st.get_leaderboard_top(
+            sort="roi", min_roi=500, min_invested=100, min_trades=10, limit=200,
         )
         time.sleep(2)
 
@@ -112,7 +133,7 @@ def leaderboard_discovery_scan(self):
 
         # Merge and deduplicate by wallet address
         all_candidates: dict[str, dict] = {}
-        for candidate in roi_candidates + tokens_candidates + volume_candidates:
+        for candidate in tokens_candidates + roi_candidates + volume_candidates:
             wallet = candidate.get("wallet") or candidate.get("walletAddress") or ""
             if wallet and wallet not in all_candidates:
                 all_candidates[wallet] = candidate
@@ -123,16 +144,25 @@ def leaderboard_discovery_scan(self):
         )
 
         # =================================================================
-        # Step 2: Filter — skip recently processed wallets
+        # Step 2: Rank by tokensTraded, take top 150, recency filter
         # =================================================================
-        wallets_to_process: list[str] = []
+        ranked = sorted(
+            all_candidates.values(),
+            key=lambda c: int((c.get("counts") or {}).get("tokensTraded", 0)),
+            reverse=True,
+        )
+        top_150_wallets = [
+            c.get("wallet") or c.get("walletAddress") or ""
+            for c in ranked[:150]
+            if c.get("wallet") or c.get("walletAddress")
+        ]
 
-        for wallet_addr in all_candidates:
-            # Check Redis set
+        wallets_to_process: list[str] = []
+        for wallet_addr in top_150_wallets:
             if r.sismember(LEADERBOARD_SEEN_KEY, wallet_addr):
                 continue
 
-            # Check ClickHouse — skip if updated within 24 hours
+            # Check ClickHouse recency — skip if updated within 24 hours
             try:
                 result = ch.query(
                     "SELECT max(updated_at) FROM wallet_token_stats FINAL "
@@ -147,34 +177,30 @@ def leaderboard_discovery_scan(self):
                         ).total_seconds() / 3600
                         if age_hours < 24:
                             continue
-            except Exception as exc:
-                logger.debug("[LEADERBOARD] CH check failed for %s: %s", wallet_addr[:12], exc)
+            except Exception:
+                pass
 
             wallets_to_process.append(wallet_addr)
 
         logger.info(
-            "[LEADERBOARD] %d wallets after filtering (from %d candidates)",
+            "[LEADERBOARD] %d wallets to process after filtering (from %d top-150)",
             len(wallets_to_process),
-            len(all_candidates),
+            len(top_150_wallets),
         )
 
         # =================================================================
-        # Step 3: Fetch closed positions per wallet
+        # Step 3: Paginated positions per wallet + conviction filter
         # =================================================================
-        # wallet_addr -> list of qualifying positions
         wallet_positions: dict[str, list[dict]] = {}
         unique_tokens: set[str] = set()
-        processed_wallets: list[str] = []
+        token_meta_cache: dict[str, dict] = {}
 
         for i, wallet_addr in enumerate(wallets_to_process):
             time.sleep(0.5)
 
             try:
-                positions = st.get_wallet_positions(
+                positions = st.get_wallet_positions_paginated(
                     wallet_addr,
-                    holding_state="closed",
-                    sort="roi",
-                    limit=100,
                     roi_min=300,
                     invested_min=100,
                 )
@@ -182,170 +208,278 @@ def leaderboard_discovery_scan(self):
                 logger.warning("[LEADERBOARD] Failed to fetch positions for %s: %s", wallet_addr[:12], exc)
                 continue
 
-            # Conviction filter: must have real commitment AND at least 4x return
-            # 4x = realized OR unrealized PnL >= 3x invested (300% profit)
-            def _is_conviction(pos):
-                invested = float(pos.get("invested") or 0)
-                if invested < 100:
-                    return False
-                buys = int((pos.get("counts") or {}).get("buys", 0))
-                if not (buys >= 2 or invested >= 250):
-                    return False
-                # 4x check on REALIZED or UNREALIZED profit
-                pnl = pos.get("pnl") or {}
-                realized = float(pnl.get("realized") or 0)
-                unrealized = float(pnl.get("unrealized") or 0)
-                # 4x means profit >= 3x invested (invested + 3*invested = 4x)
-                threshold = invested * 3
-                return realized >= threshold or unrealized >= threshold
-
             qualifying = [pos for pos in positions if _is_conviction(pos)]
 
-            # Discard wallets with < 3 qualifying positions
-            if len(qualifying) < 3:
+            # Discard wallets with 0 qualifying positions (permissive: let data accumulate)
+            if len(qualifying) == 0:
                 continue
 
             wallet_positions[wallet_addr] = qualifying
-            processed_wallets.append(wallet_addr)
 
-            # Collect token mints
+            # Collect unique tokens and cache metadata from position `meta` field
             for pos in qualifying:
-                raw_token = pos.get("token", "")
-                token = raw_token.get("mint") if isinstance(raw_token, dict) else str(raw_token or pos.get("tokenAddress") or "")
+                token = _extract_token_mint(pos)
                 if token:
                     unique_tokens.add(token)
+                    # Cache token metadata from position if available
+                    meta = pos.get("meta") or {}
+                    if meta and token not in token_meta_cache:
+                        token_meta_cache[token] = meta
 
-            # Mark as seen in Redis
+            # Mark wallet as seen in Redis
             r.sadd(LEADERBOARD_SEEN_KEY, wallet_addr)
             r.expire(LEADERBOARD_SEEN_KEY, LEADERBOARD_SEEN_TTL)
 
             if (i + 1) % 25 == 0:
                 logger.info(
                     "[LEADERBOARD] Processed %d/%d wallets, %d qualified so far",
-                    i + 1, len(wallets_to_process), len(processed_wallets),
+                    i + 1, len(wallets_to_process), len(wallet_positions),
                 )
 
+        processed_wallet_set = set(wallet_positions.keys())
+
         logger.info(
-            "[LEADERBOARD] %d wallets qualified with >= 3 positions, %d unique tokens",
-            len(processed_wallets),
+            "[LEADERBOARD] %d wallets qualified with >= 1 position, %d unique tokens",
+            len(wallet_positions),
             len(unique_tokens),
         )
 
         # =================================================================
-        # Step 4: Fetch first-buyers + ATH for each unique token
+        # Step 4: Per-token fetches (first-buyers, ATH, token info, trades)
         # =================================================================
-        first_buyers_by_token: dict[str, list[str]] = {}
+        first_buyers_list_by_token: dict[str, list[str]] = {}
+        first_buyer_rank_by_token: dict[str, dict[str, int]] = {}
         ath_by_token: dict[str, float] = {}
+        launch_price_by_token: dict[str, float] = {}
+        creation_time_by_token: dict[str, datetime] = {}
+        trades_by_token_wallet: dict[str, dict[str, list[dict]]] = {}
 
         for token in unique_tokens:
             time.sleep(0.5)
 
-            # First buyers (cached 1hr in the client)
+            # --- First buyers ---
             try:
                 buyers = st.get_first_buyers(token, limit=100)
-                first_buyers_by_token[token] = [
-                    b.get("wallet") or b.get("walletAddress") or ""
-                    for b in buyers
-                    if b.get("wallet") or b.get("walletAddress")
-                ]
+                buyer_wallets = [b.get("wallet") for b in buyers if b.get("wallet")]
+                first_buyers_list_by_token[token] = buyer_wallets
+                first_buyer_rank_by_token[token] = {
+                    w: idx + 1 for idx, w in enumerate(buyer_wallets) if w in processed_wallet_set
+                }
             except Exception as exc:
                 logger.debug("[LEADERBOARD] first_buyers failed for %s: %s", token[:12], exc)
-                first_buyers_by_token[token] = []
+                first_buyers_list_by_token[token] = []
+                first_buyer_rank_by_token[token] = {}
 
-            time.sleep(0.5)
-
-            # ATH price (cached 1hr in the client)
+            # --- ATH ---
             try:
                 ath_data = st.get_token_ath(token)
-                if ath_data and isinstance(ath_data, dict):
-                    ath_by_token[token] = float(
-                        ath_data.get("highest_price")
-                        or ath_data.get("highestPrice")
-                        or ath_data.get("price", 0)
-                    )
-                else:
-                    ath_by_token[token] = 0.0
+                ath_by_token[token] = float((ath_data or {}).get("highest_price") or 0)
             except Exception as exc:
                 logger.debug("[LEADERBOARD] token ATH failed for %s: %s", token[:12], exc)
                 ath_by_token[token] = 0.0
 
+            # --- Token info (launch price + creation time) ---
+            launch_price = 0.0
+            creation_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            try:
+                token_info = st.get_token_info(token)
+                if token_info:
+                    created_ts = (token_info.get("token") or {}).get("creation", {}).get("created_time")
+                    if created_ts:
+                        creation_time = datetime.fromtimestamp(float(created_ts), tz=timezone.utc)
+                    pools = token_info.get("pools") or []
+                    if pools:
+                        pools_with_ts = [p for p in pools if p.get("createdAt")]
+                        if pools_with_ts:
+                            earliest = min(pools_with_ts, key=lambda p: p["createdAt"])
+                        else:
+                            earliest = max(pools, key=lambda p: (p.get("liquidity") or {}).get("usd", 0))
+                        launch_price = float((earliest.get("price") or {}).get("usd", 0) or 0)
+            except Exception as exc:
+                logger.debug("[LEADERBOARD] token_info failed for %s: %s", token[:12], exc)
+            launch_price_by_token[token] = launch_price
+            creation_time_by_token[token] = creation_time
+
+            # --- Individual trades per wallet that traded this token ---
+            trades_by_token_wallet[token] = {}
+            for wallet_addr in processed_wallet_set:
+                wallet_token_set = {_extract_token_mint(pos) for pos in wallet_positions.get(wallet_addr, [])}
+                if token not in wallet_token_set:
+                    continue
+                time.sleep(0.4)
+                try:
+                    trades = st.get_wallet_token_trades(token, wallet_addr)
+                    trades_by_token_wallet[token][wallet_addr] = trades
+                except Exception as exc:
+                    logger.debug("[LEADERBOARD] trades failed for %s/%s: %s", token[:12], wallet_addr[:12], exc)
+                    trades_by_token_wallet[token][wallet_addr] = []
+
         logger.info(
-            "[LEADERBOARD] Fetched first-buyers for %d tokens, ATH for %d tokens",
-            len(first_buyers_by_token),
-            len(ath_by_token),
+            "[LEADERBOARD] Fetched enrichment data for %d tokens",
+            len(unique_tokens),
         )
 
         # =================================================================
-        # Step 5: Build ClickHouse rows
+        # Step 5: Build full V3 rows
         # =================================================================
         rows: list[dict] = []
 
         for wallet_address, positions in wallet_positions.items():
             for pos in positions:
-                raw_token = pos.get("token", "")
-                token = raw_token.get("mint") if isinstance(raw_token, dict) else str(raw_token or pos.get("tokenAddress") or "")
+                token = _extract_token_mint(pos)
                 if not token:
                     continue
 
-                # entry_price_to_launch_mult
-                fb_wallets = first_buyers_by_token.get(token, [])
-                if wallet_address in fb_wallets:
-                    position_idx = fb_wallets.index(wallet_address)
-                    percentile = position_idx / max(len(fb_wallets), 1)
-                    entry_price_to_launch_mult = 1.0 / max(0.01, percentile)
+                # --- Timing fields ---
+                timing = pos.get("timing") or {}
+                first_entry_timestamp = _parse_timestamp(timing.get("firstBuy"))
+                last_buy_timestamp = _parse_timestamp(timing.get("lastBuy"))
+                first_sell_timestamp = _parse_timestamp(timing.get("firstSell"))
+                sell_time = _parse_timestamp(timing.get("lastSell"))
+
+                hold_time_secs = 0
+                if timing.get("firstBuy") and timing.get("lastSell"):
+                    hold_time_secs = int((sell_time - first_entry_timestamp).total_seconds())
+                    if hold_time_secs < 0:
+                        hold_time_secs = 0
+
+                # --- Price fields ---
+                averages = pos.get("averages") or {}
+                avg_buy = float(averages.get("buy", 0))
+                avg_sell = float(averages.get("sell", 0))
+                first_entry_price = avg_buy  # best proxy from API
+
+                ath_price = ath_by_token.get(token, 0.0)
+                launch_price = launch_price_by_token.get(token, 0.0)
+                token_creation_time = creation_time_by_token.get(token, datetime(1970, 1, 1, tzinfo=timezone.utc))
+
+                # Current price from position data
+                current_price_usd = float(pos.get("currentPrice") or pos.get("current_price") or 0)
+
+                # --- Entry signal computations ---
+                avg_entry_to_ath_mult = ath_price / avg_buy if avg_buy > 0 and ath_price > 0 else 0.0
+                entry_vs_launch_mult = launch_price / avg_buy if avg_buy > 0 and launch_price > 0 else 0.0
+
+                # Combined entry_price_to_launch_mult
+                fb_list = first_buyers_list_by_token.get(token, [])
+                fb_rank_map = first_buyer_rank_by_token.get(token, {})
+                fb_rank = fb_rank_map.get(wallet_address, 0)
+
+                if fb_rank > 0 and len(fb_list) > 0 and launch_price > 0:
+                    fb_score = 1.0 / max(0.01, fb_rank / len(fb_list))
+                    price_score = entry_vs_launch_mult
+                    entry_price_to_launch_mult = max(fb_score, price_score)
+                elif entry_vs_launch_mult > 0:
+                    entry_price_to_launch_mult = entry_vs_launch_mult
                 else:
-                    entry_price_to_launch_mult = 0.0
+                    entry_price_to_launch_mult = 1.0  # neutral
 
-                # avg_entry_to_ath_mult
-                avg_buy = float(pos.get("averages", {}).get("buy", 0))
-                ath_price = ath_by_token.get(token, 0)
-                avg_entry_to_ath_mult = (
-                    ath_price / avg_buy if avg_buy > 0 and ath_price > 0 else 0.0
-                )
+                # --- Volume fields ---
+                counts = pos.get("counts") or {}
+                buy_count = int(counts.get("buys", 0))
+                sell_count = int(counts.get("sells", 0))
+                trade_count = buy_count + sell_count
 
-                roi_pct = float(pos.get("roi") or 0)
+                tokens_bought_native = float(pos.get("tokensBought") or pos.get("tokens_bought") or 0)
+                tokens_sold_native = float(pos.get("tokensSold") or pos.get("tokens_sold") or 0)
+                current_balance = float(pos.get("remaining") or pos.get("balance") or 0)
+                current_value_usd = current_balance * current_price_usd if current_price_usd > 0 else 0.0
+
                 invested = float(pos.get("invested") or 0)
+                avg_cost_per_token = invested / tokens_bought_native if tokens_bought_native > 0 else 0.0
+
+                sell_proceeds_usd = float(pos.get("sold") or pos.get("sellProceeds") or 0)
+                avg_sell_size_usd = sell_proceeds_usd / sell_count if sell_count > 0 else 0.0
+
+                # --- PnL fields ---
                 pnl = pos.get("pnl") or {}
                 realized_pnl = float(pnl.get("realized") or 0)
                 unrealized_pnl = float(pnl.get("unrealized") or 0)
                 total_pnl = float(pnl.get("total") or 0)
 
-                # ROI mult from realized OR unrealized (whichever is higher)
-                best_pnl = max(realized_pnl, unrealized_pnl)
-                best_mult = (best_pnl + invested) / invested if invested > 0 else 1.0
-                total_mult = (roi_pct / 100) + 1
+                roi_pct = float(pos.get("roi") or 0)
+                realized_roi_mult = (realized_pnl + invested) / invested if invested > 0 else 1.0
+                total_roi_mult = (roi_pct / 100) + 1
 
-                # Outcome based on 4x realized OR unrealized
-                threshold_4x = invested * 3  # profit >= 3x invested = 4x total
+                # --- Outcome based on 4x realized OR unrealized ---
+                threshold_4x = invested * 3
                 if realized_pnl >= threshold_4x or unrealized_pnl >= threshold_4x:
                     outcome = "win"
-                elif best_pnl >= threshold_4x * 0.85:  # within 15% of 4x
+                elif max(realized_pnl, unrealized_pnl) >= threshold_4x * 0.85:
                     outcome = "draw"
                 else:
                     outcome = "loss"
+
+                # --- Individual trades as JSON ---
+                token_trades = trades_by_token_wallet.get(token, {}).get(wallet_address, [])
+                all_buys_json = json.dumps(
+                    [t for t in token_trades if t.get("type") == "buy"],
+                    default=str,
+                )
+                all_sells_json = json.dumps(
+                    [t for t in token_trades if t.get("type") == "sell"],
+                    default=str,
+                )
+
+                # --- Token metadata ---
+                meta = token_meta_cache.get(token, {})
+                token_name = str(meta.get("name") or meta.get("tokenName") or "")
+                token_symbol = str(meta.get("symbol") or meta.get("tokenSymbol") or "")
+                token_image = str(meta.get("image") or meta.get("logo") or "")
+                token_decimals = int(meta.get("decimals") or 0)
+                market_cap_usd = float(meta.get("marketCap") or meta.get("market_cap") or 0)
+                liquidity_usd = float(meta.get("liquidity") or 0)
+                primary_market = str(meta.get("market") or meta.get("dex") or "")
+
+                # --- First buyer rank ---
+                first_buyer_rank = fb_rank_map.get(wallet_address, 0)
 
                 row = {
                     "wallet_address": wallet_address,
                     "token_address": token,
                     "scan_id": str(uuid.uuid4()),
-                    "first_entry_price": float(pos.get("averages", {}).get("buy", 0)),
+                    "first_entry_price": first_entry_price,
                     "first_entry_usd": round(invested, 2),
-                    "first_entry_timestamp": _parse_timestamp(
-                        pos.get("timing", {}).get("firstBuy")
-                    ),
-                    "entry_price_to_launch_mult": entry_price_to_launch_mult,
-                    "avg_entry_price": float(pos.get("averages", {}).get("buy", 0)),
+                    "first_entry_timestamp": first_entry_timestamp,
+                    "last_buy_timestamp": last_buy_timestamp,
+                    "first_sell_timestamp": first_sell_timestamp,
+                    "sell_time": sell_time,
+                    "hold_time_secs": hold_time_secs,
+                    "avg_entry_price": avg_buy,
                     "avg_entry_to_ath_mult": round(avg_entry_to_ath_mult, 4),
-                    "all_buys": "[]",
-                    "all_sells": "[]",
-                    "buy_count": int(pos.get("counts", {}).get("buys", 0)),
-                    "sell_count": int(pos.get("counts", {}).get("sells", 0)),
+                    "entry_price_to_launch_mult": round(entry_price_to_launch_mult, 4),
+                    "entry_vs_launch_mult": round(entry_vs_launch_mult, 4),
+                    "ath_price_raw": ath_price,
+                    "launch_price_raw": launch_price,
+                    "token_creation_time": token_creation_time,
+                    "current_price_usd": current_price_usd,
+                    "tokens_bought_native": tokens_bought_native,
+                    "tokens_sold_native": tokens_sold_native,
+                    "current_balance": current_balance,
+                    "current_value_usd": round(current_value_usd, 2),
+                    "avg_cost_per_token": avg_cost_per_token,
+                    "avg_sell_size_usd": round(avg_sell_size_usd, 2),
+                    "buy_count": buy_count,
+                    "sell_count": sell_count,
+                    "trade_count": trade_count,
                     "total_spent_usd": round(invested, 2),
+                    "sell_proceeds_usd": round(sell_proceeds_usd, 2),
                     "realized_pnl_usd": round(realized_pnl, 2),
                     "unrealized_pnl_usd": round(unrealized_pnl, 2),
                     "total_pnl_usd": round(total_pnl, 2),
-                    "realized_roi_mult": round(best_mult, 4),
-                    "total_roi_mult": round(total_mult, 4),
+                    "roi_pct": round(roi_pct, 2),
+                    "realized_roi_mult": round(realized_roi_mult, 4),
+                    "total_roi_mult": round(total_roi_mult, 4),
+                    "all_buys": all_buys_json,
+                    "all_sells": all_sells_json,
+                    "token_name": token_name,
+                    "token_symbol": token_symbol,
+                    "token_image": token_image,
+                    "token_decimals": token_decimals,
+                    "market_cap_usd": market_cap_usd,
+                    "liquidity_usd": liquidity_usd,
+                    "primary_market": primary_market,
+                    "first_buyer_rank": first_buyer_rank,
                     "qualifies": 1,
                     "outcome": outcome,
                     "disqualify_reason": "",
@@ -354,7 +488,7 @@ def leaderboard_discovery_scan(self):
                 }
                 rows.append(row)
 
-        logger.info("[LEADERBOARD] Built %d rows from %d wallets", len(rows), len(processed_wallets))
+        logger.info("[LEADERBOARD] Built %d rows from %d wallets", len(rows), len(wallet_positions))
 
         # =================================================================
         # Step 6: Bulk insert to ClickHouse
@@ -364,23 +498,92 @@ def leaderboard_discovery_scan(self):
             logger.info("[LEADERBOARD] Inserted %d wallet_token_stats rows", len(rows))
 
         # =================================================================
-        # Step 7: Enrich top 15 for display cache
+        # Step 7: Elite 15 from CH with tokens_traded_30d >= 10 filter
         # =================================================================
         try:
-            top_15 = ch.query(
-                """SELECT wallet_address FROM wallet_aggregate_stats FINAL
-                   WHERE tokens_qualified >= 1
-                   ORDER BY professional_score DESC LIMIT 15"""
-            )
+            top_15 = ch.query("""
+                SELECT wallet_address FROM wallet_aggregate_stats FINAL
+                WHERE tokens_traded_30d >= 10
+                ORDER BY professional_score DESC LIMIT 15
+            """)
             top_15_addrs = [row[0] for row in top_15.result_rows]
+
+            # Fallback: if fewer than 15, relax to tokens_qualified >= 1
+            if len(top_15_addrs) < 15:
+                fallback = ch.query("""
+                    SELECT wallet_address FROM wallet_aggregate_stats FINAL
+                    WHERE tokens_qualified >= 1
+                    ORDER BY professional_score DESC LIMIT 15
+                """)
+                fallback_addrs = [row[0] for row in fallback.result_rows]
+                existing = set(top_15_addrs)
+                for addr in fallback_addrs:
+                    if addr not in existing:
+                        top_15_addrs.append(addr)
+                        existing.add(addr)
+                    if len(top_15_addrs) >= 15:
+                        break
+
             if top_15_addrs:
-                enriched = st.get_wallets_batch(top_15_addrs)
+                # Enrich via batch wallet data
+                enriched_wallets = st.get_wallets_batch(top_15_addrs)
+
+                # Build enriched payload with per-wallet token positions from CH
+                enriched_payload: list[dict[str, Any]] = []
+                for ew in enriched_wallets:
+                    w_addr = ew.get("wallet") or ew.get("walletAddress") or ""
+                    if not w_addr:
+                        continue
+
+                    # Query full token positions from CH for this wallet
+                    try:
+                        positions_result = ch.query(
+                            """SELECT
+                                token_address, token_name, token_symbol, token_image,
+                                total_spent_usd, realized_pnl_usd, unrealized_pnl_usd, total_pnl_usd,
+                                roi_pct, outcome, buy_count, sell_count,
+                                first_entry_timestamp, avg_entry_to_ath_mult, entry_price_to_launch_mult,
+                                first_buyer_rank
+                            FROM wallet_token_stats FINAL
+                            WHERE wallet_address = {addr:String} AND qualifies = 1
+                            ORDER BY total_pnl_usd DESC
+                            LIMIT 50""",
+                            parameters={"addr": w_addr},
+                        )
+                        token_rows = []
+                        for pr in positions_result.result_rows:
+                            token_rows.append({
+                                "token_address": pr[0],
+                                "token_name": pr[1],
+                                "token_symbol": pr[2],
+                                "token_image": pr[3],
+                                "total_spent_usd": float(pr[4]),
+                                "realized_pnl_usd": float(pr[5]),
+                                "unrealized_pnl_usd": float(pr[6]),
+                                "total_pnl_usd": float(pr[7]),
+                                "roi_pct": float(pr[8]),
+                                "outcome": pr[9],
+                                "buy_count": int(pr[10]),
+                                "sell_count": int(pr[11]),
+                                "first_entry_timestamp": str(pr[12]),
+                                "avg_entry_to_ath_mult": float(pr[13]),
+                                "entry_price_to_launch_mult": float(pr[14]),
+                                "first_buyer_rank": int(pr[15]),
+                            })
+                    except Exception:
+                        token_rows = []
+
+                    enriched_payload.append({
+                        **ew,
+                        "positions": token_rows,
+                    })
+
                 r.setex(
                     "kys:elite15_enriched",
                     86400 * 7,
-                    json.dumps(enriched, default=str),
+                    json.dumps(enriched_payload, default=str),
                 )
-                logger.info("[LEADERBOARD] Cached enriched top 15 wallets")
+                logger.info("[LEADERBOARD] Cached enriched top 15 wallets (%d)", len(enriched_payload))
         except Exception as exc:
             logger.warning("[LEADERBOARD] Failed to enrich top 15: %s", exc)
 
@@ -390,7 +593,8 @@ def leaderboard_discovery_scan(self):
         return {
             "status": "success",
             "candidates": len(all_candidates),
-            "processed": len(processed_wallets),
+            "top_150": len(top_150_wallets),
+            "processed": len(wallet_positions),
             "rows_inserted": len(rows),
             "tokens_fetched": len(unique_tokens),
             "timestamp": datetime.now(timezone.utc).isoformat(),

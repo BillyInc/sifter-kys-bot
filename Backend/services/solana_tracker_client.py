@@ -290,6 +290,75 @@ class SolanaTrackerClient:
         data = self._post("/v2/pnl/wallets/batch", json_body={"wallets": wallets})
         return data.get("wallets", [])
 
+    def get_wallet_positions_paginated(
+        self,
+        wallet: str,
+        roi_min: float | None = None,
+        invested_min: float | None = None,
+        max_pages: int = 10,
+    ) -> list[dict]:
+        """Return ALL closed positions for a wallet using cursor pagination.
+
+        ``GET /v2/pnl/wallets/{wallet}/positions``
+        """
+        params: dict[str, Any] = {
+            "holdingState": "closed",
+            "sort": "roi",
+            "direction": "desc",
+            "limit": 100,
+            "pnlMode": "strict",
+        }
+        if roi_min is not None:
+            params["roiMin"] = roi_min
+        if invested_min is not None:
+            params["investedMin"] = invested_min
+
+        all_positions: list[dict] = []
+        cursor: str | None = None
+
+        for _ in range(max_pages):
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get(f"/v2/pnl/wallets/{wallet}/positions", params)
+            if data is None:
+                break
+            positions = data.get("positions", []) if isinstance(data, dict) else []
+            all_positions.extend(positions)
+            pagination = data.get("pagination", {}) if isinstance(data, dict) else {}
+            if not pagination.get("hasMore"):
+                break
+            cursor = pagination.get("nextCursor")
+            if not cursor:
+                break
+            time.sleep(0.4)
+
+        return all_positions
+
+    def get_token_info(self, token: str) -> dict | None:
+        """Return full token data including pool prices and creation time (cached 1hr).
+
+        ``GET /tokens/{tokenAddress}``
+
+        Launch price: sort response.pools by createdAt ascending -> earliest pool's price.usd.
+        Creation time: response.token.creation.created_time (Unix seconds).
+        """
+        return self._cached_get(f"/tokens/{token}", ttl=3600)
+
+    def get_wallet_token_trades(self, token: str, wallet: str) -> list[dict]:
+        """Return individual trade records for a token + wallet pair.
+
+        ``GET /trades/{tokenAddress}/by-wallet/{owner}``
+
+        Response: { trades: [...], nextCursor, hasNextPage }
+        Each trade: { tx, type, priceUsd, amount, volume, volumeSol, time, program, wallet }
+        """
+        data = self._get(f"/trades/{token}/by-wallet/{wallet}")
+        if data is None:
+            return []
+        if isinstance(data, list):
+            return data
+        return data.get("trades", [])
+
 
 # ------------------------------------------------------------------
 # Singleton accessor
