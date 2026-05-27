@@ -118,7 +118,7 @@ def leaderboard_discovery_scan(self):
         logger.info("[LEADERBOARD] Fetching leaderboard candidates...")
 
         tokens_candidates = st.get_leaderboard_top(
-            sort="tokens", min_roi=300, min_invested=75, min_trades=15, limit=200,
+            sort="tokens", min_invested=100, min_trades=10, limit=200,
         )
         time.sleep(2)
 
@@ -128,7 +128,7 @@ def leaderboard_discovery_scan(self):
         time.sleep(2)
 
         volume_candidates = st.get_leaderboard_top(
-            sort="volume", min_roi=200, min_invested=200, min_trades=10, limit=200,
+            sort="volume", min_invested=200, min_trades=10, limit=200,
         )
 
         # Merge and deduplicate by wallet address
@@ -273,7 +273,11 @@ def leaderboard_discovery_scan(self):
             # --- ATH ---
             try:
                 ath_data = st.get_token_ath(token)
-                ath_by_token[token] = float((ath_data or {}).get("highest_price") or 0)
+                ath_by_token[token] = float(
+                    (ath_data or {}).get("highest_price")
+                    or (ath_data or {}).get("highestPrice")
+                    or 0
+                )
             except Exception as exc:
                 logger.debug("[LEADERBOARD] token ATH failed for %s: %s", token[:12], exc)
                 ath_by_token[token] = 0.0
@@ -337,24 +341,16 @@ def leaderboard_discovery_scan(self):
                 first_sell_timestamp = _parse_timestamp(timing.get("firstSell"))
                 sell_time = _parse_timestamp(timing.get("lastSell"))
 
-                hold_time_secs = 0
-                if timing.get("firstBuy") and timing.get("lastSell"):
-                    hold_time_secs = int((sell_time - first_entry_timestamp).total_seconds())
-                    if hold_time_secs < 0:
-                        hold_time_secs = 0
+                hold_time_secs = int(timing.get("holdTimeSecs") or 0)
 
                 # --- Price fields ---
                 averages = pos.get("averages") or {}
                 avg_buy = float(averages.get("buy", 0))
-                avg_sell = float(averages.get("sell", 0))
-                first_entry_price = avg_buy  # best proxy from API
+                first_entry_price = avg_buy
 
                 ath_price = ath_by_token.get(token, 0.0)
                 launch_price = launch_price_by_token.get(token, 0.0)
                 token_creation_time = creation_time_by_token.get(token, datetime(1970, 1, 1, tzinfo=timezone.utc))
-
-                # Current price from position data
-                current_price_usd = float(pos.get("currentPrice") or pos.get("current_price") or 0)
 
                 # --- Entry signal computations ---
                 avg_entry_to_ath_mult = ath_price / avg_buy if avg_buy > 0 and ath_price > 0 else 0.0
@@ -374,22 +370,26 @@ def leaderboard_discovery_scan(self):
                 else:
                     entry_price_to_launch_mult = 1.0  # neutral
 
-                # --- Volume fields ---
+                # --- Volume / counts ---
                 counts = pos.get("counts") or {}
                 buy_count = int(counts.get("buys", 0))
                 sell_count = int(counts.get("sells", 0))
-                trade_count = buy_count + sell_count
+                trade_count = int(counts.get("total", buy_count + sell_count))
 
-                tokens_bought_native = float(pos.get("tokensBought") or pos.get("tokens_bought") or 0)
-                tokens_sold_native = float(pos.get("tokensSold") or pos.get("tokens_sold") or 0)
-                current_balance = float(pos.get("remaining") or pos.get("balance") or 0)
-                current_value_usd = current_balance * current_price_usd if current_price_usd > 0 else 0.0
+                volume = pos.get("volume") or {}
+                tokens_bought_native = float(volume.get("tokensBought") or 0)
+                tokens_sold_native = float(volume.get("tokensSold") or 0)
+
+                current = pos.get("current") or {}
+                current_balance = float(current.get("balance") or 0)
+                current_value_usd = float(current.get("value") or 0)
+                current_price_usd = float(current.get("price") or 0)
+                avg_cost_per_token = float(current.get("avgCost") or 0)
 
                 invested = float(pos.get("invested") or 0)
-                avg_cost_per_token = invested / tokens_bought_native if tokens_bought_native > 0 else 0.0
 
-                sell_proceeds_usd = float(pos.get("sold") or pos.get("sellProceeds") or 0)
-                avg_sell_size_usd = sell_proceeds_usd / sell_count if sell_count > 0 else 0.0
+                sell_proceeds_usd = float(pos.get("proceeds") or 0)
+                avg_sell_size_usd = float(averages.get("sell") or 0)
 
                 # --- PnL fields ---
                 pnl = pos.get("pnl") or {}
@@ -398,14 +398,15 @@ def leaderboard_discovery_scan(self):
                 total_pnl = float(pnl.get("total") or 0)
 
                 roi_pct = float(pos.get("roi") or 0)
-                realized_roi_mult = (realized_pnl + invested) / invested if invested > 0 else 1.0
+                realized_roi_mult = (roi_pct / 100) + 1
                 total_roi_mult = (roi_pct / 100) + 1
 
                 # --- Outcome based on 4x realized OR unrealized ---
-                threshold_4x = invested * 3
+                threshold_4x = invested * 3  # 4x total = 3x profit
+                threshold_draw = invested * 2.5  # 3.5x total = 2.5x profit
                 if realized_pnl >= threshold_4x or unrealized_pnl >= threshold_4x:
                     outcome = "win"
-                elif max(realized_pnl, unrealized_pnl) >= threshold_4x * 0.85:
+                elif max(realized_pnl, unrealized_pnl) >= threshold_draw:
                     outcome = "draw"
                 else:
                     outcome = "loss"
@@ -429,7 +430,7 @@ def leaderboard_discovery_scan(self):
                 token_decimals = int(meta.get("decimals") or 0)
                 market_cap_usd = float(meta.get("marketCap") or meta.get("market_cap") or 0)
                 liquidity_usd = float(meta.get("liquidity") or 0)
-                primary_market = str(meta.get("market") or meta.get("dex") or "")
+                primary_market = str(meta.get("primaryMarket") or meta.get("market") or meta.get("dex") or "")
 
                 # --- First buyer rank ---
                 first_buyer_rank = fb_rank_map.get(wallet_address, 0)
@@ -540,10 +541,20 @@ def leaderboard_discovery_scan(self):
                         positions_result = ch.query(
                             """SELECT
                                 token_address, token_name, token_symbol, token_image,
-                                total_spent_usd, realized_pnl_usd, unrealized_pnl_usd, total_pnl_usd,
-                                roi_pct, outcome, buy_count, sell_count,
-                                first_entry_timestamp, avg_entry_to_ath_mult, entry_price_to_launch_mult,
-                                first_buyer_rank
+                                token_decimals, primary_market,
+                                avg_entry_price, avg_cost_per_token,
+                                first_entry_timestamp, last_buy_timestamp,
+                                first_sell_timestamp, sell_time, hold_time_secs,
+                                ath_price_raw, launch_price_raw, token_creation_time,
+                                current_price_usd, current_balance, current_value_usd,
+                                market_cap_usd, liquidity_usd,
+                                avg_entry_to_ath_mult, entry_price_to_launch_mult, entry_vs_launch_mult,
+                                realized_pnl_usd, unrealized_pnl_usd, total_pnl_usd,
+                                roi_pct, total_roi_mult,
+                                buy_count, sell_count, trade_count,
+                                total_spent_usd, sell_proceeds_usd,
+                                first_buyer_rank, all_buys, all_sells,
+                                outcome
                             FROM wallet_token_stats FINAL
                             WHERE wallet_address = {addr:String} AND qualifies = 1
                             ORDER BY total_pnl_usd DESC
@@ -557,18 +568,40 @@ def leaderboard_discovery_scan(self):
                                 "token_name": pr[1],
                                 "token_symbol": pr[2],
                                 "token_image": pr[3],
-                                "total_spent_usd": float(pr[4]),
-                                "realized_pnl_usd": float(pr[5]),
-                                "unrealized_pnl_usd": float(pr[6]),
-                                "total_pnl_usd": float(pr[7]),
-                                "roi_pct": float(pr[8]),
-                                "outcome": pr[9],
-                                "buy_count": int(pr[10]),
-                                "sell_count": int(pr[11]),
-                                "first_entry_timestamp": str(pr[12]),
-                                "avg_entry_to_ath_mult": float(pr[13]),
-                                "entry_price_to_launch_mult": float(pr[14]),
-                                "first_buyer_rank": int(pr[15]),
+                                "token_decimals": int(pr[4]),
+                                "primary_market": pr[5],
+                                "avg_entry_price": float(pr[6]),
+                                "avg_cost_per_token": float(pr[7]),
+                                "first_entry_timestamp": pr[8].isoformat() if hasattr(pr[8], "isoformat") else str(pr[8]),
+                                "last_buy_timestamp": pr[9].isoformat() if hasattr(pr[9], "isoformat") else str(pr[9]),
+                                "first_sell_timestamp": pr[10].isoformat() if hasattr(pr[10], "isoformat") else str(pr[10]),
+                                "sell_time": pr[11].isoformat() if hasattr(pr[11], "isoformat") else str(pr[11]),
+                                "hold_time_secs": int(pr[12]),
+                                "ath_price_raw": float(pr[13]),
+                                "launch_price_raw": float(pr[14]),
+                                "token_creation_time": pr[15].isoformat() if hasattr(pr[15], "isoformat") else str(pr[15]),
+                                "current_price_usd": float(pr[16]),
+                                "current_balance": float(pr[17]),
+                                "current_value_usd": float(pr[18]),
+                                "market_cap_usd": float(pr[19]),
+                                "liquidity_usd": float(pr[20]),
+                                "avg_entry_to_ath_mult": float(pr[21]),
+                                "entry_price_to_launch_mult": float(pr[22]),
+                                "entry_vs_launch_mult": float(pr[23]),
+                                "realized_pnl_usd": float(pr[24]),
+                                "unrealized_pnl_usd": float(pr[25]),
+                                "total_pnl_usd": float(pr[26]),
+                                "roi_pct": float(pr[27]),
+                                "total_roi_mult": float(pr[28]),
+                                "buy_count": int(pr[29]),
+                                "sell_count": int(pr[30]),
+                                "trade_count": int(pr[31]),
+                                "total_spent_usd": float(pr[32]),
+                                "sell_proceeds_usd": float(pr[33]),
+                                "first_buyer_rank": int(pr[34]),
+                                "all_buys": json.loads(pr[35] or "[]"),
+                                "all_sells": json.loads(pr[36] or "[]"),
+                                "outcome": pr[37],
                             })
                     except Exception:
                         token_rows = []
