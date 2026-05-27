@@ -119,7 +119,7 @@ SELECT
     ifNull(argMaxIf(token_address, first_entry_timestamp, qualifies=1), '') AS last_active_token,
     ifNull(maxIf(first_entry_timestamp, qualifies=1), now())  AS last_active_at,
     now()                           AS updated_at
-FROM wallet_token_stats
+FROM wallet_token_stats FINAL
 GROUP BY wallet_address
 """
 

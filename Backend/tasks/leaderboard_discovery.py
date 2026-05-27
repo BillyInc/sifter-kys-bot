@@ -221,14 +221,12 @@ def leaderboard_discovery_scan(self):
                 token = _extract_token_mint(pos)
                 if token:
                     unique_tokens.add(token)
-                    # Cache token metadata from position if available
                     meta = pos.get("meta") or {}
                     if meta and token not in token_meta_cache:
                         token_meta_cache[token] = meta
 
-            # Mark wallet as seen in Redis
-            r.sadd(LEADERBOARD_SEEN_KEY, wallet_addr)
-            r.expire(LEADERBOARD_SEEN_KEY, LEADERBOARD_SEEN_TTL)
+            # NOTE: wallet is NOT marked as "seen" here — only after successful
+            # CH insert in Step 6, to prevent data loss on task failure.
 
             if (i + 1) % 25 == 0:
                 logger.info(
@@ -237,6 +235,14 @@ def leaderboard_discovery_scan(self):
                 )
 
         processed_wallet_set = set(wallet_positions.keys())
+
+        # Pre-build token → wallets mapping (avoids O(wallets*tokens) in Step 4)
+        token_to_wallets: dict[str, list[str]] = {}
+        for w_addr, positions in wallet_positions.items():
+            for pos in positions:
+                t = _extract_token_mint(pos)
+                if t:
+                    token_to_wallets.setdefault(t, []).append(w_addr)
 
         logger.info(
             "[LEADERBOARD] %d wallets qualified with >= 1 position, %d unique tokens",
@@ -306,10 +312,8 @@ def leaderboard_discovery_scan(self):
 
             # --- Individual trades per wallet that traded this token ---
             trades_by_token_wallet[token] = {}
-            for wallet_addr in processed_wallet_set:
-                wallet_token_set = {_extract_token_mint(pos) for pos in wallet_positions.get(wallet_addr, [])}
-                if token not in wallet_token_set:
-                    continue
+            wallets_for_token = token_to_wallets.get(token, [])
+            for wallet_addr in wallets_for_token:
                 time.sleep(0.4)
                 try:
                     trades = st.get_wallet_token_trades(token, wallet_addr)
@@ -497,6 +501,11 @@ def leaderboard_discovery_scan(self):
         if rows:
             insert_wallet_token_stats(rows)
             logger.info("[LEADERBOARD] Inserted %d wallet_token_stats rows", len(rows))
+
+            # Mark wallets as "seen" AFTER successful CH insert (not before)
+            for wallet_addr in wallet_positions:
+                r.sadd(LEADERBOARD_SEEN_KEY, wallet_addr)
+            r.expire(LEADERBOARD_SEEN_KEY, LEADERBOARD_SEEN_TTL)
 
         # =================================================================
         # Step 7: Elite 15 from CH with tokens_traded_30d >= 10 filter

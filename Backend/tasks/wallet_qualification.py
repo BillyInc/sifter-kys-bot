@@ -75,7 +75,7 @@ def _fetch_wallets_for_token(token_address: str) -> list[dict]:
         logger.info("Fetched %d traders for %s", len(traders), token_address[:12])
 
     # -- V2: first buyers (replaces /first-buyers/{token}) --
-    first_buyers = st.get_first_buyers(token_address, limit=50)
+    first_buyers = st.get_first_buyers(token_address, limit=100)
     for buyer in first_buyers:
         wallet = buyer.get("wallet")
         if wallet:
@@ -518,12 +518,12 @@ def second_pass_patch(self, token_address: str, token_data: dict | None = None):
     logger.info("second_pass_patch START token=%s", token_address[:12])
 
     try:
-        # 1. Verify 10x pump (token_ath_price is the raw ATH price now)
+        # 1. Get ATH price for entry-to-ATH computation.
+        # V2 has no launch price, so the 10x ATH gate is not enforced —
+        # qualification is wallet-ROI based via _compute_outcome.
         token_ath_price = _get_token_ath_mult(token_address)
-        # Since we can't compute launch-to-ATH without launch price,
-        # skip the ATH gate for V2 — qualification is wallet-ROI based
-        token_ath_mult = 0.0  # interface compat
-        if False and token_ath_mult < TOKEN_MIN_PUMP_MULT:
+        token_ath_mult = token_ath_price  # raw ATH price, used in build_row
+        if False:  # ATH gate disabled — no launch price from V2
             logger.info(
                 "Token %s ATH mult %.1fx < %dx threshold, skipping second pass",
                 token_address[:12],
