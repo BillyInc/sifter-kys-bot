@@ -1392,13 +1392,40 @@ def ingest_helius_signal(signal: dict):
         token_address = signal.get("token_address", "")
         wallet_address = signal.get("wallet_address", "")
 
-        # Qualification gate — annotate signal (soft gate, doesn't block)
+        # Validate wallet is in Elite 15 monitored set
         from services.redis_pool import get_redis_client
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
         r = get_redis_client()
+
+        # Check wallet is in the system user watchlist (Elite 15)
+        is_elite = False
+        try:
+            sb = get_supabase_client()
+            result = sb.schema(SCHEMA_NAME).table("wallet_watchlist").select("wallet_address").eq(
+                "wallet_address", wallet_address
+            ).limit(1).execute()
+            is_elite = bool(result.data)
+        except Exception:
+            is_elite = True  # fail open on DB error — don't block legitimate signals
+
+        if not is_elite:
+            logger.info("[SIGNAL] action=reject wallet=%s reason=not_elite", wallet_address[:8])
+            return {"status": "rejected", "reason": "wallet_not_in_elite_set"}
+
+        # Token qualification gate — annotate signal (soft gate)
         is_qualified = r.sismember("kys:qualified_tokens", token_address)
         is_known = r.sismember("kys:known_tokens", token_address) or r.sismember("kys:pending_tokens", token_address)
         signal["token_qualified"] = bool(is_qualified)
         signal["token_known"] = bool(is_known)
+
+        # Dedup by tx_hash to prevent replay attacks
+        tx_hash = signal.get("tx_hash") or signal.get("signal_key") or ""
+        if tx_hash:
+            dedup_key = f"kys:sig_seen:{tx_hash}"
+            if r.exists(dedup_key):
+                logger.info("[SIGNAL] action=dedup token=%s tx=%s", token_address[:8], tx_hash[:12])
+                return {"status": "duplicate", "tx_hash": tx_hash}
+            r.setex(dedup_key, 3600, "1")  # 1hr dedup window
 
         from services.signal_aggregator import get_aggregator
         get_aggregator().receive(signal)

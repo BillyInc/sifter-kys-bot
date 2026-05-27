@@ -242,11 +242,12 @@ class TestTelegramWebhook:
     def test_webhook_message_queued(self, client):
         notifier = _mock_notifier()
         with patch("routes.telegram.telegram_notifier", notifier), \
-             patch.dict("os.environ", {"TELEGRAM_SECRET_TOKEN": ""}, clear=False):
+             patch.dict("os.environ", {"TELEGRAM_SECRET_TOKEN": "test-secret"}, clear=False):
             resp = client.post(
                 "/api/telegram/webhook",
                 data=json.dumps({"message": {"text": "/start", "chat": {"id": 1}}}),
                 content_type="application/json",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
             )
         assert resp.status_code == 200
         assert resp.get_json()["ok"] is True
@@ -254,11 +255,12 @@ class TestTelegramWebhook:
     def test_webhook_callback_query(self, client):
         notifier = _mock_notifier()
         with patch("routes.telegram.telegram_notifier", notifier), \
-             patch.dict("os.environ", {"TELEGRAM_SECRET_TOKEN": ""}, clear=False):
+             patch.dict("os.environ", {"TELEGRAM_SECRET_TOKEN": "test-secret"}, clear=False):
             resp = client.post(
                 "/api/telegram/webhook",
                 data=json.dumps({"callback_query": {"data": "approve"}}),
                 content_type="application/json",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
             )
         assert resp.status_code == 200
 

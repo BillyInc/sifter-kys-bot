@@ -72,11 +72,7 @@ class PaperTrader:
         )
         self.hourly_limit = hourly_limit
         self.daily_limit = daily_limit
-        self.token_url = "https://data.solanatracker.io/tokens"
-        self.headers = {
-            "accept": "application/json",
-            "x-api-key": Config.SOLANATRACKER_API_KEY,
-        }
+        # Token price fetches go through get_st_client() in _fetch_token_snapshot
         self.runtime = get_paper_trade_runtime()
         self.execution_adapter = PaperExecutionAdapter()
         self.lock = threading.Lock()

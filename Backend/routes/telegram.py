@@ -250,13 +250,16 @@ def telegram_webhook():
     if not update:
         return jsonify({'error': 'No update data'}), 400
 
-    # Verify secret token (if set)
+    # Verify secret token (timing-safe, fail closed if not configured)
+    import hmac
     secret_token = os.environ.get('TELEGRAM_SECRET_TOKEN')
-    if secret_token:
-        header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
-        if header_token != secret_token:
-            print("[TELEGRAM WEBHOOK] ⚠️ Invalid secret token")
-            return jsonify({'error': 'Unauthorized'}), 401
+    if not secret_token:
+        logger.error("[TELEGRAM WEBHOOK] TELEGRAM_SECRET_TOKEN not set — rejecting")
+        return jsonify({'error': 'Unauthorized'}), 401
+    header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not hmac.compare_digest(header_token, secret_token):
+        logger.warning("[TELEGRAM WEBHOOK] Invalid secret token")
+        return jsonify({'error': 'Unauthorized'}), 401
 
     # Handle callback queries (button clicks)
     if 'callback_query' in update:
