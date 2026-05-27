@@ -983,7 +983,8 @@ def execute_bot_auto_trade(trade_id: int):
     try:
         import redis as redis_lib
         _r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
-        if _r.get("sifter:kill_switch") == b"1":
+        ks_val = _r.get("sifter:kill_switch")
+        if ks_val:  # any truthy value = kill switch active (accepts "1", b"1", JSON)
             print(f"[KILL SWITCH] Blocked trade {trade_id} — kill switch active")
             try:
                 from services.alert_router import alert, P0
@@ -992,8 +993,9 @@ def execute_bot_auto_trade(trade_id: int):
                 pass
             return {"status": "skipped", "reason": "kill_switch_active"}
     except Exception as _ks_exc:
-        print(f"[KILL SWITCH] Redis check failed: {_ks_exc}")
-        # Fail open — do not block trading if Redis itself is down
+        print(f"[KILL SWITCH] Redis check failed: {_ks_exc} — blocking trade (fail closed)")
+        # Fail CLOSED — block real-money trading when Redis is down
+        return {"status": "skipped", "reason": "kill_switch_redis_unavailable"}
 
     from services.supabase_client import get_supabase_client, SCHEMA_NAME
 
@@ -1169,10 +1171,13 @@ def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
         "WEBHOOK_URL", "https://sifter-kys.duckdns.org/api/webhooks/helius"
     )
 
+    helius_headers = {"Authorization": f"Bearer {api_key}"}
+
     try:
         # Find existing webhook for our URL
         resp = req.get(
-            f"https://api.helius.xyz/v0/webhooks?api-key={api_key}", timeout=15
+            f"https://api.helius.xyz/v0/webhooks?api-key={api_key}",
+            headers=helius_headers, timeout=15,
         )
         if resp.status_code != 200:
             logger.error("[ELITE SYNC] Helius list webhooks failed: %d", resp.status_code)
@@ -1187,7 +1192,7 @@ def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
             resp = req.put(
                 f"https://api.helius.xyz/v0/webhooks/{wh_id}?api-key={api_key}",
                 json={"accountAddresses": wallet_addresses},
-                timeout=15,
+                headers=helius_headers, timeout=15,
             )
             if resp.status_code == 200:
                 logger.info("[ELITE SYNC] Updated Helius webhook %s with %d wallets", wh_id, len(wallet_addresses))
@@ -1197,7 +1202,9 @@ def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
             logger.warning("[ELITE SYNC] No Helius webhook found for %s — run register_helius_webhook.py first", webhook_url)
 
     except Exception as exc:
-        logger.error("[ELITE SYNC] Helius webhook sync error: %s", str(exc)[:200])
+        # Sanitize to avoid leaking API key from URL in exception messages
+        err_msg = str(exc)[:200].replace(api_key, "***")
+        logger.error("[ELITE SYNC] Helius webhook sync error: %s", err_msg)
 
     return False
 

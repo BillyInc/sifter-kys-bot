@@ -209,18 +209,47 @@ def _maybe_record_paper_trades(signal: Dict[str, Any], watchers: List[Dict]) -> 
         logger.error("[HELIUS] action=paper_trade_module status=failed error=%s", str(e)[:200])
 
 
+_helius_rate_tracker: dict = {}  # IP -> (count, window_start)
+_HELIUS_RATE_LIMIT = 100  # max requests per minute per IP
+_HELIUS_RATE_WINDOW = 60  # seconds
+
+
+def _check_helius_rate_limit(ip: str) -> bool:
+    """Simple in-memory rate limiter for the webhook endpoint."""
+    import time as _time
+    now = _time.time()
+    if ip in _helius_rate_tracker:
+        count, window_start = _helius_rate_tracker[ip]
+        if now - window_start > _HELIUS_RATE_WINDOW:
+            _helius_rate_tracker[ip] = (1, now)
+            return True
+        if count >= _HELIUS_RATE_LIMIT:
+            return False
+        _helius_rate_tracker[ip] = (count + 1, window_start)
+    else:
+        _helius_rate_tracker[ip] = (1, now)
+    return True
+
+
 @helius_bp.route("/api/webhooks/helius", methods=["POST"])
 def helius_wallet_alert():
     """
     Helius webhook endpoint for enhanced transaction events.
     Always returns 200 to prevent Helius from retrying.
+    Rate limited to 100 req/min per IP.
     """
+    # Rate limit check
+    client_ip = request.remote_addr or "unknown"
+    if not _check_helius_rate_limit(client_ip):
+        logger.warning("[HELIUS] Rate limited IP=%s", client_ip)
+        return jsonify({"status": "rate_limited"}), 200
+
     auth_header = request.headers.get("Authorization", "")
     if not _verify_secret(auth_header):
         logger.warning("[HELIUS] Invalid webhook secret")
         alert(P0, "HELIUS", "Unauthorized webhook request received",
-              details={"ip": request.remote_addr, "auth_header_present": bool(auth_header)})
-        return jsonify({"status": "unauthorized"}), 200  # Still 200 to avoid retries
+              details={"ip": client_ip, "auth_header_present": bool(auth_header)})
+        return jsonify({"status": "unauthorized"}), 200
 
     try:
         payload = request.get_json(silent=True) or []
