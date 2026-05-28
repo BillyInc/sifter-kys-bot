@@ -101,7 +101,8 @@ def _extract_token_mint(pos: dict) -> str:
     max_retries=2,
     default_retry_delay=300,
     acks_late=True,
-    time_limit=1800,
+    time_limit=7200,
+    soft_time_limit=6900,
 )
 def leaderboard_discovery_scan(self):
     """Discover top wallets from the SolanaTracker V2 leaderboard, fetch their
@@ -112,7 +113,7 @@ def leaderboard_discovery_scan(self):
 
         # Distributed lock — prevent duplicate concurrent runs
         lock_key = "sifter:leaderboard_discovery:lock"
-        if not r.set(lock_key, "1", nx=True, ex=1800):
+        if not r.set(lock_key, "1", nx=True, ex=7200):
             logger.warning("[LEADERBOARD] Another scan is already running, skipping")
             return {"status": "skipped", "reason": "lock held"}
 
@@ -263,6 +264,8 @@ def leaderboard_discovery_scan(self):
 
         # =================================================================
         # Step 4: Per-token fetches (first-buyers, ATH, token info, trades)
+        #   Cap at 500 tokens by wallet overlap to stay within time/credit budget.
+        #   Remaining tokens get default values (0 ATH, no launch price, etc.)
         # =================================================================
         first_buyers_list_by_token: dict[str, list[str]] = {}
         first_buyer_rank_by_token: dict[str, dict[str, int]] = {}
@@ -271,7 +274,21 @@ def leaderboard_discovery_scan(self):
         creation_time_by_token: dict[str, datetime] = {}
         trades_by_token_wallet: dict[str, dict[str, list[dict]]] = {}
 
-        for token in unique_tokens:
+        # Prioritize tokens traded by more wallets (higher signal value)
+        MAX_TOKENS_TO_ENRICH = 500
+        tokens_ranked = sorted(
+            unique_tokens,
+            key=lambda t: len(token_to_wallets.get(t, [])),
+            reverse=True,
+        )
+        tokens_to_enrich = tokens_ranked[:MAX_TOKENS_TO_ENRICH]
+        if len(unique_tokens) > MAX_TOKENS_TO_ENRICH:
+            logger.info(
+                "[LEADERBOARD] Enriching top %d of %d tokens (by wallet overlap)",
+                MAX_TOKENS_TO_ENRICH, len(unique_tokens),
+            )
+
+        for token in tokens_to_enrich:
             time.sleep(0.5)
 
             # --- First buyers ---
