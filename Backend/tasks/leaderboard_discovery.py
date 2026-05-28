@@ -7,7 +7,7 @@ trades), and inserts full V3 rows into ClickHouse wallet_token_stats.
 
 Flow:
   1. Fetch leaderboard candidates across 3 sort criteria (tokens, roi, volume)
-  2. Rank by tokensTraded, take top 150, filter out recently processed wallets
+  2. Rank by tokensTraded, take top 100, filter out recently processed wallets
   3. Paginated positions per wallet + conviction filter
   4. Per-token fetches: first-buyers, ATH, token info, individual trades
   5. Build full V3 wallet_token_stats rows
@@ -108,8 +108,15 @@ def leaderboard_discovery_scan(self):
     positions and enrichment data, and populate ClickHouse wallet_token_stats rows."""
 
     try:
-        st = get_st_client()
         r = get_redis_client()
+
+        # Distributed lock — prevent duplicate concurrent runs
+        lock_key = "sifter:leaderboard_discovery:lock"
+        if not r.set(lock_key, "1", nx=True, ex=1800):
+            logger.warning("[LEADERBOARD] Another scan is already running, skipping")
+            return {"status": "skipped", "reason": "lock held"}
+
+        st = get_st_client()
         ch = get_clickhouse_client()
 
         if ch is None:
@@ -148,21 +155,21 @@ def leaderboard_discovery_scan(self):
         )
 
         # =================================================================
-        # Step 2: Rank by tokensTraded, take top 150, recency filter
+        # Step 2: Rank by tokensTraded, take top 100, recency filter
         # =================================================================
         ranked = sorted(
             all_candidates.values(),
             key=lambda c: int((c.get("counts") or {}).get("tokensTraded", 0)),
             reverse=True,
         )
-        top_150_wallets = [
+        top_wallets = [
             c.get("wallet") or c.get("walletAddress") or ""
-            for c in ranked[:150]
+            for c in ranked[:100]
             if c.get("wallet") or c.get("walletAddress")
         ]
 
         wallets_to_process: list[str] = []
-        for wallet_addr in top_150_wallets:
+        for wallet_addr in top_wallets:
             if r.exists(f"{LEADERBOARD_SEEN_PREFIX}{wallet_addr}"):
                 continue
 
@@ -187,9 +194,9 @@ def leaderboard_discovery_scan(self):
             wallets_to_process.append(wallet_addr)
 
         logger.info(
-            "[LEADERBOARD] %d wallets to process after filtering (from %d top-150)",
+            "[LEADERBOARD] %d wallets to process after filtering (from %d top-100)",
             len(wallets_to_process),
-            len(top_150_wallets),
+            len(top_wallets),
         )
 
         # =================================================================
@@ -649,10 +656,11 @@ def leaderboard_discovery_scan(self):
         # =================================================================
         # Return summary
         # =================================================================
+        r.delete(lock_key)
         return {
             "status": "success",
             "candidates": len(all_candidates),
-            "top_150": len(top_150_wallets),
+            "top_100": len(top_wallets),
             "processed": len(wallet_positions),
             "rows_inserted": len(rows),
             "tokens_fetched": len(unique_tokens),
@@ -661,4 +669,8 @@ def leaderboard_discovery_scan(self):
 
     except Exception as exc:
         logger.exception("[LEADERBOARD] leaderboard_discovery_scan FAILED")
+        try:
+            get_redis_client().delete("sifter:leaderboard_discovery:lock")
+        except Exception:
+            pass
         raise self.retry(exc=exc)
