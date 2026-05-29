@@ -231,22 +231,21 @@ SELECT
     sum(wallet_token_stats.unrealized_pnl_usd)                                                 AS total_unrealized_pnl_usd,
     ifNull(avgIf(wallet_token_stats.hold_time_secs, qualifies = 1 AND wallet_token_stats.hold_time_secs > 0), 0) AS avg_hold_time_secs,
     if(
-        ifNull(avgIf(wallet_token_stats.entry_price_to_launch_mult, qualifies = 1), 0) > 0,
-        greatest(0, 100 - (
-            ifNull(stddevPopIf(wallet_token_stats.entry_price_to_launch_mult, qualifies = 1), 0)
-                / avgIf(wallet_token_stats.entry_price_to_launch_mult, qualifies = 1)
-        ) * 100),
-        50
+        countIf(qualifies = 1) > 0,
+        countIf(qualifies = 1 AND wallet_token_stats.avg_entry_to_ath_mult >= 10) * 100.0
+            / countIf(qualifies = 1),
+        0
     )                                                                       AS consistency_score,
     ''                                                                      AS entry_price_multipliers,
     (
-        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.avg_entry_to_ath_mult,          qualifies=1), 0)) * 100) * 0.50 +
-        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.entry_price_to_launch_mult,     qualifies=1), 0)) * 100) * 0.20 +
-        least(1000, log(1 + ifNull(avgIf(wallet_token_stats.total_roi_mult,                 qualifies=1), 0)) * 100) * 0.20 +
-        greatest(0, 100 - ifNull(
-            stddevPopIf(wallet_token_stats.entry_price_to_launch_mult, qualifies=1)
-            / nullIf(avgIf(wallet_token_stats.entry_price_to_launch_mult, qualifies=1), 0)
-        , 0) * 100)                                                                                 * 0.10
+        least(100, log(1 + ifNull(avgIf(wallet_token_stats.avg_entry_to_ath_mult, qualifies=1), 0)) * 100) * 0.50 +
+        if(
+            countIf(qualifies = 1) > 0,
+            countIf(qualifies = 1 AND wallet_token_stats.avg_entry_to_ath_mult >= 10) * 100.0
+                / countIf(qualifies = 1),
+            0
+        ) * 0.30 +
+        least(100, log(1 + ifNull(avgIf(wallet_token_stats.total_roi_mult, qualifies=1), 0)) * 100) * 0.20
     )                                                                       AS professional_score,
     ''                                                                      AS tier,
     ifNull(argMaxIf(token_address, first_entry_timestamp, qualifies=1), '') AS last_active_token,

@@ -553,18 +553,38 @@ def leaderboard_discovery_scan(self):
         # =================================================================
         try:
             top_15 = ch.query("""
-                SELECT wallet_address FROM wallet_aggregate_stats FINAL
-                WHERE tokens_traded_30d >= 10
-                ORDER BY professional_score DESC LIMIT 15
+                WITH top_100_by_participation AS (
+                    SELECT wallet_address
+                    FROM wallet_aggregate_stats FINAL
+                    WHERE tokens_traded_30d >= 10
+                    ORDER BY tokens_traded_30d DESC
+                    LIMIT 100
+                )
+                SELECT w.wallet_address
+                FROM wallet_aggregate_stats FINAL w
+                INNER JOIN top_100_by_participation t
+                    ON w.wallet_address = t.wallet_address
+                ORDER BY w.professional_score DESC
+                LIMIT 15
             """)
             top_15_addrs = [row[0] for row in top_15.result_rows]
 
             # Fallback: if fewer than 15, relax to tokens_qualified >= 1
             if len(top_15_addrs) < 15:
                 fallback = ch.query("""
-                    SELECT wallet_address FROM wallet_aggregate_stats FINAL
-                    WHERE tokens_qualified >= 1
-                    ORDER BY professional_score DESC LIMIT 15
+                    WITH top_100_by_participation AS (
+                        SELECT wallet_address
+                        FROM wallet_aggregate_stats FINAL
+                        WHERE tokens_qualified >= 1
+                        ORDER BY tokens_traded_30d DESC
+                        LIMIT 100
+                    )
+                    SELECT w.wallet_address
+                    FROM wallet_aggregate_stats FINAL w
+                    INNER JOIN top_100_by_participation t
+                        ON w.wallet_address = t.wallet_address
+                    ORDER BY w.professional_score DESC
+                    LIMIT 15
                 """)
                 fallback_addrs = [row[0] for row in fallback.result_rows]
                 existing = set(top_15_addrs)
