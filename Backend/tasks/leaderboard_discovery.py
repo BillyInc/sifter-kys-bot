@@ -377,16 +377,23 @@ def leaderboard_discovery_scan(self):
 
                 # --- Price fields ---
                 averages = pos.get("averages") or {}
-                avg_buy = float(averages.get("buy", 0))
+                avg_buy = float(averages.get("buy", 0))  # USD per buy tx (NOT per token)
                 first_entry_price = avg_buy
+
+                volume = pos.get("volume") or {}
+                tokens_bought_native = float(volume.get("tokensBought") or 0)
+                invested = float(pos.get("invested") or 0)
+
+                # Entry price per token in USD (same unit as ATH/launch prices)
+                entry_price_per_token = (invested / tokens_bought_native) if tokens_bought_native > 0 else 0.0
 
                 ath_price = ath_by_token.get(token, 0.0)
                 launch_price = launch_price_by_token.get(token, 0.0)
                 token_creation_time = creation_time_by_token.get(token, datetime(1970, 1, 1, tzinfo=timezone.utc))
 
-                # --- Entry signal computations ---
-                avg_entry_to_ath_mult = ath_price / avg_buy if avg_buy > 0 and ath_price > 0 else 0.0
-                entry_vs_launch_mult = launch_price / avg_buy if avg_buy > 0 and launch_price > 0 else 0.0
+                # --- Entry signal computations (use per-token price, not per-tx) ---
+                avg_entry_to_ath_mult = ath_price / entry_price_per_token if entry_price_per_token > 0 and ath_price > 0 else 0.0
+                entry_vs_launch_mult = launch_price / entry_price_per_token if entry_price_per_token > 0 and launch_price > 0 else 0.0
 
                 # Combined entry_price_to_launch_mult
                 fb_list = first_buyers_list_by_token.get(token, [])
@@ -418,8 +425,6 @@ def leaderboard_discovery_scan(self):
                 sell_count = int(counts.get("sells", 0))
                 trade_count = int(counts.get("total", buy_count + sell_count))
 
-                volume = pos.get("volume") or {}
-                tokens_bought_native = float(volume.get("tokensBought") or 0)
                 tokens_sold_native = float(volume.get("tokensSold") or 0)
 
                 current = pos.get("current") or {}
@@ -427,8 +432,6 @@ def leaderboard_discovery_scan(self):
                 current_value_usd = float(current.get("value") or 0)
                 current_price_usd = float(current.get("price") or 0)
                 avg_cost_per_token = float(current.get("avgCost") or 0)
-
-                invested = float(pos.get("invested") or 0)
 
                 sell_proceeds_usd = float(pos.get("proceeds") or 0)
                 avg_sell_size_usd = float(averages.get("sell") or 0)
@@ -489,7 +492,7 @@ def leaderboard_discovery_scan(self):
                     "first_sell_timestamp": first_sell_timestamp,
                     "sell_time": sell_time,
                     "hold_time_secs": hold_time_secs,
-                    "avg_entry_price": avg_buy,
+                    "avg_entry_price": entry_price_per_token,
                     "avg_entry_to_ath_mult": round(avg_entry_to_ath_mult, 4),
                     "entry_price_to_launch_mult": round(entry_price_to_launch_mult, 4),
                     "entry_vs_launch_mult": round(entry_vs_launch_mult, 4),
