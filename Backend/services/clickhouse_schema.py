@@ -232,16 +232,16 @@ SELECT
     ifNull(avgIf(wallet_token_stats.hold_time_secs, qualifies = 1 AND wallet_token_stats.hold_time_secs > 0), 0) AS avg_hold_time_secs,
     if(
         countIf(qualifies = 1) > 0,
-        countIf(qualifies = 1 AND wallet_token_stats.avg_entry_to_ath_mult >= 10) * 100.0
+        countIf(qualifies = 1 AND wallet_token_stats.total_roi_mult >= 10) * 100.0
             / countIf(qualifies = 1),
         0
     )                                                                       AS consistency_score,
     ''                                                                      AS entry_price_multipliers,
     (
-        least(100, log(1 + ifNull(avgIf(wallet_token_stats.avg_entry_to_ath_mult, qualifies=1), 0)) * 100) * 0.50 +
+        least(100, log(1 + ifNull(avgIf(wallet_token_stats.total_roi_mult, qualifies=1), 0)) * 100) * 0.50 +
         if(
             countIf(qualifies = 1) > 0,
-            countIf(qualifies = 1 AND wallet_token_stats.avg_entry_to_ath_mult >= 10) * 100.0
+            countIf(qualifies = 1 AND wallet_token_stats.total_roi_mult >= 10) * 100.0
                 / countIf(qualifies = 1),
             0
         ) * 0.30 +
