@@ -62,18 +62,29 @@ def _fetch_current_price(token_address: str) -> Tuple[Optional[float], Optional[
 _sol_price_cache: Dict[str, Any] = {"price": None, "ts": 0}
 
 def _fetch_sol_price() -> float:
-    """Cached SOL/USD price for 60 seconds."""
+    """Cached SOL/USD price for 60 seconds via Jupiter API (free, no key)."""
     now = time.time()
     if _sol_price_cache["price"] is not None and (now - _sol_price_cache["ts"]) < 60:
         return float(_sol_price_cache["price"])
     try:
+        # Jupiter quote: 1 USDC → SOL gives us the SOL price in USD
+        # USDC mint: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+        # SOL mint: So11111111111111111111111111111111111111112
         resp = _requests.get(
-            "https://api.birdeye.so/defi/price?address=So11111111111111111111111111111111111111112",
-            headers={"X-API-KEY": ""},
+            "https://quote-api.jup.ag/v6/quote?"
+            "inputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&"
+            "outputMint=So11111111111111111111111111111111111111112&"
+            "amount=1000000&slippageBps=5",  # 1 USDC = 1,000,000 micro-units
             timeout=5,
         )
         if resp.status_code == 200:
-            price = float(resp.json().get("data", {}).get("value", 150))
+            data = resp.json()
+            out_amount = int(data.get("outAmount") or 0)
+            if out_amount > 0:
+                # outAmount is in lamports (1 SOL = 1e9 lamports)
+                price = 1e9 / out_amount  # USD per SOL
+            else:
+                price = 150.0
         else:
             price = 150.0  # fallback
     except Exception:
