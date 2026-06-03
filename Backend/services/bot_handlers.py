@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # everything else falls through to legacy handling. Keep in sync with the
 # router guard in telegram_notifier._handle_callback.
 NEW_CATEGORIES = frozenset({
-    "nav", "set", "exec", "wal", "pos", "stat", "blk", "alert", "note", "access",
+    "nav", "set", "exec", "wal", "pos", "stat", "blk", "alert", "note", "access", "op",
 })
 
 # Menu commands this module owns (return False from handle_command otherwise).
@@ -201,6 +201,10 @@ def handle_text_input(notifier, chat_id: str, text: str, message: dict) -> bool:
         _show_token_details(notifier, chat_id, text, manual=(awaiting == "manual_trade_ca"))
         return True
 
+    if awaiting == "manual_trade_ticker":
+        _search_token_by_ticker(notifier, chat_id, text, manual=True)
+        return True
+
     # Unknown awaited state — clear safely and nudge back to the menu.
     logger.info("[BOT_HANDLERS] unhandled awaited input '%s' for %s", awaiting, chat_id)
     bot_state.set_awaiting(chat_id, None)
@@ -260,6 +264,10 @@ def handle_callback(
         if category == "note":
             _answer(notifier, query_id)
             _handle_note_action(notifier, chat_id, action, params)
+            return
+        if category == "op":
+            _answer(notifier, query_id)
+            _handle_op_action(notifier, chat_id, action, params)
             return
 
         # Remaining categories land in later sprints.
@@ -580,6 +588,8 @@ def _open_elite15(notifier, chat_id: str) -> None:
         return
     wallets = _load_tracked_wallets(notifier, ctx["user_id"])
     elite = [w for w in wallets if str(w.get("tier") or "").upper() in ("S", "A")][:15]
+    # Enrich with ClickHouse aggregate stats for wallet detail
+    elite = _enrich_with_elite_stats(elite)
     selected = _load_elite_selections(notifier, ctx["user_id"])
     bot_state.push_screen(chat_id, "elite15")
     _send_rendered(notifier, chat_id, bot_screens.render_elite15({
@@ -1013,6 +1023,11 @@ def _handle_exec_action(notifier, chat_id: str, action: str, params: List[str]) 
     if action == "manual_ca":
         bot_state.set_awaiting(chat_id, "manual_trade_ca")
         notifier.send_message(chat_id, "Paste the token contract address for the manual trade preview, or /cancel.")
+        return
+
+    if action == "manual_ticker":
+        bot_state.set_awaiting(chat_id, "manual_trade_ticker")
+        notifier.send_message(chat_id, "Type the token ticker to search, or /cancel.")
         return
 
     if action == "manual_signal":
@@ -1693,12 +1708,86 @@ def _open_set_alert(notifier, chat_id: str) -> None:
     }))
 
 
+def _handle_op_action(notifier, chat_id: str, action: str, params: List[str]) -> None:
+    """Operator panel actions — gated to operator chat IDs."""
+    if not notifier._is_operator(chat_id):
+        notifier.send_message(chat_id, "Operator access required.")
+        return
+    if action == "health":
+        _op_health(notifier, chat_id)
+        return
+    if action == "close_all_warn":
+        notifier.send_message(chat_id, "⚠️ Close ALL live positions? Type /confirmcloseall to proceed.")
+        return
+    if action == "gen_codes":
+        _handle_generate_access_codes(notifier, chat_id, params)
+        return
+    if action == "fee_revenue":
+        notifier.send_message(chat_id, "Fee revenue panel: use the web dashboard for full reports. ClickHouse data at bot_fee_log.")
+        return
+    if action == "change_fee":
+        notifier.send_message(chat_id, "Use the web dashboard to change platform fee rates. Current default: 1% (100 bps).")
+        return
+    if action == "kill":
+        import redis as _redis
+        import os as _os
+        try:
+            r = _redis.Redis.from_url(_os.environ.get("REDIS_URL", "redis://localhost:6379"))
+            current = r.get("sifter:kill_switch")
+            if current:
+                r.delete("sifter:kill_switch")
+                notifier.send_message(chat_id, "🔪 Kill switch DISABLED. Trading can resume.")
+            else:
+                r.set("sifter:kill_switch", "1")
+                notifier.send_message(chat_id, "🔪 Kill switch ACTIVATED. All new trades blocked globally.")
+        except Exception as exc:
+            notifier.send_message(chat_id, f"Could not toggle kill switch: {exc}")
+        return
+
+
+def _op_health(notifier, chat_id: str) -> None:
+    """Show system health for the operator."""
+    import redis as _redis
+    import os as _os
+    lines = ["<b>SYSTEM HEALTH</b>", ""]
+    # Redis
+    try:
+        r = _redis.Redis.from_url(_os.environ.get("REDIS_URL", "redis://localhost:6379"))
+        r.ping()
+        lines.append("Redis: ✅")
+        ks = r.get("sifter:kill_switch")
+        lines.append(f"Kill switch: {'🔴 ACTIVE' if ks else '🟢 off'}")
+    except Exception:
+        lines.append("Redis: ❌ unavailable")
+    # Live positions
+    try:
+        pos = notifier._table("bot_live_positions").select("id", count="exact").eq("status", "open").execute()
+        count = pos.count if hasattr(pos, "count") else len(pos.data or [])
+        lines.append(f"Open positions: {count}")
+    except Exception:
+        lines.append("Open positions: ❌ query failed")
+    # User count
+    try:
+        users = notifier._table("telegram_users").select("id", count="exact").execute()
+        ucount = users.count if hasattr(users, "count") else len(users.data or [])
+        lines.append(f"Telegram users: {ucount}")
+    except Exception:
+        lines.append("Users: ❌ query failed")
+    notifier.send_message(chat_id, "\n".join(lines))
+
+
 def _handle_alert_action(notifier, chat_id: str, action: str, params: List[str]) -> None:
     ctx = _load_user_ctx(notifier, chat_id)
     if ctx is None:
         _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
         return
     if action == "new":
+        addr = params[0] if params else ""
+        if addr and (32 <= len(addr) <= 60):
+            # Token address provided (e.g. from position card) — go straight to target selection
+            bot_state.push_screen(chat_id, "set_alert", data={"token_address": addr})
+            _send_rendered(notifier, chat_id, bot_screens.render_set_price_alert({"token_address": addr}))
+            return
         bot_state.set_awaiting(chat_id, "alert_token_ca")
         notifier.send_message(chat_id, "Send the token contract address for the alert, or /cancel.")
         return
@@ -2594,14 +2683,57 @@ def _load_bot_wallets(notifier, user_id: str) -> List[Dict[str, Any]]:
 def _load_tracked_wallets(notifier, user_id: str) -> List[Dict[str, Any]]:
     try:
         res = notifier._table("wallet_watchlist").select(
-            "wallet_address, tier, alert_enabled, alert_threshold_usd, notes"
-        ).eq("user_id", user_id).limit(10).execute()
+            "wallet_address, tier, alert_enabled, alert_threshold_usd, notes, professional_score"
+        ).eq("user_id", user_id).limit(15).execute()
         return res.data or []
     except Exception:
         return []
 
 
-# ── low-level send helpers ──────────────────────────────────────────────────
+def _enrich_with_elite_stats(wallets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Add Elite 100 aggregate stats to wallet dicts via ClickHouse lookup.
+
+    Maps field names from what Elite100Manager / ClickHouse produces
+    to what the bot screens expect (win_rate_7d -> win_rate_pct, etc.).
+    Falls back gracefully if ClickHouse is unavailable.
+    """
+    if not wallets:
+        return wallets
+    try:
+        from services.clickhouse_client import get_clickhouse_client
+        ch = get_clickhouse_client()
+        # Batch query wallet_aggregate_stats for all wallet addresses
+        addresses = [w["wallet_address"] for w in wallets if w.get("wallet_address")]
+        if not addresses:
+            return wallets
+        addr_list = "','".join(addresses)
+        result = ch.query(f"""
+            SELECT wallet_address, win_rate, total_pnl_usd, avg_roi_mult,
+                   tokens_qualified, best_trade_mult, best_trade_ticker,
+                   worst_trade_mult, worst_trade_ticker, avg_hold_secs
+            FROM wallet_aggregate_stats FINAL
+            WHERE wallet_address IN ('{addr_list}')
+        """)
+        rows = result.result_rows if result else []
+        stats_map = {}
+        for row in rows:
+            addr = row[0]
+            stats_map[addr] = {
+                "win_rate_pct": round(float(row[1] or 0) * 100, 1),
+                "total_pnl_sol": round(float(row[2] or 0) / 200, 2) if row[2] else None,  # USD → SOL
+                "avg_roi_pct": round(float(row[3] or 0) * 100, 1),
+                "token_count": int(row[4] or 0),
+                "best_trade": f"{row[5]}x {row[6]}" if row[5] else None,
+                "worst_trade": f"{row[7]}x {row[8]}" if row[7] else None,
+                "avg_hold_time": f"{round(float(row[9] or 0) / 3600, 1)}h" if row[9] else None,
+            }
+        for w in wallets:
+            addr = w.get("wallet_address") or ""
+            if addr in stats_map:
+                w.update(stats_map[addr])
+    except Exception:
+        pass  # ClickHouse unavailable → wallet detail shows "—"
+    return wallets
 
 def _send_rendered(notifier, chat_id: str, rendered) -> None:
     text, keyboard = rendered

@@ -808,6 +808,9 @@ def render_positions(ctx: Dict[str, Any]) -> Rendered:
             {"text": "Take 50% + Run", "callback_data": f"pos|runrest|{pos.get('id')}"},
             {"text": "Archive", "callback_data": f"pos|archive|{pos.get('id')}"},
         ])
+        rows.append([
+            {"text": "🔔 Set MC Alert", "callback_data": f"alert|new|{token}"},
+        ])
     rows.append(_back_row("main"))
     return "\n".join(lines), _kb(rows)
 
@@ -1566,11 +1569,15 @@ def render_operator_panel() -> Rendered:
     lines = [
         "<b>OPERATOR PANEL</b>",
         "",
-        "Operational commands remain slash-command gated. This panel keeps them invisible to regular users.",
-        "",
-        "Use the dashboard for fee revenue, logs, and runtime settings until those Telegram sub-screens are fully wired.",
+        "Operator controls. Visible to authorized chat IDs only.",
     ]
-    rows = [
-        [nav_button("Main Menu", "main")],
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "📊 System Health", "callback_data": "op|health"}],
+        [{"text": "🚨 Close All Positions", "callback_data": "op|close_all_warn"}],
+        [{"text": "🎟️ Generate Access Codes", "callback_data": "op|gen_codes"}],
+        [{"text": "💰 Fee Revenue", "callback_data": "op|fee_revenue"}],
+        [{"text": "✏️ Change Fee Rate", "callback_data": "op|change_fee"}],
+        [{"text": "🔪 Kill Switch", "callback_data": "op|kill"}],
+        nav_button("Main Menu", "main"),
     ]
     return "\n".join(lines), _kb(rows)

@@ -113,6 +113,8 @@ class SignalAggregator:
                 "wallets": [{"wallet": w, "tier": "S"} for w in entry["wallet_addresses"]],
                 "trades": [{"usd_value": entry["total_usd"]}],
                 "signal_type_resolved": signal_type,
+                "signal_key": f"elite:{entry['token_address']}:{int(first_seen)}:{entry['wallet_count']}",
+                "side": "buy",
                 "aggregation_window_seconds": self._window,
                 "aggregation_first_seen": first_seen,
                 "aggregation_age_seconds": round(now - first_seen, 1),

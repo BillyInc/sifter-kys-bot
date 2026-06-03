@@ -165,6 +165,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const updatePassword = useCallback(async (newPassword: string) => {
     authLogger.debug('Updating password')
+    // Check for backend-issued reset token (from Telegram bot / Resend email).
+    // If present, use the SIFTER backend; otherwise fall through to Supabase.
+    const urlParams = new URLSearchParams(window.location.search)
+    const resetToken = urlParams.get('token')
+    if (resetToken) {
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+        const resp = await fetch(`${API_URL}/api/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: resetToken, password: newPassword }),
+        })
+        const result = await resp.json()
+        if (!resp.ok) {
+          return { data: null, error: { message: result.error || 'Password reset failed' } }
+        }
+        // Clear token from URL after successful reset
+        window.history.replaceState({}, '', window.location.pathname)
+        return { data: result, error: null }
+      } catch (err: any) {
+        return { data: null, error: { message: err.message || 'Network error' } }
+      }
+    }
+    // Standard Supabase flow
     const { data, error } = await supabase.auth.updateUser({
       password: newPassword,
     })

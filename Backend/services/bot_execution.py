@@ -338,15 +338,23 @@ class BotExecutionRouter:
         return result
 
     def _execute_live(self, req: BotTradeRequest, mode: str) -> ExecutionResult:
-        """Route to the live Jupiter adapter. Only here are fee params and
-        wallet-key decryption ever reached. Today the adapter is a wired stub;
-        signed-swap submission + fee wiring land in later sprints."""
-        result = LiveJupiterExecutionAdapter().execute(
-            user_id=req.user_id,
-            token_address=req.token_address,
+        """Route to the live Jupiter adapter. Shares the same NormalizedTradeSignal
+        interface as the paper adapter so they can be swapped transparently."""
+        signal = NormalizedTradeSignal(
+            source="bot",
             side=req.side,
-            usd_amount=req.requested_usd,
-            wallet_public_key=req.wallet_public_key,
+            token_address=req.token_address,
+            token_ticker=req.token_symbol or "",
+            signal_key=req.signal_key or f"bot:{req.token_address}",
+            wallet_count=req.wallet_count,
+            total_usd=req.requested_usd,
+            qualifying_usd=req.requested_usd,
+        )
+        result = LiveJupiterExecutionAdapter().execute(
+            signal=signal,
+            requested_usd=req.requested_usd,
+            snapshot=req.snapshot or {},
+            settings=req.settings or {},
         )
         result.payload = {**(result.payload or {}), "execution_mode": mode}
         return result

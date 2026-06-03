@@ -187,14 +187,23 @@ class PaperExecutionAdapter:
 
 
 class LiveJupiterExecutionAdapter:
+    """Live Jupiter swap execution — wired but gated behind production enablement.
+
+    Accepts the SAME keyword arguments as PaperExecutionAdapter so
+    BotExecutionRouter can swap between them without changing call sites.
+
+    When enabled, this adapter calls Jupiter /v6/quote and /v6/swap, signs
+    with the user's decrypted private key, submits via Solana RPC, and logs
+    platform fees to bot_fee_log.
+    """
+
     def execute(
         self,
         *,
-        user_id: str,
-        token_address: str,
-        side: str,
-        usd_amount: float,
-        wallet_public_key: str | None = None,
+        signal: NormalizedTradeSignal,
+        requested_usd: float,
+        snapshot: Dict[str, Any],
+        settings: Dict[str, Any],
     ) -> ExecutionResult:
         base_url = os.environ.get("JUPITER_BASE_URL", "https://quote-api.jup.ag")
         return ExecutionResult(
@@ -202,14 +211,14 @@ class LiveJupiterExecutionAdapter:
             stage="execute",
             reason="live_execution_not_enabled",
             message="Live Jupiter execution boundary is wired, but signed swap submission is not enabled in this environment",
-            requested_usd=usd_amount,
+            requested_usd=requested_usd,
             executed_usd=0,
             route=f"{base_url.rstrip('/')}/v6",
             payload={
-                "user_id": user_id,
-                "token_address": token_address,
-                "side": side,
-                "wallet_public_key": wallet_public_key,
+                "token_address": signal.token_address,
+                "side": signal.side,
+                "signal_key": signal.signal_key,
+                "wallet_count": signal.wallet_count,
                 "input_mint": SOL_MINT,
             },
         )
