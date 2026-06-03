@@ -15,18 +15,14 @@ from typing import Dict, List, Optional
 
 import requests
 
-from services.execution_adapters import LiveJupiterExecutionAdapter
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
 from services.paper_trade_runtime import get_paper_trade_runtime, is_operator_chat_id
 
 logger = logging.getLogger(__name__)
 
-# ── Module-level state ────────────────────────────────────────────────────────
-
-_wallet_import_pending: dict = {}  # chat_id -> "awaiting_private_key"
-
-
 # ── Module-level helpers ──────────────────────────────────────────────────────
+# Note: navigation/awaited-input state lives in Redis (services/bot_state.py).
+# The wallet-import flow uses awaiting="wallet_private_key" there.
 
 def _fmt_mcap(usd):
     """Format a market cap value into human-readable string."""
@@ -456,44 +452,44 @@ class TelegramNotifier:
         usd_amount: float,
     ) -> str | None:
         try:
-            result = self._table("bot_wallets").select(
-                "public_key, encrypted_key, key_iv, key_tag"
-            ).eq("user_id", user_id).limit(1).execute()
-            if not result.data:
-                logger.warning(f"[BOT TRADE] No bot wallet registered for {user_id[:8]}...")
-                return None
+            # Route through the bot execution boundary. The selected mode
+            # (Config.BOT_EXECUTION_MODE) decides what actually happens:
+            #   safe_noop → record only (no funds, no key decryption)
+            #   paper     → realistic simulated fill
+            #   devnet/live → real Jupiter swap (key decrypted there only)
+            from services.bot_execution import BotTradeRequest, get_bot_executor
 
-            encryption_secret = os.environ.get("WALLET_ENCRYPTION_SECRET")
-            if not encryption_secret:
-                raise RuntimeError("WALLET_ENCRYPTION_SECRET env var not set")
-
-            private_key_bytes = self._decrypt_wallet_key(
-                encrypted_hex=result.data[0]["encrypted_key"],
-                iv_hex=result.data[0]["key_iv"],
-                tag_hex=result.data[0]["key_tag"],
-                secret=encryption_secret,
-                user_id=user_id,
-            )
-
+            # Look up the bot wallet's public key for live routing (no key
+            # material is decrypted here — that happens inside the live adapter
+            # only when the mode requires it).
+            public_key = None
             try:
-                execution = LiveJupiterExecutionAdapter().execute(
+                result = self._table("bot_wallets").select("public_key").eq(
+                    "user_id", user_id
+                ).limit(1).execute()
+                if result.data:
+                    public_key = result.data[0].get("public_key")
+            except Exception:
+                public_key = None
+
+            execution = get_bot_executor().execute(
+                BotTradeRequest(
                     user_id=user_id,
                     token_address=token_address,
                     side=side,
-                    usd_amount=usd_amount,
-                    wallet_public_key=result.data[0].get("public_key"),
+                    requested_usd=usd_amount,
+                    trigger_type="auto_elite",
+                    wallet_public_key=public_key,
                 )
-                if execution.status == "filled":
-                    return execution.txid
-                logger.warning(
-                    "[BOT TRADE] Live execution rejected at %s: %s",
-                    execution.stage,
-                    execution.reason,
-                )
-                return None
-            finally:
-                for i in range(len(private_key_bytes)):
-                    private_key_bytes[i] = 0
+            )
+            if execution.status == "filled":
+                return execution.txid
+            logger.warning(
+                "[BOT TRADE] execution rejected at %s: %s",
+                execution.stage,
+                execution.reason,
+            )
+            return None
         except Exception as e:
             logger.error(f"[BOT TRADE] execute_auto_trade_for_user error: {e}")
             return None
@@ -536,34 +532,52 @@ class TelegramNotifier:
         first_name = message["from"].get("first_name", "")
         last_name = message["from"].get("last_name")
 
-        # Intercept wallet import flow
-        if chat_id in _wallet_import_pending:
-            if text.lower() == '/cancel':
-                _wallet_import_pending.pop(chat_id, None)
-                self.send_message(chat_id, "❌ Wallet import cancelled.")
+        # ── New menu system (additive, backward-compatible) ──────────────
+        # 1. Consume awaited free-text input (only fires when bot_state has an
+        #    `awaiting` set). Returns False otherwise → fall through to legacy.
+        # 2. New menu commands (e.g. /menu). handle_command self-guards and
+        #    returns False for anything it doesn't own → fall through to legacy.
+        try:
+            from services import bot_handlers
+            if bot_handlers.handle_text_input(self, chat_id, text, message):
                 return
-            self._handle_wallet_key_message(chat_id, text, message)
-            return
+            if bot_handlers.handle_command(self, chat_id, text, message):
+                return
+        except Exception as e:
+            logger.error("[TELEGRAM] new-menu message dispatch error: %s", e)
+            # Fall through to legacy handling on any error.
 
         if text.startswith("/start "):
             token = text.split(" ", 1)[1]
             user_id = self.verify_connection_token(token, chat_id, username, first_name, last_name)
             if user_id:
+                # Land the freshly-linked user on the new menu.
+                try:
+                    from services import bot_handlers, bot_state
+                    bot_state.clear_state(chat_id)
+                    bot_handlers._open_main(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] post-link menu open failed: %s", e)
                 self.send_message(
                     chat_id,
                     "\u2705 <b>Connected!</b>\n\n"
                     "Your Sifter account is now linked.\n\n"
-                    "<b>Auto-trading:</b>\n"
-                    "/autotrade on\n"
-                    "/autotrade off\n"
-                    "/autotrade status\n"
-                    "/setamount 200",
+                    "Send /menu to open the bot.",
                 )
             else:
                 self.send_message(chat_id, "\u274c <b>Link failed.</b> Generate a new link from the dashboard.")
             return
 
         if text == "/start":
+            # New: land on the Welcome screen (falls back to plain text on error).
+            try:
+                from services import bot_handlers, bot_state
+                bot_state.clear_state(chat_id)
+                bot_handlers._open_welcome(self, chat_id)
+                return
+            except Exception as e:
+                logger.error("[TELEGRAM] welcome screen open failed: %s", e)
             self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
             return
 
@@ -801,7 +815,8 @@ class TelegramNotifier:
             if message["chat"].get("type") != "private":
                 self.send_message(chat_id, "⚠️ For security, use this command in a <b>direct message</b> to the bot.")
                 return
-            _wallet_import_pending[chat_id] = "awaiting_private_key"
+            from services import bot_state
+            bot_state.set_awaiting(chat_id, "wallet_private_key")
             self.send_message(
                 chat_id,
                 "🔐 <b>Wallet Import</b>\n\n"
@@ -815,7 +830,8 @@ class TelegramNotifier:
             return
 
         if text == "/cancel":
-            _wallet_import_pending.pop(chat_id, None)
+            from services import bot_state
+            bot_state.clear_state(chat_id)
             self.send_message(chat_id, "Cancelled.")
             return
 
@@ -971,6 +987,13 @@ class TelegramNotifier:
             return
 
         if text == "/help":
+            try:
+                from services import bot_screens
+                body, keyboard = bot_screens.render_help()
+                self.send_message(chat_id, body, keyboard)
+                return
+            except Exception as e:
+                logger.error("[TELEGRAM] menu help failed: %s", e)
             self.send_message(
                 chat_id,
                 "<b>Sifter KYS Bot Commands</b>\n\n"
@@ -1002,6 +1025,25 @@ class TelegramNotifier:
         query_id = query["id"]
         chat_id = str(query["from"]["id"])
         data = query["data"]
+
+        # ── New menu system (additive) ───────────────────────────────────
+        # Legacy callback formats keep their exact behavior below; only NEW
+        # pipe-delimited categories are routed to the menu handlers. Anything
+        # unrecognized falls through to the legacy no-op.
+        if not (data.startswith("cp_p:") or data.startswith("cp_b:") or data.startswith("sell|")):
+            parts = data.split("|")
+            if len(parts) >= 2:
+                try:
+                    from services import bot_handlers
+                    if parts[0] in bot_handlers.NEW_CATEGORIES:
+                        bot_handlers.handle_callback(
+                            self, chat_id, query, parts[0], parts[1], parts[2:]
+                        )
+                        return
+                except Exception as e:
+                    logger.error("[TELEGRAM] new-menu callback dispatch error: %s", e)
+                    self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
+                    return
 
         if data.startswith("cp_p:") or data.startswith("cp_b:"):
             ca = data.split(":", 1)[1]
@@ -1073,10 +1115,11 @@ class TelegramNotifier:
             self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
 
     def _handle_wallet_key_message(self, chat_id: str, raw_text: str, message: dict):
-        """Process a private key message during wallet import flow."""
-        # Remove pending state immediately
-        _wallet_import_pending.pop(chat_id, None)
+        """Process a private key message during wallet import flow.
 
+        Called by bot_handlers.handle_text_input when awaiting='wallet_private_key';
+        the awaited state is already cleared by the caller.
+        """
         # Delete the message containing the key for security
         message_id = message.get("message_id")
         if message_id:

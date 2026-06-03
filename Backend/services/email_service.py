@@ -256,6 +256,25 @@ class EmailService:
         html = _wrap_html("Daily Paper Trading Summary", body)
         return self._send(email, subject, html)
 
+    def send_bot_trade_open(self, email: str, trade: dict, dashboard_url: str = "") -> bool:
+        """Send a bot trade-open notification email."""
+        symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
+        token = trade.get("token_address") or ""
+        amount = float(trade.get("usd_amount") or trade.get("executed_usd") or 0)
+        chart = f"https://dexscreener.com/solana/{token}" if token else ""
+        body = (
+            f'<p style="margin: 0 0 12px 0;">The autonomous SIFTER bot entered a trade.</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Amount:</strong> ${amount:,.2f}</p>'
+            f'<p style="margin: 0 0 16px 0;"><strong>Contract:</strong> {token}</p>'
+        )
+        if chart:
+            body += f'<p><a href="{chart}">View chart</a></p>'
+        if dashboard_url:
+            body += f'<p><a href="{dashboard_url}">Manage position</a></p>'
+        html = _wrap_html(f"SIFTER Bot Entered ${symbol}", body)
+        return self._send(email, f"SIFTER Bot entered ${symbol}", html)
+
     # ------------------------------------------------------------------
     # 2) Error alert (to admin)
     # ------------------------------------------------------------------
