@@ -1162,6 +1162,24 @@ def _notify_bot_queue_result(queue_id: int, result: dict, supabase):
         print(f"[BOT TRADE] Notification failed for queue {queue_id}: {exc}")
 
 
+@celery.task(name='tasks.monitor_bot_positions', max_retries=0)
+def monitor_bot_positions():
+    """Periodic check of open bot positions for TP/SL/trailing-stop triggers."""
+    try:
+        from services.bot_position_monitor import monitor_positions
+        result = monitor_positions()
+        if result.get("errors"):
+            print(f"[POS_MONITOR] Completed: {result['closed']} closed, {result['skipped']} skipped, {len(result['errors'])} errors")
+            for err in result["errors"][:5]:
+                print(f"[POS_MONITOR] Error: {err}")
+        elif result["closed"] > 0:
+            print(f"[POS_MONITOR] Completed: {result['closed']} positions closed")
+    except Exception as exc:
+        print(f"[POS_MONITOR] Task failed: {exc}")
+        import traceback
+        traceback.print_exc()
+
+
 @celery.task(name='tasks.send_paper_trader_daily_digest')
 def send_paper_trader_daily_digest():
     """Send the daily paper trader HTML digest to configured recipients."""

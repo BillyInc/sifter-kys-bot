@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from services.bot_execution import BotTradeRequest, get_bot_executor
 from services.bot_filters import load_blacklist_set, passes_auto_trade_filters
@@ -60,6 +60,22 @@ def _requested_usd(user_row: Dict[str, Any], signal: Dict[str, Any]) -> float:
     else:
         pct = float(user_row.get("tier1_pct_of_pool") or 30)
     return round(max(0.0, min(cap, total * (pct / 100.0))), 2)
+
+
+def _load_elite_selections_for_user(supabase, user_id: str) -> Set[str]:
+    """Return the set of wallet addresses this user has explicitly selected for
+    copy-trading. An empty set means 'copy ALL Elite 15 wallets' (default)."""
+    try:
+        res = (
+            _table(supabase, "bot_elite_selections")
+            .select("wallet_address")
+            .eq("user_id", user_id)
+            .eq("enabled", True)
+            .execute()
+        )
+        return {r["wallet_address"] for r in (res.data or [])}
+    except Exception:
+        return set()  # don't block trading on a DB error
 
 
 def queue_autonomous_trade(
@@ -112,6 +128,63 @@ def queue_autonomous_trade(
                 skip_reason=reason,
             )
             return {"status": "skipped", "reason": reason}
+
+        # ── Elite 15 wallet selection ──────────────────────────────────────────
+        # If the user has explicitly selected wallets to copy-trade, only fire
+        # on signals from those wallets. If no selections exist, copy ALL Elite
+        # 15 wallets (the default).
+        signal_wallets = signal.get("wallet_addresses") or signal.get("wallets") or []
+        if isinstance(signal_wallets, list) and signal_wallets:
+            selected = _load_elite_selections_for_user(supabase, user_id)
+            if selected:
+                # Only proceed if at least one signaling wallet is selected
+                if not any(w in selected for w in signal_wallets):
+                    _insert_signal_queue(
+                        supabase,
+                        user_id=user_id,
+                        signal=signal,
+                        requested_usd=0,
+                        status="skipped",
+                        skip_reason="wallet_not_selected",
+                    )
+                    return {"status": "skipped", "reason": "wallet_not_selected"}
+        # ── end Elite selection ──────────────────────────────────────────────
+
+        # ── Rate limits ──────────────────────────────────────────────────────
+        hourly_limit = int(user_row.get("auto_trade_hourly_limit") or 0)
+        daily_limit = int(user_row.get("auto_trade_daily_limit") or 0)
+        if hourly_limit > 0 or daily_limit > 0:
+            now_ts = datetime.now(timezone.utc)
+            try:
+                import redis as _redis
+                import os as _os
+                _r = _redis.Redis.from_url(
+                    _os.environ.get("REDIS_URL", "redis://localhost:6379"),
+                    decode_responses=True,
+                )
+                if daily_limit > 0:
+                    daily_key = f"sifter:rate:{user_id}:daily:{now_ts.strftime('%Y%m%d')}"
+                    daily_used = int(_r.get(daily_key) or 0)
+                    if daily_used >= daily_limit:
+                        _insert_signal_queue(
+                            supabase, user_id=user_id, signal=signal,
+                            requested_usd=0, status="rate_limited",
+                            skip_reason="daily_limit",
+                        )
+                        return {"status": "skipped", "reason": "daily_limit"}
+                if hourly_limit > 0:
+                    hourly_key = f"sifter:rate:{user_id}:hourly:{now_ts.strftime('%Y%m%d%H')}"
+                    hourly_used = int(_r.get(hourly_key) or 0)
+                    if hourly_used >= hourly_limit:
+                        _insert_signal_queue(
+                            supabase, user_id=user_id, signal=signal,
+                            requested_usd=0, status="rate_limited",
+                            skip_reason="hourly_limit",
+                        )
+                        return {"status": "skipped", "reason": "hourly_limit"}
+            except Exception:
+                pass  # Redis down → don't block trading
+        # ── end rate limits ──────────────────────────────────────────────────
 
         # Avoid stacking entries into the same token for the same user.
         open_pos = (

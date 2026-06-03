@@ -276,7 +276,131 @@ class EmailService:
         return self._send(email, f"SIFTER Bot entered ${symbol}", html)
 
     # ------------------------------------------------------------------
-    # 2) Error alert (to admin)
+    # 2) Password reset
+    # ------------------------------------------------------------------
+
+    def send_password_reset(self, email: str, reset_url: str, source: str = "dashboard") -> bool:
+        """Send a password-reset email with a one-time reset link."""
+        label = "SIFTER Telegram Bot" if source == "telegram" else "SIFTER Dashboard"
+        body = (
+            f'<p style="margin: 0 0 12px 0;">You (or someone) requested a password reset for your {label} account.</p>'
+            f'<p style="margin: 0 0 16px 0;">Click the button below to set a new password. '
+            f'This link expires in <strong>1 hour</strong>.</p>'
+            f'<p style="margin: 16px 0;">'
+            f'<a href="{reset_url}" style="background: #16213e; color: #ffffff; padding: 12px 24px; '
+            f'border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">'
+            f'Reset My Password</a></p>'
+            f'<p style="margin: 16px 0 0 0; color: #9ca3af; font-size: 12px;">'
+            f'If you didn\'t request this, you can safely ignore this email.</p>'
+        )
+        html = _wrap_html("Reset Your Password", body)
+        return self._send(email, "Reset your SIFTER password", html)
+
+    def send_welcome(self, email: str) -> bool:
+        """Send a welcome email after successful in-bot registration."""
+        body = (
+            '<p style="margin: 0 0 12px 0;">Welcome to <strong>SIFTER KYS</strong> — your account has been created!</p>'
+            '<p style="margin: 0 0 8px 0;">Here\'s what you can do next:</p>'
+            '<ul style="margin: 0 0 16px 0; padding-left: 20px;">'
+            '<li>Return to Telegram and type <strong>/menu</strong> to explore the bot</li>'
+            '<li>Import a trading wallet to start trading</li>'
+            '<li>Configure your strategy settings</li>'
+            '</ul>'
+            '<p style="margin: 0;">Happy trading! 🚀</p>'
+        )
+        html = _wrap_html("Welcome to SIFTER KYS", body)
+        return self._send(email, "Welcome to SIFTER KYS 🚀", html)
+
+    def send_bot_trade_close(
+        self, email: str, trade: dict, dashboard_url: str = ""
+    ) -> bool:
+        """Send a bot trade-close notification email."""
+        symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
+        pnl = float(trade.get("realized_pnl_usd") or trade.get("pnl_usd") or 0)
+        close_reason = trade.get("close_reason") or "manual"
+        hold_time = trade.get("hold_time") or "—"
+        pnl_color = "#10b981" if pnl > 0 else "#ef4444"
+        body = (
+            f'<p style="margin: 0 0 12px 0;">The SIFTER bot closed a position.</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Close reason:</strong> {close_reason}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<span style="color: {pnl_color};">${pnl:+,.2f}</span></p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Hold time:</strong> {hold_time}</p>'
+        )
+        if dashboard_url:
+            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
+        html = _wrap_html("SIFTER Bot Closed Position", body)
+        return self._send(email, f"SIFTER Bot closed ${symbol}", html)
+
+    def send_bot_tp_hit(
+        self, email: str, trade: dict, dashboard_url: str = ""
+    ) -> bool:
+        """Send a take-profit notification email."""
+        symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
+        mult = float(trade.get("take_profit_x") or 0)
+        pnl = float(trade.get("realized_pnl_usd") or 0)
+        body = (
+            f'<p style="margin: 0 0 12px 0;">🎯 <strong>Take Profit Hit!</strong></p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Multiplier:</strong> {mult:.1f}x</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<span style="color: #10b981;">${pnl:+,.2f}</span></p>'
+        )
+        if dashboard_url:
+            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
+        html = _wrap_html("SIFTER Bot — Take Profit", body)
+        return self._send(email, f"🎯 Take Profit — ${symbol}", html)
+
+    def send_bot_sl_hit(
+        self, email: str, trade: dict, dashboard_url: str = ""
+    ) -> bool:
+        """Send a stop-loss notification email."""
+        symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
+        pnl = float(trade.get("realized_pnl_usd") or 0)
+        sl_pct = trade.get("stop_loss_pct") or "—"
+        auto_blacklisted = trade.get("auto_blacklisted", False)
+        body = (
+            f'<p style="margin: 0 0 12px 0;">🛑 <strong>Stop Loss Hit</strong></p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>SL:</strong> {sl_pct}%</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<span style="color: #ef4444;">${pnl:+,.2f}</span></p>'
+        )
+        if auto_blacklisted:
+            body += (
+                f'<p style="margin: 12px 0 0 0; color: #ef4444;">'
+                f'This token has been <strong>auto-blacklisted</strong>. '
+                f'The bot will skip it on future signals.</p>'
+            )
+        if dashboard_url:
+            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
+        html = _wrap_html("SIFTER Bot — Stop Loss", body)
+        return self._send(email, f"🛑 Stop Loss — ${symbol}", html)
+
+    def send_bot_trailing_stop(
+        self, email: str, trade: dict, dashboard_url: str = ""
+    ) -> bool:
+        """Send a trailing-stop notification email."""
+        symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
+        peak = float(trade.get("peak_price_usd") or 0)
+        close_price = float(trade.get("close_price_usd") or 0)
+        pnl = float(trade.get("realized_pnl_usd") or 0)
+        body = (
+            f'<p style="margin: 0 0 12px 0;">📉 <strong>Trailing Stop Triggered</strong></p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Peak price:</strong> ${peak:.6f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Close price:</strong> ${close_price:.6f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<span style="color: {_pnl_color(pnl)};">${pnl:+,.2f}</span></p>'
+        )
+        if dashboard_url:
+            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
+        html = _wrap_html("SIFTER Bot — Trailing Stop", body)
+        return self._send(email, f"📉 Trailing Stop — ${symbol}", html)
+
+    # ------------------------------------------------------------------
+    # 3) Error alert (to admin)
     # ------------------------------------------------------------------
 
     def send_error_alert(

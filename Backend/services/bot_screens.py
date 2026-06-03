@@ -175,24 +175,92 @@ def render_not_connected(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
 
 
 def render_register_prompt(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
-    """Register-via-bot placeholder — directs to the dashboard for now.
+    """Register-via-bot: email -> password -> create account in Supabase.
 
-    Standalone Telegram signup (email + password → Supabase Auth user) is a
-    dedicated later sprint; this keeps the button honest in the meantime.
-    """
+    Standalone Telegram signup (email + password -> Supabase Auth user)."""
     ctx = ctx or {}
     dashboard_url = ctx.get("dashboard_url")
-    text = (
-        "📝 <b>Create your account</b>\n\n"
-        "Sign up on the SIFTER dashboard, then link your Telegram from there "
-        "to unlock the bot. In-bot signup is coming soon."
-    )
+    step = ctx.get("reg_step", "start")
+    error = ctx.get("reg_error")
+
+    if step == "start":
+        text = (
+            "\U0001f4dd <b>Create your account</b>\n\n"
+            "Sign up right here in Telegram! You'll need:\n"
+            "• An email address\n"
+            "• A password (min 8 characters)\n\n"
+            "Or sign up on the dashboard instead."
+        )
+        rows: List[List[Dict[str, str]]] = [
+            [{"text": "\U0001f4e7 Sign Up with Email", "callback_data": "access|register_email"}],
+        ]
+        if dashboard_url:
+            rows.append([{"text": "\U0001f310 Open Dashboard", "url": dashboard_url}])
+        if ctx.get("reset_url"):
+            rows.append([{"text": "\U0001f511 Reset Password", "url": ctx["reset_url"]}])
+        rows.append([nav_button("⬅️ Back", "welcome")])
+    elif step == "enter_email":
+        text = (
+            "\U0001f4e7 <b>Enter your email address</b>\n\n"
+            "Reply with your email to continue.\n"
+            "Type /cancel to go back."
+        )
+        if error:
+            text += f"\n\n⚠️ <b>{html.escape(error)}</b>"
+        rows = [[_back_row("welcome")]]
+    elif step == "enter_password":
+        email = html.escape(str(ctx.get("reg_email") or ""))
+        text = (
+            f"\U0001f511 <b>Create your password</b>\n\n"
+            f"Email: <b>{email}</b>\n\n"
+            "Reply with a password (min 8 characters).\n"
+            "Type /cancel to go back."
+        )
+        if error:
+            text += f"\n\n⚠️ <b>{html.escape(error)}</b>"
+        rows = [[_back_row("welcome")]]
+    elif step == "success":
+        text = (
+            "✅ <b>Account created!</b>\n\n"
+            "You're all set. A welcome email has been sent.\n\n"
+            "Use <b>/menu</b> to get started."
+        )
+        rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
+    else:
+        text = "Something went wrong. Use /menu to start over."
+        rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
+    return text, _kb(rows)
+
+
+def render_forgot_password_prompt(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
+    """Prompt for email to send a password-reset link."""
+    ctx = ctx or {}
+    step = ctx.get("pwd_step", "enter_email")
+    error = ctx.get("pwd_error", "")
+    text: str
     rows: List[List[Dict[str, str]]] = []
-    if dashboard_url:
-        rows.append([{"text": "🌐 Open Dashboard", "url": dashboard_url}])
-    rows.append([nav_button("⬅️ Back", "welcome")])
-    if ctx.get("reset_url"):
-        rows.append([{"text": "Reset Password", "url": ctx["reset_url"]}])
+
+    if step == "enter_email":
+        text = (
+            "\U0001f511 <b>Reset your password</b>\n\n"
+            "Reply with the email address linked to your account.\n"
+            "We'll send a reset link.\n\n"
+            "Type /cancel to go back."
+        )
+        if error:
+            text += f"\n\n⚠️ <b>{html.escape(error)}</b>"
+        rows = [[_back_row("account")]]
+    elif step == "sent":
+        text = (
+            "\U0001f4e7 <b>Reset email sent</b>\n\n"
+            "If that email is registered, you'll receive a link to reset your password.\n"
+            "The link expires in <b>1 hour</b>.\n\n"
+            "Check your inbox (and spam folder)."
+        )
+        rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
+    elif step == "error":
+        text = f"⚠️ <b>{html.escape(error)}</b>" if error else "Something went wrong. Please try again."
+        rows = [[_back_row("account")]]
     return text, _kb(rows)
 
 
@@ -226,23 +294,67 @@ CONSENSUS_PRESETS = (1, 3, 5, 8, 10, 12, 15)
 
 
 def render_autotrade_home(ctx: Dict[str, Any]) -> Rendered:
-    """Auto-Trader control screen. ``ctx`` keys: auto_trade_enabled,
-    consensus_threshold, blacklist_count."""
+    """Full Auto-Trader dashboard with status, portfolio, sizing, and quick links."""
     enabled = bool(ctx.get("auto_trade_enabled"))
     consensus = ctx.get("consensus_threshold")
     consensus = int(consensus) if consensus is not None else 1
     blacklist_count = int(ctx.get("blacklist_count") or 0)
 
-    status = "🟢 <b>ACTIVE</b>" if enabled else "⏸️ <b>PAUSED</b>"
+    # Portfolio breakdown
+    total_wallet = float(ctx.get("total_wallet_sol") or 0)
+    pool_pct = float(ctx.get("trading_pool_pct") or 50)
+    pool_sol = round(total_wallet * pool_pct / 100, 2)
+    deployed_pct = float(ctx.get("deployed_pct") or 0)
+    deployed_sol = round(pool_sol * deployed_pct / 100, 2)
+    available_sol = round(pool_sol - deployed_sol, 2)
+    max_deploy = float(ctx.get("max_deployment_pct") or 80)
+
+    open_count = int(ctx.get("open_positions") or 0)
+    today_pnl = ctx.get("today_pnl")
+    today_pnl_str = f"${float(today_pnl):+,.2f}" if today_pnl is not None else "—"
+
+    # Tier sizing preview
+    t1 = float(ctx.get("tier1_pct_of_pool") or 30)
+    t2 = float(ctx.get("tier2_pct_of_pool") or 70)
+    t3 = float(ctx.get("tier3_pct_of_total") or 40)
+    t1_sol = round(pool_sol * t1 / 100, 2)
+    t2_sol = round(pool_sol * t2 / 100, 2)
+    t3_sol = round(total_wallet * t3 / 100, 2)
+
+    # Rate limits
+    hr_used = int(ctx.get("hourly_trades_used") or 0)
+    hr_max = int(ctx.get("hourly_trade_limit") or 0)
+    dy_used = int(ctx.get("daily_trades_used") or 0)
+    dy_max = int(ctx.get("daily_trade_limit") or 0)
+
+    if enabled:
+        if deployed_pct >= max_deploy:
+            status_line = "🔶 <b>DEPLOYMENT LIMIT</b>"
+        else:
+            status_line = "🟢 <b>ACTIVE</b>"
+    else:
+        status_line = "⏸️ <b>PAUSED</b>"
+
     lines = [
-        "🤖 <b>AUTO-TRADER</b>",
+        "🤖 <b>AUTO-TRADER DASHBOARD</b>",
         "",
-        f"Status: {status}",
-        f"Consensus: copies when <b>{consensus}</b> Elite wallet(s) agree "
-        "within 120s",
+        f"Status: {status_line}",
+        f"Today PnL: {today_pnl_str}",
+        f"Open positions: {open_count}",
         "",
-        "The bot enters automatically on qualifying Elite 15 signals and "
-        "manages exits per your strategy. Filters: consensus + blacklist.",
+        "💼 <b>Portfolio</b>",
+        f"Total wallet: {total_wallet:.1f} SOL",
+        f"Trading pool ({pool_pct}%): {pool_sol} SOL",
+        f"Deployed: {deployed_sol} SOL ({deployed_pct:.0f}%)",
+        f"Available: {available_sol} SOL",
+        f"Pause at: {max_deploy:.0f}% deployed",
+        "",
+        "💰 <b>Signal Sizing</b>",
+        f"Tier 1 (1 wallet): {t1:.0f}% pool = {t1_sol} SOL",
+        f"Tier 2 (2 wallets): {t2:.0f}% pool = {t2_sol} SOL",
+        f"Tier 3 (3+ wallets): {t3:.0f}% total = {t3_sol} SOL",
+        "",
+        f"⏱ Limits: hourly {hr_used}/{hr_max if hr_max else 'no limit'}, daily {dy_used}/{dy_max if dy_max else 'no limit'}",
     ]
 
     toggle = (
@@ -250,10 +362,18 @@ def render_autotrade_home(ctx: Dict[str, Any]) -> Rendered:
         if enabled else
         {"text": "▶️ Resume Bot", "callback_data": "set|autotrade|on"}
     )
-    rows = [
+    rows: List[List[Dict[str, str]]] = [
         [toggle],
-        [{"text": f"🔢 Consensus Threshold: {consensus}", "callback_data": "nav|consensus"}],
-        [{"text": f"🚫 Token Blacklist ({blacklist_count})", "callback_data": "nav|blacklist"}],
+        [
+            {"text": "💼 Portfolio & Sizing", "callback_data": "nav|sizing"},
+            {"text": "🧠 Strategy", "callback_data": "nav|strategy"},
+        ],
+        [{"text": f"🔢 Consensus: {consensus}/15", "callback_data": "nav|consensus"}],
+        [{"text": f"🚫 Blacklist ({blacklist_count})", "callback_data": "nav|blacklist"}],
+        [
+            {"text": "👛 Elite 15", "callback_data": "nav|elite15"},
+            {"text": "📊 Positions", "callback_data": "nav|positions"},
+        ],
         _back_row("main"),
     ]
     return "\n".join(lines), _kb(rows)
@@ -506,19 +626,34 @@ def render_request_access(ctx: Dict[str, Any]) -> Rendered:
 def render_account(ctx: Dict[str, Any]) -> Rendered:
     tier = html.escape(str(ctx.get("access_tier") or "free"))
     username = html.escape(str(ctx.get("username") or "trader"))
+    total_trades = ctx.get("total_trades") or "—"
+    win_rate = ctx.get("win_rate") or "—"
+    total_pnl = ctx.get("total_pnl") or "—"
+    best_trade = ctx.get("best_trade") or "—"
+    email = html.escape(str(ctx.get("email") or "—"))
+
     lines = [
         "<b>MY ACCOUNT</b>",
         "",
+        f"Email: <b>{email}</b>",
         f"Telegram: <b>@{username}</b>",
         f"Access: <b>{tier}</b>",
         "",
-        "Password recovery uses the same secure dashboard reset flow for bot and dashboard accounts.",
+        "<b>Stats</b>",
+        f"Total trades: {total_trades}",
+        f"Win rate: {win_rate}",
+        f"Total PnL: {total_pnl}",
+        f"Best trade: {best_trade}",
+        "",
+        "<b>⚠️ DANGER ZONE</b>",
     ]
-    rows: List[List[Dict[str, str]]] = []
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "\U0001f511 Forgot / Reset Password", "callback_data": "access|forgot_password"}],
+        [{"text": "\U0001f6a8 Emergency Stop (Pause Bot)", "callback_data": "access|emergency_stop"}],
+        [{"text": "\U0001f6aa Log Out", "callback_data": "access|logout"}],
+    ]
     if ctx.get("dashboard_url"):
         rows.append([{"text": "Open Dashboard", "url": ctx["dashboard_url"]}])
-    if ctx.get("reset_url"):
-        rows.append([{"text": "Reset Password", "url": ctx["reset_url"]}])
     rows.append(_back_row("main"))
     return "\n".join(lines), _kb(rows)
 
@@ -565,6 +700,109 @@ def render_manual_trade_entry() -> Rendered:
     return text, _kb(rows)
 
 
+# ── Trade History ──────────────────────────────────────────────────────────
+
+def render_trade_history(ctx: Dict[str, Any]) -> Rendered:
+    """Paginated list of closed positions with filters."""
+    trades = ctx.get("trades") or []
+    page = int(ctx.get("page") or 1)
+    total = int(ctx.get("total") or 0)
+    filter_name = ctx.get("filter") or "all"
+    per_page = 10
+
+    lines = ["<b>TRADE HISTORY</b>", ""]
+    # Filter row
+    filter_labels = {
+        "all": "All", "wins": "Wins", "losses": "Losses",
+        "auto": "Auto", "manual": "Manual",
+    }
+    filter_str = " | ".join(
+        f"[{filter_labels.get(f, f)}]" if f == filter_name else filter_labels.get(f, f)
+        for f in ["all", "wins", "losses", "auto", "manual"]
+    )
+    lines.append(f"Filter: {filter_str}")
+    lines.append(f"Showing page {page} ({len(trades)} of {total} total)")
+    lines.append("")
+
+    if not trades:
+        lines.append("No closed trades yet.")
+    else:
+        for t in trades:
+            symbol = html.escape(str(t.get("token_symbol") or t.get("token_ticker") or "???"))
+            pnl = float(t.get("unrealized_pnl_usd") or t.get("realized_pnl_usd") or 0)
+            pnl_pct = float(t.get("roi_pct") or 0)
+            trigger = t.get("trigger_type") or "auto"
+            reason = t.get("close_reason") or "closed"
+            date_str = (t.get("closed_at") or t.get("opened_at") or "")[:10]
+            emoji = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
+            lines.append(
+                f"{emoji} {symbol} — {trigger.upper()} — {reason} — "
+                f"${pnl:+,.2f} ({pnl_pct:+.1f}%) — {date_str}"
+            )
+
+    rows: List[List[Dict[str, str]]] = []
+    # Filter buttons
+    for f in ["all", "wins", "losses", "auto", "manual"]:
+        if f != filter_name:
+            rows.append([{"text": f"Filter: {filter_labels[f]}", "callback_data": f"stat|filter|{f}"}])
+    # Pagination
+    if page > 1:
+        rows.append([{"text": "◀ Previous", "callback_data": f"stat|page|{page - 1}"}])
+    if len(trades) >= per_page:
+        rows.append([{"text": "Next ▶", "callback_data": f"stat|page|{page + 1}"}])
+    rows.append([{"text": "📊 Export CSV", "callback_data": "stat|export_csv"}])
+    rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_trade_detail(ctx: Dict[str, Any]) -> Rendered:
+    """Single closed trade breakdown."""
+    t = ctx.get("trade") or {}
+    symbol = html.escape(str(t.get("token_symbol") or t.get("token_ticker") or "???"))
+    trigger = t.get("trigger_type") or "auto"
+    entry = float(t.get("avg_entry_price") or 0)
+    close_reason = t.get("close_reason") or "unknown"
+    pnl = float(t.get("unrealized_pnl_usd") or t.get("realized_pnl_usd") or 0)
+    mult = float(t.get("roi_mult") or 0)
+    opened = t.get("opened_at") or ""
+    closed = t.get("closed_at") or ""
+    entry_tx = t.get("entry_txid") or ""
+    exit_tx = t.get("exit_txid") or ""
+    token_addr = t.get("token_address") or ""
+
+    lines = [
+        f"<b>TRADE DETAIL: {symbol}</b>",
+        "",
+        f"Type: <b>{trigger.upper()}</b>",
+        f"Close reason: <b>{close_reason}</b>",
+        f"Entry price: ${entry:.8f}",
+        f"Multiplier: {mult:.1f}x" if mult else "",
+        f"PnL: ${pnl:+,.2f}",
+        f"Opened: {opened[:19]}" if opened else "",
+        f"Closed: {closed[:19]}" if closed else "",
+    ]
+    lines = [l for l in lines if l]  # filter empty
+
+    rows: List[List[Dict[str, str]]] = []
+    if entry_tx:
+        rows.append([{
+            "text": "Entry TX",
+            "url": f"https://solscan.io/tx/{entry_tx}",
+        }])
+    if exit_tx:
+        rows.append([{
+            "text": "Exit TX",
+            "url": f"https://solscan.io/tx/{exit_tx}",
+        }])
+    if token_addr:
+        rows.append([{
+            "text": "Chart (DexScreener)",
+            "url": f"https://dexscreener.com/solana/{token_addr}",
+        }])
+    rows.append(_back_row("trade_history"))
+    return "\n".join(lines), _kb(rows)
+
+
 def render_wallets(ctx: Dict[str, Any]) -> Rendered:
     bot_wallets = ctx.get("bot_wallets") or []
     tracked_wallets = ctx.get("tracked_wallets") or []
@@ -595,19 +833,89 @@ def render_wallets(ctx: Dict[str, Any]) -> Rendered:
 
 def render_elite15(ctx: Dict[str, Any]) -> Rendered:
     wallets = ctx.get("wallets") or []
+    selected = set(ctx.get("selected_wallets") or [])
     lines = ["<b>ELITE 15 WALLETS</b>", ""]
+    if selected:
+        lines.append(f"Auto-trader copying: <b>{len(selected)}/15</b> wallets selected")
+    else:
+        lines.append("Auto-trader copying: <b>ALL 15</b> (default)")
+    lines.append("Tap a wallet for detail & copy-trade options.")
+    lines.append("")
     if not wallets:
         lines.append("No Elite wallets are available for this account yet.")
     else:
         for idx, wallet in enumerate(wallets[:15], start=1):
             addr = wallet.get("wallet_address") or ""
             tier = wallet.get("tier") or "S"
-            alerts = "alerts ON" if wallet.get("alert_enabled") else "alerts OFF"
-            lines.append(f"#{idx} {tier} <code>{addr[:8]}...{addr[-6:] if len(addr) > 6 else addr}</code> - {alerts}")
-    rows = [
-        [nav_button("Consensus Threshold", "consensus")],
-        _back_row("main"),
+            is_sel = addr in selected
+            mark = "✅" if is_sel else "➕"
+            lines.append(f"#{idx} {tier} <code>{addr[:8]}...{addr[-6:] if len(addr) > 6 else addr}</code> {mark}")
+    rows: List[List[Dict[str, str]]] = []
+    # Per-wallet toggle buttons: select/deselect
+    for idx, wallet in enumerate(wallets[:15], start=1):
+        addr = wallet.get("wallet_address") or ""
+        is_sel = addr in selected
+        action = "deselect" if is_sel else "select"
+        label = "Stop Copying" if is_sel else "Copy This"
+        rows.append([{
+            "text": f"#{idx} {label}",
+            "callback_data": f"wal|{action}|{addr}",
+        }])
+    rows.append([nav_button("Consensus Threshold", "consensus")])
+    rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_elite_wallet_detail(ctx: Dict[str, Any]) -> Rendered:
+    """Deep-dive on a single Elite 15 wallet."""
+    wallet = ctx.get("wallet") or {}
+    addr = wallet.get("wallet_address") or "unknown"
+    tier = wallet.get("tier") or "S"
+    is_selected = ctx.get("is_selected", False)
+    win_rate = wallet.get("win_rate_pct")
+    roi = wallet.get("avg_roi_pct")
+    total_pnl = wallet.get("total_pnl_sol")
+    tokens_traded = wallet.get("token_count")
+    best_trade = wallet.get("best_trade")
+    worst_trade = wallet.get("worst_trade")
+    avg_hold = wallet.get("avg_hold_time")
+
+    lines = [
+        f"<b>ELITE WALLET DETAIL</b>",
+        "",
+        f"Tier: <b>{tier}</b>",
+        f"Address: <code>{addr[:8]}...{addr[-6:] if len(addr) > 6 else addr}</code>",
+        "",
+        "<b>Stats</b>",
+        f"Tokens traded: {tokens_traded or '—'}",
+        f"Win rate: {f'{float(win_rate):.0f}%' if win_rate is not None else '—'}",
+        f"Avg ROI: {f'{float(roi):.0f}%' if roi is not None else '—'}",
+        f"Total PnL: {f'{float(total_pnl):.1f} SOL' if total_pnl is not None else '—'}",
+        f"Best trade: {best_trade or '—'}",
+        f"Worst trade: {worst_trade or '—'}",
+        f"Avg hold: {avg_hold or '—'}",
+        "",
+        "<b>Recent Trades</b>",
     ]
+    recent = wallet.get("recent_trades") or []
+    if recent:
+        for t in recent[:3]:
+            symbol = t.get("token_symbol") or "???"
+            side = t.get("side") or ""
+            pnl = t.get("pnl")
+            pnl_str = f"{pnl:+,.1f}" if pnl is not None else "—"
+            lines.append(f"{side.upper()} {symbol} :: {pnl_str}")
+    else:
+        lines.append("No recent trade data.")
+
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "📋 Copy Address", "callback_data": f"wal|copy|{addr}"}],
+    ]
+    if is_selected:
+        rows.append([{"text": "⛔ Stop Copying", "callback_data": f"wal|deselect|{addr}"}])
+    else:
+        rows.append([{"text": "✅ Copy This Wallet", "callback_data": f"wal|select|{addr}"}])
+    rows.append([nav_button("⬅️ Back to Elite 15", "elite15")])
     return "\n".join(lines), _kb(rows)
 
 
