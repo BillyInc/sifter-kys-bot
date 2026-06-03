@@ -50,14 +50,16 @@ def _load_user_ctx(notifier, chat_id: str) -> Optional[Dict[str, Any]]:
             notifier._table("telegram_users")
             .select(
                 "user_id, telegram_username, auto_trade_enabled, access_tier, "
-                "auto_trade_max_usd, "
+                "auto_trade_max_usd, auto_trade_hourly_limit, auto_trade_daily_limit, "
                 "consensus_threshold, trading_pool_pct, max_deployment_pct, "
                 "tier1_pct_of_pool, tier2_pct_of_pool, tier3_pct_of_total, "
                 "position_size_mode, position_size_value, "
                 "stop_loss_pct, take_profit_x, trailing_stop_pct, "
                 "slippage_bps, mev_protection, notif_trade_open, "
                 "notif_trade_close, notif_tp_hit, notif_sl_hit, notif_signal, "
-                "notif_daily_summary, notif_weekly_summary"
+                "notif_daily_summary, notif_weekly_summary, "
+                "notif_elite_sell, notif_tracked_wallet, quiet_hours_start, "
+                "quiet_hours_end, paper_mode, auto_blacklist, anti_phishing_phrase"
             )
             .eq("telegram_chat_id", chat_id)
             .limit(1)
@@ -184,6 +186,14 @@ def handle_text_input(notifier, chat_id: str, text: str, message: dict) -> bool:
 
     if awaiting == "quiet_hours_input":
         _handle_quiet_hours_input(notifier, chat_id, text)
+        return True
+
+    if awaiting == "confirm_delete":
+        _handle_confirm_delete(notifier, chat_id, text)
+        return True
+
+    if awaiting == "set_phrase":
+        _handle_set_phrase(notifier, chat_id, text)
         return True
 
     if awaiting in {"token_stats_ca", "manual_trade_ca"}:
@@ -333,6 +343,8 @@ def _navigate(notifier, chat_id: str, screen: str, query: dict) -> None:
         _open_set_alert(notifier, chat_id)
     elif screen == "notes":
         _open_notes(notifier, chat_id)
+    elif screen == "elite_wallet_detail":
+        _open_elite_wallet_detail(notifier, chat_id, query)
     else:
         # Known nav target without a screen yet (lands in a later sprint).
         bot_state.push_screen(chat_id, screen)
@@ -526,6 +538,27 @@ def _open_account(notifier, chat_id: str) -> None:
     if ctx is None:
         _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
         return
+    user_id = ctx["user_id"]
+    # Fetch real stats from closed positions
+    try:
+        res = (
+            notifier._table("bot_live_positions")
+            .select("unrealized_pnl_usd, roi_mult")
+            .eq("user_id", user_id)
+            .neq("status", "open")
+            .execute()
+        )
+        closed = res.data or []
+        total = len(closed)
+        wins = sum(1 for p in closed if float(p.get("unrealized_pnl_usd") or 0) > 0)
+        total_pnl = sum(float(p.get("unrealized_pnl_usd") or 0) for p in closed)
+        best = max((float(p.get("roi_mult") or 0) for p in closed), default=0)
+        ctx["total_trades"] = total
+        ctx["win_rate"] = f"{(wins/total*100):.0f}%" if total else "—"
+        ctx["total_pnl"] = f"${total_pnl:+,.2f}" if total else "—"
+        ctx["best_trade"] = f"{best:.1f}x" if best else "—"
+    except Exception:
+        pass
     bot_state.push_screen(chat_id, "account")
     _send_rendered(notifier, chat_id, bot_screens.render_account({**ctx, **_public_ctx()}))
 
@@ -629,6 +662,14 @@ def _handle_set(notifier, chat_id: str, action: str, params: List[str]) -> None:
         if ctx is None: return
         _update_user(notifier, ctx["user_id"], {"auto_blacklist": params[0] == "on"})
         _open_strategy(notifier, chat_id)
+        return
+    if action == "paper_mode":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        on = params[0] == "on" if params else False
+        _update_user(notifier, ctx["user_id"], {"paper_mode": on})
+        notifier.send_message(chat_id, f"Paper mode: {'ON' if on else 'OFF'}")
+        _open_autotrade(notifier, chat_id)
         return
 
     if action == "quiet_hours":
@@ -1757,6 +1798,48 @@ def _handle_note_action(notifier, chat_id: str, action: str, params: List[str]) 
     notifier.send_message(chat_id, "That note action is not available.")
 
 
+# ── elite wallet detail ──────────────────────────────────────────────────────
+
+def _open_elite_wallet_detail(notifier, chat_id: str, query) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None: return
+    addr = ""
+    if isinstance(query, dict):
+        addr = query.get("id") or query.get("data", {}).get("wallet_address") or ""
+    if not addr:
+        notifier.send_message(chat_id, "Wallet not found.")
+        return
+    wallets = _load_tracked_wallets(notifier, ctx["user_id"])
+    wallet = next((w for w in wallets if w.get("wallet_address") == addr), None)
+    selected = _load_elite_selections(notifier, ctx["user_id"])
+    bot_state.push_screen(chat_id, "elite_wallet_detail")
+    _send_rendered(notifier, chat_id, bot_screens.render_elite_wallet_detail({
+        "wallet": wallet or {"wallet_address": addr},
+        "is_selected": addr in selected,
+    }))
+
+
+# ── paper mode toggle ────────────────────────────────────────────────────────
+
+def _open_paper_mode_toggle(notifier, chat_id: str) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None: return
+    current = ctx.get("paper_mode") or False
+    bot_state.push_screen(chat_id, "paper_mode")
+    text = (
+        "<b>PAPER MODE</b>\n\n"
+        f"Current: <b>{'ON' if current else 'OFF'}</b>\n\n"
+        "Paper mode simulates trades without using real funds. "
+        "Use this to test your strategy before going live."
+    )
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "🔴 Disable Paper Mode" if current else "🧪 Enable Paper Mode",
+          "callback_data": f"set|paper_mode|{'off' if current else 'on'}"}],
+        _back_row("autotrade"),
+    ]
+    notifier.send_message(chat_id, text, reply_markup={"inline_keyboard": rows})
+
+
 # ── access code redemption ──────────────────────────────────────────────────
 
 def _redeem_access_code(notifier, chat_id: str, text: str) -> None:
@@ -1826,9 +1909,76 @@ def _handle_access_action(notifier, chat_id: str, action: str, params: List[str]
         bot_state.clear_state(chat_id)
         _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
         return
+    if action == "suspend":
+        _handle_suspend_account(notifier, chat_id)
+        return
+    if action == "delete":
+        bot_state.set_awaiting(chat_id, "confirm_delete")
+        notifier.send_message(chat_id, "⚠️ To permanently delete your account, type <b>DELETE</b> exactly. Your on-chain wallets are not affected. /cancel to abort.")
+        return
+    if action == "set_phrase":
+        bot_state.set_awaiting(chat_id, "set_phrase")
+        notifier.send_message(chat_id, "🔒 Send a short security phrase (e.g. two memorable words). It will appear in every SIFTER email so you can spot scams. /cancel to abort.")
+        return
 
     logger.info("[BOT_HANDLERS] unhandled access action '%s' for %s", action, chat_id)
     notifier.send_message(chat_id, "That action is not available.")
+
+
+def _handle_set_phrase(notifier, chat_id: str, text: str) -> None:
+    """Save the user's anti-phishing email security phrase."""
+    bot_state.set_awaiting(chat_id, None)
+    phrase = text.strip()[:60]
+    if not phrase or len(phrase) < 3:
+        notifier.send_message(chat_id, "Phrase must be at least 3 characters. Try again or /cancel.")
+        return
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        return
+    _update_user(notifier, ctx["user_id"], {"anti_phishing_phrase": phrase})
+    notifier.send_message(chat_id, f"🔒 Security phrase set: <code>{phrase}</code>\n\nLook for this in every SIFTER email.")
+    _open_account(notifier, chat_id)
+
+
+def _handle_suspend_account(notifier, chat_id: str) -> None:
+    """Suspend account: disable auto-trade, cancel pending signals, keep data."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        return
+    user_id = ctx["user_id"]
+    _update_user(notifier, user_id, {"auto_trade_enabled": False, "access_tier": "suspended"})
+    try:
+        notifier._table("bot_signal_queue").update({
+            "status": "skipped", "skip_reason": "account_suspended"
+        }).eq("user_id", user_id).eq("status", "pending").execute()
+    except Exception:
+        pass
+    notifier.send_message(chat_id, "❄️ <b>Account Suspended</b>\n\nAuto-trading is off and pending signals cancelled. Your data and wallets are intact. Contact support to reactivate.")
+
+
+def _handle_confirm_delete(notifier, chat_id: str, text: str) -> None:
+    """Delete account after the user types DELETE."""
+    bot_state.set_awaiting(chat_id, None)
+    if text.strip() != "DELETE":
+        notifier.send_message(chat_id, "Deletion cancelled (you must type DELETE exactly).")
+        return
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        return
+    user_id = ctx["user_id"]
+    # Cascade-delete from all bot tables
+    tables = [
+        "bot_live_positions", "bot_signal_queue", "bot_elite_selections",
+        "bot_token_blacklist", "bot_price_alerts", "user_notes", "bot_wallets",
+        "telegram_users",
+    ]
+    for table in tables:
+        try:
+            notifier._table(table).delete().eq("user_id", user_id).execute()
+        except Exception as exc:
+            logger.error("[BOT_HANDLERS] delete from %s failed: %s", table, exc)
+    bot_state.clear_state(chat_id)
+    notifier.send_message(chat_id, "🗑️ <b>Account Deleted</b>\n\nAll your data has been removed. Your on-chain wallets are untouched. Goodbye.")
 
 
 def _handle_emergency_stop(notifier, chat_id: str) -> None:

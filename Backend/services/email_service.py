@@ -50,17 +50,43 @@ def _pnl_color(value: float) -> str:
     return "#6b7280"
 
 
-def _wrap_html(title: str, body: str) -> str:
+def _wrap_html(title: str, body: str, chat_id: str = "", anti_phishing: str = "") -> str:
+    bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "SifterTradingBot")
+    tg_link = f"https://t.me/{bot_username}"
+    if chat_id:
+        tg_link += f"?start=SESSION_{chat_id}"
+
+    # Anti-phishing banner — shown at the TOP so users verify before reading.
+    phishing_banner = ""
+    if anti_phishing:
+        phishing_banner = (
+            '<div style="background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; '
+            'padding: 12px 16px; margin: 0 0 20px 0; font-size: 13px; color: #9a3412;">'
+            '🔒 <strong>Your security phrase:</strong> '
+            f'<span style="font-family: monospace; font-weight: 700;">{anti_phishing}</span><br>'
+            '<span style="color: #c2410c;">If this phrase is missing or wrong, this email is NOT from SIFTER — do not click any links.</span>'
+            '</div>'
+        )
+
     return f"""\
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>{title}</title></head>
 <body style="{_BASE_STYLE}">
   <div style="max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+    {phishing_banner}
     <h1 style="margin: 0 0 24px 0; font-size: 22px; color: #16213e;">{title}</h1>
     {body}
     <hr style="border: none; border-top: 1px solid #e8e8e8; margin: 24px 0 16px 0;">
-    <p style="font-size: 12px; color: #9ca3af; margin: 0;">Sent by Sifter KYS &middot; {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
+    <p style="margin: 0 0 12px 0;">
+      <a href="{tg_link}" style="background: #229ED9; color: #ffffff; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">
+        🤖 Open in Telegram</a>
+    </p>
+    <p style="font-size: 11px; color: #9ca3af; margin: 0;">
+      SIFTER will never ask for your seed phrase or private key by email.
+      We only ever link to <strong>t.me/{bot_username}</strong> and your dashboard.
+    </p>
+    <p style="font-size: 12px; color: #9ca3af; margin: 8px 0 0 0;">Sent by Sifter KYS &middot; {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
   </div>
 </body>
 </html>"""
@@ -84,6 +110,77 @@ class EmailService:
         self._resend = resend
         self._ready = True
         logger.info("email_service_initialized")
+
+    # ------------------------------------------------------------------
+    # Anti-phishing phrase + chat_id lookup
+    # ------------------------------------------------------------------
+
+    def _get_user_security(self, email: str = "", user_id: str = "") -> tuple:
+        """Return (anti_phishing_phrase, chat_id) for a user.
+
+        Auto-generates a phrase on first use if none exists. Looks up by
+        user_id (preferred) or email.
+        """
+        try:
+            supabase = get_supabase_client()
+            query = supabase.schema(SCHEMA_NAME).table("telegram_users").select(
+                "user_id, telegram_chat_id, anti_phishing_phrase"
+            )
+            if user_id:
+                query = query.eq("user_id", user_id)
+            else:
+                return ("", "")  # cannot look up by email without auth.users join
+            res = query.limit(1).execute()
+            if not res.data:
+                return ("", "")
+            row = res.data[0]
+            phrase = row.get("anti_phishing_phrase")
+            chat_id = str(row.get("telegram_chat_id") or "")
+            if not phrase:
+                # Auto-generate a memorable phrase
+                import secrets
+                words = ["amber", "falcon", "river", "cobalt", "maple", "ember",
+                         "quartz", "willow", "cedar", "onyx", "violet", "saffron"]
+                phrase = f"{secrets.choice(words)}-{secrets.choice(words)}-{secrets.randbelow(100):02d}"
+                try:
+                    supabase.schema(SCHEMA_NAME).table("telegram_users").update(
+                        {"anti_phishing_phrase": phrase}
+                    ).eq("user_id", row["user_id"]).execute()
+                except Exception:
+                    pass
+            return (phrase, chat_id)
+        except Exception:
+            return ("", "")
+
+    def send_manual_signal(self, email: str, user_id: str, signal: dict) -> bool:
+        """Email a manual trader about a fresh Elite signal with a deep link to trade it."""
+        phrase, chat_id = self._get_user_security(user_id=user_id)
+        symbol = signal.get("token_ticker") or signal.get("token_symbol") or "UNKNOWN"
+        token = signal.get("token_address") or ""
+        wallet_count = signal.get("wallet_count") or 1
+        mc = signal.get("mc_usd") or signal.get("market_cap_usd")
+        bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "SifterTradingBot")
+        # Deep link that opens the bot directly into the manual-trade flow for this token
+        trade_link = f"https://t.me/{bot_username}?start=TRADE_{token}"
+
+        body = (
+            f'<p style="margin: 0 0 12px 0;">⚡ <strong>New Elite Signal</strong> — a token you can manually trade.</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Elite wallets buying:</strong> {wallet_count}</p>'
+        )
+        if mc:
+            body += f'<p style="margin: 0 0 4px 0;"><strong>Market cap:</strong> ${float(mc):,.0f}</p>'
+        body += f'<p style="margin: 0 0 16px 0;"><strong>Contract:</strong> <code>{token}</code></p>'
+        body += (
+            f'<p style="margin: 16px 0;">'
+            f'<a href="{trade_link}" style="background: #10b981; color: #ffffff; padding: 12px 24px; '
+            f'border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">'
+            f'⚡ Take This Trade in Telegram</a></p>'
+            f'<p style="margin: 8px 0 0 0; color: #9ca3af; font-size: 12px;">'
+            f'You review sizing, TP/SL, and confirm before any trade executes.</p>'
+        )
+        html = _wrap_html(f"Elite Signal — ${symbol}", body, chat_id=chat_id, anti_phishing=phrase)
+        return self._send(email, f"⚡ Elite Signal — ${symbol}", html)
 
     # ------------------------------------------------------------------
     # Internal send wrapper
@@ -256,24 +353,40 @@ class EmailService:
         html = _wrap_html("Daily Paper Trading Summary", body)
         return self._send(email, subject, html)
 
-    def send_bot_trade_open(self, email: str, trade: dict, dashboard_url: str = "") -> bool:
-        """Send a bot trade-open notification email."""
+    def send_bot_trade_open(self, email: str, trade: dict, dashboard_url: str = "", user_id: str = "") -> bool:
+        """Send a bot/manual trade-open notification email with fee breakdown."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
         symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
         token = trade.get("token_address") or ""
         amount = float(trade.get("usd_amount") or trade.get("executed_usd") or 0)
+        trigger = trade.get("trigger_type") or "auto_elite"
+        is_manual = trigger == "manual"
+        fee = round(amount * 0.01, 2)
+        net = round(amount - fee, 2)
+        tp = trade.get("take_profit_x")
+        sl = trade.get("stop_loss_pct")
+        txid = trade.get("txid") or trade.get("entry_txid") or ""
         chart = f"https://dexscreener.com/solana/{token}" if token else ""
+
+        kind = "You entered a manual trade" if is_manual else "The autonomous SIFTER bot entered a trade"
         body = (
-            f'<p style="margin: 0 0 12px 0;">The autonomous SIFTER bot entered a trade.</p>'
+            f'<p style="margin: 0 0 12px 0;">{kind}.</p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
-            f'<p style="margin: 0 0 4px 0;"><strong>Amount:</strong> ${amount:,.2f}</p>'
-            f'<p style="margin: 0 0 16px 0;"><strong>Contract:</strong> {token}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Spent:</strong> ${amount:,.2f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Platform fee (1%):</strong> ${fee:,.2f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Net invested:</strong> ${net:,.2f}</p>'
         )
+        if tp is not None:
+            body += f'<p style="margin: 0 0 4px 0;"><strong>TP:</strong> {tp}x</p>'
+        if sl is not None:
+            body += f'<p style="margin: 0 0 4px 0;"><strong>SL:</strong> {sl}%</p>'
+        body += f'<p style="margin: 0 0 16px 0;"><strong>Contract:</strong> <code>{token}</code></p>'
+        if txid:
+            body += f'<p style="margin: 0 0 8px 0;"><a href="https://solscan.io/tx/{txid}">View transaction</a></p>'
         if chart:
-            body += f'<p><a href="{chart}">View chart</a></p>'
-        if dashboard_url:
-            body += f'<p><a href="{dashboard_url}">Manage position</a></p>'
-        html = _wrap_html(f"SIFTER Bot Entered ${symbol}", body)
-        return self._send(email, f"SIFTER Bot entered ${symbol}", html)
+            body += f'<p style="margin: 0 0 8px 0;"><a href="{chart}">View chart</a></p>'
+        html = _wrap_html(f"SIFTER Entered ${symbol}", body, chat_id=chat_id, anti_phishing=phrase)
+        return self._send(email, f"SIFTER entered ${symbol}", html)
 
     # ------------------------------------------------------------------
     # 2) Password reset
@@ -312,50 +425,61 @@ class EmailService:
         return self._send(email, "Welcome to SIFTER KYS 🚀", html)
 
     def send_bot_trade_close(
-        self, email: str, trade: dict, dashboard_url: str = ""
+        self, email: str, trade: dict, dashboard_url: str = "", user_id: str = ""
     ) -> bool:
         """Send a bot trade-close notification email."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
         symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
         pnl = float(trade.get("realized_pnl_usd") or trade.get("pnl_usd") or 0)
+        gross = abs(float(trade.get("gross_usd") or pnl)) or 0
+        fee = round(gross * 0.01, 2)
         close_reason = trade.get("close_reason") or "manual"
         hold_time = trade.get("hold_time") or "—"
+        txid = trade.get("exit_txid") or trade.get("txid") or ""
         pnl_color = "#10b981" if pnl > 0 else "#ef4444"
         body = (
             f'<p style="margin: 0 0 12px 0;">The SIFTER bot closed a position.</p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Close reason:</strong> {close_reason}</p>'
-            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<p style="margin: 0 0 4px 0;"><strong>Platform fee (1%):</strong> ${fee:,.2f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Net PnL:</strong> '
             f'<span style="color: {pnl_color};">${pnl:+,.2f}</span></p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Hold time:</strong> {hold_time}</p>'
         )
-        if dashboard_url:
-            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
-        html = _wrap_html("SIFTER Bot Closed Position", body)
+        if txid:
+            body += f'<p style="margin: 8px 0 0 0;"><a href="https://solscan.io/tx/{txid}">View transaction</a></p>'
+        html = _wrap_html("SIFTER Bot Closed Position", body, chat_id=chat_id, anti_phishing=phrase)
         return self._send(email, f"SIFTER Bot closed ${symbol}", html)
 
     def send_bot_tp_hit(
-        self, email: str, trade: dict, dashboard_url: str = ""
+        self, email: str, trade: dict, dashboard_url: str = "", user_id: str = ""
     ) -> bool:
         """Send a take-profit notification email."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
         symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
         mult = float(trade.get("take_profit_x") or 0)
         pnl = float(trade.get("realized_pnl_usd") or 0)
+        gross = abs(float(trade.get("gross_usd") or pnl)) or 0
+        fee = round(gross * 0.01, 2)
+        txid = trade.get("exit_txid") or trade.get("txid") or ""
         body = (
             f'<p style="margin: 0 0 12px 0;">🎯 <strong>Take Profit Hit!</strong></p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Token:</strong> {symbol}</p>'
             f'<p style="margin: 0 0 4px 0;"><strong>Multiplier:</strong> {mult:.1f}x</p>'
-            f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
+            f'<p style="margin: 0 0 4px 0;"><strong>Platform fee (1%):</strong> ${fee:,.2f}</p>'
+            f'<p style="margin: 0 0 4px 0;"><strong>Net PnL:</strong> '
             f'<span style="color: #10b981;">${pnl:+,.2f}</span></p>'
         )
-        if dashboard_url:
-            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
-        html = _wrap_html("SIFTER Bot — Take Profit", body)
+        if txid:
+            body += f'<p style="margin: 8px 0 0 0;"><a href="https://solscan.io/tx/{txid}">View transaction</a></p>'
+        html = _wrap_html("SIFTER Bot — Take Profit", body, chat_id=chat_id, anti_phishing=phrase)
         return self._send(email, f"🎯 Take Profit — ${symbol}", html)
 
     def send_bot_sl_hit(
-        self, email: str, trade: dict, dashboard_url: str = ""
+        self, email: str, trade: dict, dashboard_url: str = "", user_id: str = ""
     ) -> bool:
         """Send a stop-loss notification email."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
         symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
         pnl = float(trade.get("realized_pnl_usd") or 0)
         sl_pct = trade.get("stop_loss_pct") or "—"
@@ -373,15 +497,15 @@ class EmailService:
                 f'This token has been <strong>auto-blacklisted</strong>. '
                 f'The bot will skip it on future signals.</p>'
             )
-        if dashboard_url:
-            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
-        html = _wrap_html("SIFTER Bot — Stop Loss", body)
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
+        html = _wrap_html("SIFTER Bot — Stop Loss", body, chat_id=chat_id, anti_phishing=phrase)
         return self._send(email, f"🛑 Stop Loss — ${symbol}", html)
 
     def send_bot_trailing_stop(
-        self, email: str, trade: dict, dashboard_url: str = ""
+        self, email: str, trade: dict, dashboard_url: str = "", user_id: str = ""
     ) -> bool:
         """Send a trailing-stop notification email."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
         symbol = trade.get("token_ticker") or trade.get("token_symbol") or "UNKNOWN"
         peak = float(trade.get("peak_price_usd") or 0)
         close_price = float(trade.get("close_price_usd") or 0)
@@ -394,9 +518,7 @@ class EmailService:
             f'<p style="margin: 0 0 4px 0;"><strong>PnL:</strong> '
             f'<span style="color: {_pnl_color(pnl)};">${pnl:+,.2f}</span></p>'
         )
-        if dashboard_url:
-            body += f'<p style="margin: 16px 0 0 0;"><a href="{dashboard_url}">View in dashboard</a></p>'
-        html = _wrap_html("SIFTER Bot — Trailing Stop", body)
+        html = _wrap_html("SIFTER Bot — Trailing Stop", body, chat_id=chat_id, anti_phishing=phrase)
         return self._send(email, f"📉 Trailing Stop — ${symbol}", html)
 
     # ------------------------------------------------------------------

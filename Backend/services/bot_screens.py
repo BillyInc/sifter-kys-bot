@@ -362,10 +362,15 @@ def render_autotrade_home(ctx: Dict[str, Any]) -> Rendered:
         if enabled else
         {"text": "▶️ Resume Bot", "callback_data": "set|autotrade|on"}
     )
+    paper_mode = ctx.get("paper_mode") or False
     rows: List[List[Dict[str, str]]] = [
         [toggle],
         [
-            {"text": "💼 Portfolio & Sizing", "callback_data": "nav|sizing"},
+            {"text": "🧪 Disable Paper Mode" if paper_mode else "🧪 Paper Mode: Enable",
+             "callback_data": f"set|paper_mode|{'off' if paper_mode else 'on'}"},
+        ],
+        [
+            {"text": "💼 Portfolio & Sizing", "callback_data": "nav|portfolio_sizing"},
             {"text": "🧠 Strategy", "callback_data": "nav|strategy"},
         ],
         [{"text": f"🔢 Consensus: {consensus}/15", "callback_data": "nav|consensus"}],
@@ -374,6 +379,7 @@ def render_autotrade_home(ctx: Dict[str, Any]) -> Rendered:
             {"text": "👛 Elite 15", "callback_data": "nav|elite15"},
             {"text": "📊 Positions", "callback_data": "nav|positions"},
         ],
+        [{"text": "📋 Trade History", "callback_data": "nav|trade_history"}],
         _back_row("main"),
     ]
     return "\n".join(lines), _kb(rows)
@@ -940,6 +946,7 @@ def render_account(ctx: Dict[str, Any]) -> Rendered:
     total_pnl = ctx.get("total_pnl") or "—"
     best_trade = ctx.get("best_trade") or "—"
     email = html.escape(str(ctx.get("email") or "—"))
+    phrase = html.escape(str(ctx.get("anti_phishing_phrase") or "not set"))
 
     lines = [
         "<b>MY ACCOUNT</b>",
@@ -954,11 +961,20 @@ def render_account(ctx: Dict[str, Any]) -> Rendered:
         f"Total PnL: {total_pnl}",
         f"Best trade: {best_trade}",
         "",
+        "🔒 <b>Email Security Phrase</b>",
+        f"<code>{phrase}</code>",
+        "<i>Every genuine SIFTER email shows this phrase. If an email lacks it, it's a scam.</i>",
+        "",
         "<b>⚠️ DANGER ZONE</b>",
     ]
     rows: List[List[Dict[str, str]]] = [
+        [{"text": "🔒 Change Security Phrase", "callback_data": "access|set_phrase"}],
         [{"text": "\U0001f511 Forgot / Reset Password", "callback_data": "access|forgot_password"}],
+        [{"text": "\U0001f4ca Export Trade History (CSV)", "callback_data": "nav|trade_history"}],
+        [{"text": "\U0001f4dd My Notes & Reminders", "callback_data": "nav|notes"}],
         [{"text": "\U0001f6a8 Emergency Stop (Pause Bot)", "callback_data": "access|emergency_stop"}],
+        [{"text": "❄️ Suspend Account", "callback_data": "access|suspend"}],
+        [{"text": "\U0001f5d1️ Delete Account", "callback_data": "access|delete"}],
         [{"text": "\U0001f6aa Log Out", "callback_data": "access|logout"}],
     ]
     if ctx.get("dashboard_url"):
@@ -1061,8 +1077,11 @@ def render_manual_trade_entry() -> Rendered:
         "The autonomous bot is separate and enters qualifying Elite 15 signals on its own."
     )
     rows = [
-        [{"text": "Paste Contract Address", "callback_data": "exec|manual_ca"}],
-        [{"text": "Use Recent Elite Signal", "callback_data": "exec|manual_signal"}],
+        [{"text": "📋 Paste Contract Address", "callback_data": "exec|manual_ca"}],
+        [{"text": "🔤 Type Token Ticker", "callback_data": "exec|manual_ticker"}],
+        [{"text": "👛 Use Recent Elite Signal", "callback_data": "exec|manual_signal"}],
+        [{"text": "🔒 Close / Modify Open Trade", "callback_data": "nav|positions"}],
+        [{"text": "📦 Archived Holdings", "callback_data": "nav|archived"}],
         _back_row("main"),
     ]
     return text, _kb(rows)

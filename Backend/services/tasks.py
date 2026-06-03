@@ -853,6 +853,21 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
                     telegram_notifier.send_elite15_alert(user_id, payload)
                 else:
                     telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
+            # Manual-trader email: send a deep link so they can open Telegram
+            # and take the trade. Fires for buy signals regardless of auto-trade.
+            if alert_data.get('side') == 'buy':
+                try:
+                    user_email = None
+                    try:
+                        u = supabase.auth.admin.get_user_by_id(user_id)
+                        user_email = u.user.email if u and getattr(u, 'user', None) else None
+                    except Exception:
+                        user_email = None
+                    if user_email:
+                        from services.email_service import get_email_service
+                        get_email_service().send_manual_signal(user_email, user_id, alert_data)
+                except Exception as _e:
+                    print(f"[TELEGRAM TASK] manual signal email failed: {_e}")
         elif alert_type in ('watchlist_trade', 'trade'):
             if hasattr(telegram_notifier, 'send_watchlist_alert'):
                 telegram_notifier.send_watchlist_alert(user_id, payload)
@@ -1155,7 +1170,11 @@ def _notify_bot_queue_result(queue_id: int, result: dict, supabase):
                     'token_ticker': row.get('token_ticker'),
                     'token_address': row.get('token_address'),
                     'usd_amount': trade_result.get('executed_usd') or row.get('requested_usd'),
-                }, dashboard_url=Config.DASHBOARD_URL)
+                    'trigger_type': row.get('trigger_type') or 'auto_elite',
+                    'take_profit_x': row.get('take_profit_x'),
+                    'stop_loss_pct': row.get('stop_loss_pct'),
+                    'txid': trade_result.get('txid') or trade_result.get('entry_txid'),
+                }, dashboard_url=Config.DASHBOARD_URL, user_id=row['user_id'])
         except Exception as exc:
             print(f"[BOT TRADE] Email notification failed for queue {queue_id}: {exc}")
     except Exception as exc:

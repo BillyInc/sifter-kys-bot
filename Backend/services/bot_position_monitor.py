@@ -308,7 +308,7 @@ def monitor_positions() -> Dict[str, Any]:
 # ── notification & blacklist helpers ──────────────────────────────────────────
 
 def _send_close_notifications(position: dict, trigger: dict, user_id: str) -> None:
-    """Fire Telegram + email notifications for a position close."""
+    """Fire email notifications for a position close (Telegram handled by caller)."""
     token_symbol = position.get("token_symbol") or "UNKNOWN"
     token_address = position.get("token_address") or ""
     pnl = trigger.get("pnl_est", 0)
@@ -322,28 +322,40 @@ def _send_close_notifications(position: dict, trigger: dict, user_id: str) -> No
         "stop_loss_pct": trigger.get("sl_pct"),
         "take_profit_x": trigger.get("multiplier"),
         "peak_price_usd": trigger.get("peak_price"),
+        "close_price_usd": position.get("avg_entry_price", 0) * trigger.get("multiplier", 1),
         "hold_time": "—",
     }
 
-    # Email notification
     try:
         email_svc = get_email_service()
-        # Fetch user email from telegram_users
         supabase = get_supabase_client()
-        user_res = (
-            supabase.schema(SCHEMA_NAME)
-            .table("telegram_users")
-            .select("user_id")
-            .eq("user_id", user_id)
-            .limit(1)
-            .execute()
-        )
-        if user_res.data:
-            # User email is on auth.users — we don't have direct access here;
-            # the notifier path handles email via the Celery task
-            pass
-    except Exception:
-        pass
+        # Fetch user email via Supabase Admin API
+        try:
+            user = supabase.auth.admin.get_user_by_id(user_id)
+            email = user.user.email if user and hasattr(user, 'user') and user.user else None
+        except Exception:
+            email = None
+
+        if not email:
+            logger.info("[POS_MONITOR] No email found for user %s, skipping email notification", user_id)
+            return
+
+        from config import Config
+        dashboard_url = Config.DASHBOARD_URL or ""
+
+        if reason == "tp":
+            email_svc.send_bot_tp_hit(email, trade_data, dashboard_url, user_id=user_id)
+        elif reason == "sl":
+            trade_data["auto_blacklisted"] = True
+            email_svc.send_bot_sl_hit(email, trade_data, dashboard_url, user_id=user_id)
+        elif reason == "trailing":
+            email_svc.send_bot_trailing_stop(email, trade_data, dashboard_url, user_id=user_id)
+        else:
+            email_svc.send_bot_trade_close(email, trade_data, dashboard_url, user_id=user_id)
+
+        logger.info("[POS_MONITOR] Email sent for %s close: %s", token_symbol, reason)
+    except Exception as exc:
+        logger.error("[POS_MONITOR] Email notification failed for %s: %s", user_id, exc)
 
     logger.info(
         "[POS_MONITOR] Position closed: %s via %s, PnL=%.2f%%",

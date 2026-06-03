@@ -589,6 +589,45 @@ class TelegramNotifier:
 
         if text.startswith("/start "):
             token = text.split(" ", 1)[1]
+
+            # ── Email/magic deep-link prefixes ───────────────────────────
+            # TRADE_<ca>  → open manual-trade preview for that token
+            # SESSION_<chat_id> → restore the user's session (from email footer)
+            # MAGIC-<token> → redeem a magic access link
+            if token.startswith("TRADE_"):
+                ca = token[len("TRADE_"):]
+                try:
+                    from services import bot_handlers, bot_state
+                    if bot_handlers._load_user_ctx(self, chat_id):
+                        bot_state.set_awaiting(chat_id, None)
+                        bot_handlers._open_manual_preview(self, chat_id, ca)
+                    else:
+                        bot_handlers._open_welcome(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] TRADE_ deep link failed: %s", e)
+                    self.send_message(chat_id, "Could not open that trade. Use /menu.")
+                    return
+            if token.startswith("SESSION_"):
+                try:
+                    from services import bot_handlers
+                    if bot_handlers._load_user_ctx(self, chat_id):
+                        bot_handlers._open_main(self, chat_id)
+                    else:
+                        bot_handlers._open_welcome(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] SESSION_ deep link failed: %s", e)
+                    return
+            if token.startswith("MAGIC-") or token.startswith("MAGIC_"):
+                magic_token = token[len("MAGIC-"):] if token.startswith("MAGIC-") else token[len("MAGIC_"):]
+                try:
+                    from services import bot_handlers
+                    bot_handlers.handle_text_input(self, chat_id, f"MAGIC-{magic_token}", message)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] MAGIC deep link failed: %s", e)
+
             user_id = self.verify_connection_token(token, chat_id, username, first_name, last_name)
             if user_id:
                 # Land the freshly-linked user on the new menu.
