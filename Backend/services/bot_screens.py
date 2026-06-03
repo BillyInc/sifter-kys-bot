@@ -451,44 +451,108 @@ def render_strategy_settings(ctx: Dict[str, Any]) -> Rendered:
     trailing = ctx.get("trailing_stop_pct")
     slippage_bps = ctx.get("slippage_bps")
     mev = bool(ctx.get("mev_protection"))
+    auto_bl = bool(ctx.get("auto_blacklist"))
     lines = [
         "<b>STRATEGY SETTINGS</b>",
         "",
         f"Stop loss: <b>{sl if sl is not None else -50}%</b>",
-        f"Take profit: <b>{float(tp or 5):.1f}x</b>",
+        f"Take profit: <b>{'♾️ None' if tp is None else f'{float(tp):.1f}x'}</b>",
         f"Trailing stop: <b>{str(trailing) + '%' if trailing is not None else 'off'}</b>",
         f"Slippage: <b>{float(slippage_bps or 100) / 100:.1f}%</b>",
         f"MEV protection: <b>{'ON' if mev else 'OFF'}</b>",
+        f"Auto-blacklist on SL: <b>{'ON' if auto_bl else 'OFF'}</b>",
         "",
         "These values are copied into each autonomous entry when the bot trades.",
     ]
-    rows = [
+    rows: List[List[Dict[str, str]]] = [
         [
             {"text": "SL -25%", "callback_data": "set|sl|-25"},
             {"text": "SL -50%", "callback_data": "set|sl|-50"},
             {"text": "SL -75%", "callback_data": "set|sl|-75"},
         ],
         [
+            {"text": "TP 2x", "callback_data": "set|tp|2"},
             {"text": "TP 3x", "callback_data": "set|tp|3"},
             {"text": "TP 5x", "callback_data": "set|tp|5"},
             {"text": "TP 10x", "callback_data": "set|tp|10"},
         ],
+        [{"text": "♾️ No TP", "callback_data": "set|tp|none"}],
         [
-            {"text": "Trail off", "callback_data": "set|trailing|off"},
+            {"text": "Trail OFF", "callback_data": "set|trailing|off"},
             {"text": "Trail 20%", "callback_data": "set|trailing|20"},
             {"text": "Trail custom", "callback_data": "set|trailing|custom"},
         ],
         [
+            {"text": "Slip 0.5%", "callback_data": "set|slippage|0.5"},
             {"text": "Slip 1%", "callback_data": "set|slippage|1"},
-            {"text": "Slip 3%", "callback_data": "set|slippage|3"},
-            {"text": "Slip custom", "callback_data": "set|slippage|custom"},
+            {"text": "Slip 2%", "callback_data": "set|slippage|2"},
+            {"text": "Slip 5%", "callback_data": "set|slippage|5"},
         ],
         [
-            {"text": "MEV ON", "callback_data": "set|mev|on"},
+            {"text": "MEV ON ✅", "callback_data": "set|mev|on"},
             {"text": "MEV OFF", "callback_data": "set|mev|off"},
         ],
+        [
+            {"text": "Auto-BL ON", "callback_data": "set|auto_bl|on"},
+            {"text": "Auto-BL OFF", "callback_data": "set|auto_bl|off"},
+        ],
+        [{"text": "🗂️ Manage Blacklist →", "callback_data": "nav|blacklist"}],
         [{"text": "Custom SL", "callback_data": "set|sl|custom"},
          {"text": "Custom TP", "callback_data": "set|tp|custom"}],
+        [{"text": "💼 Portfolio & Sizing →", "callback_data": "nav|portfolio_sizing"}],
+        _back_row("main"),
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_portfolio_sizing(ctx: Dict[str, Any]) -> Rendered:
+    """Portfolio & sizing configuration."""
+    pool_pct = float(ctx.get("trading_pool_pct") or 50)
+    max_deploy = float(ctx.get("max_deployment_pct") or 80)
+    daily = int(ctx.get("daily_trade_limit") or 0)
+    hourly = int(ctx.get("hourly_trade_limit") or 0)
+
+    daily_str = str(daily) if daily > 0 else "∞"
+    hourly_str = str(hourly) if hourly > 0 else "∞"
+
+    lines = [
+        "<b>PORTFOLIO & SIZING</b>",
+        "",
+        f"Trading Pool: <b>{pool_pct:.0f}%</b> of wallet",
+        f"Deployment Limit: <b>{max_deploy:.0f}%</b>",
+        f"Daily Limit: <b>{daily_str}</b>",
+        f"Hourly Limit: <b>{hourly_str}</b>",
+    ]
+    rows: List[List[Dict[str, str]]] = [
+        # Pool %
+        [
+            {"text": "Pool 10%", "callback_data": "set|pool|10"},
+            {"text": "Pool 25%", "callback_data": "set|pool|25"},
+            {"text": "Pool 50%", "callback_data": "set|pool|50"},
+            {"text": "Pool 75%", "callback_data": "set|pool|75"},
+        ],
+        [{"text": "Pool 100%", "callback_data": "set|pool|100"}],
+        # Deployment limit
+        [
+            {"text": "Max Deploy 50%", "callback_data": "set|deploy|50"},
+            {"text": "Max Deploy 70%", "callback_data": "set|deploy|70"},
+            {"text": "Max Deploy 80%", "callback_data": "set|deploy|80"},
+        ],
+        # Daily limit
+        [
+            {"text": "Daily 5", "callback_data": "set|daily|5"},
+            {"text": "Daily 10", "callback_data": "set|daily|10"},
+            {"text": "Daily 20", "callback_data": "set|daily|20"},
+            {"text": "Daily ∞", "callback_data": "set|daily|0"},
+        ],
+        # Hourly limit
+        [
+            {"text": "Hourly 1", "callback_data": "set|hourly|1"},
+            {"text": "Hourly 3", "callback_data": "set|hourly|3"},
+            {"text": "Hourly 5", "callback_data": "set|hourly|5"},
+            {"text": "Hourly ∞", "callback_data": "set|hourly|0"},
+        ],
+        [{"text": "💰 Signal Sizing →", "callback_data": "nav|sizing"}],
         _back_row("settings"),
     ]
     return "\n".join(lines), _kb(rows)
@@ -530,25 +594,154 @@ def render_sizing_settings(ctx: Dict[str, Any]) -> Rendered:
 
 def render_notification_settings(ctx: Dict[str, Any]) -> Rendered:
     toggles = [
-        ("signal", "Signals", bool(ctx.get("notif_signal", True))),
-        ("open", "Trade open", bool(ctx.get("notif_trade_open", True))),
-        ("close", "Trade close", bool(ctx.get("notif_trade_close", True))),
-        ("tp", "TP hit", bool(ctx.get("notif_tp_hit", True))),
-        ("sl", "SL hit", bool(ctx.get("notif_sl_hit", True))),
-        ("daily", "Daily summary", bool(ctx.get("notif_daily_summary", True))),
-        ("weekly", "Weekly summary", bool(ctx.get("notif_weekly_summary", False))),
+        ("signal", "Elite Buy Signals", "notif_signal"),
+        ("elite_sell", "Elite Sell Signals", "notif_elite_sell"),
+        ("open", "Trade Open", "notif_trade_open"),
+        ("close", "Trade Close", "notif_trade_close"),
+        ("tp", "TP Hit", "notif_tp_hit"),
+        ("sl", "SL Hit", "notif_sl_hit"),
+        ("tracked", "Tracked Wallet", "notif_tracked_wallet"),
+        ("daily", "Daily Summary", "notif_daily_summary"),
+        ("weekly", "Weekly Summary", "notif_weekly_summary"),
     ]
     lines = ["<b>NOTIFICATIONS</b>", ""]
     rows: List[List[Dict[str, str]]] = []
-    for key, label, enabled in toggles:
+    for key, label, col in toggles:
+        enabled = bool(ctx.get(col, True))
         state = "ON" if enabled else "OFF"
         lines.append(f"{label}: <b>{state}</b>")
         rows.append([{
             "text": f"{label}: {'turn off' if enabled else 'turn on'}",
             "callback_data": f"set|notif|{key}|{'off' if enabled else 'on'}",
         }])
+    # Quiet hours
+    qh_start = ctx.get("quiet_hours_start")
+    qh_end = ctx.get("quiet_hours_end")
+    qh_str = f"{qh_start}:00–{qh_end}:00 UTC" if qh_start is not None else "OFF"
+    lines.append(f"Quiet Hours: <b>{qh_str}</b>")
+    if qh_start is not None:
+        rows.append([{"text": "Quiet Hours: Turn OFF", "callback_data": "set|quiet_hours|off"}])
+    else:
+        rows.append([{"text": "Quiet Hours: Set", "callback_data": "set|quiet_hours|custom"}])
     rows.append(_back_row("settings"))
     return "\n".join(lines), _kb(rows)
+
+
+def render_quiet_hours_prompt() -> Rendered:
+    """Prompt for quiet hours start/end hour."""
+    text = (
+        "<b>QUIET HOURS</b>\n\n"
+        "Send start and end UTC hours (0-23), e.g.:\n"
+        "<code>23 7</code> for 11PM to 7AM\n\n"
+        "Type /cancel to go back."
+    )
+    return text, _kb([_back_row("notifications")])
+
+
+# ── Price Alerts ────────────────────────────────────────────────────────────
+
+def render_price_alerts(ctx: Dict[str, Any]) -> Rendered:
+    alerts = ctx.get("alerts") or []
+    lines = ["<b>MC PRICE ALERTS</b>", ""]
+    if not alerts:
+        lines.append("No price alerts set.")
+    else:
+        for a in alerts[:10]:
+            symbol = html.escape(str(a.get("token_symbol") or a.get("token_ticker") or "???"))
+            target = a.get("target_mc_usd") or 0
+            active = a.get("active", True)
+            status = "🟢" if active else "⚫"
+            lines.append(f"{status} {symbol} — Target: ${int(target):,} MC")
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "➕ New Alert", "callback_data": "alert|new"}],
+    ]
+    for a in (alerts or [])[:8]:
+        aid = a.get("id")
+        symbol = html.escape(str(a.get("token_symbol") or "???"))
+        rows.append([{
+            "text": f"Delete {symbol}",
+            "callback_data": f"alert|delete|{aid}",
+        }])
+    rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_set_price_alert(ctx: Dict[str, Any]) -> Rendered:
+    """Set a new MC price alert."""
+    token_symbol = str(ctx.get("token_symbol") or "")
+    token_addr = ctx.get("token_address") or ""
+    lines = [
+        "<b>SET MC PRICE ALERT</b>",
+        "",
+        f"Token: <b>{html.escape(token_symbol)}</b>" if token_symbol else "Enter token CA or select from positions",
+    ]
+    rows: List[List[Dict[str, str]]] = [
+        [
+            {"text": "$100K", "callback_data": f"alert|set|{token_addr}|100000"},
+            {"text": "$200K", "callback_data": f"alert|set|{token_addr}|200000"},
+            {"text": "$500K", "callback_data": f"alert|set|{token_addr}|500000"},
+            {"text": "$1M", "callback_data": f"alert|set|{token_addr}|1000000"},
+        ],
+        _back_row("price_alerts"),
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+# ── Notes & Reminders ───────────────────────────────────────────────────────
+
+def render_notes(ctx: Dict[str, Any]) -> Rendered:
+    notes = ctx.get("notes") or []
+    reminders = ctx.get("reminders") or []
+    lines = ["<b>NOTES & REMINDERS</b>", ""]
+    if reminders:
+        lines.append("<b>Upcoming Reminders</b>")
+        for r in reminders[:5]:
+            lines.append(f"⏰ {html.escape(str(r.get('body') or '')[:80])}")
+        lines.append("")
+    if notes:
+        lines.append("<b>Notes</b>")
+        for n in notes[:10]:
+            pin = "📌 " if n.get("pinned") else ""
+            lines.append(f"{pin}{html.escape(str(n.get('body') or '')[:100])}")
+    if not notes and not reminders:
+        lines.append("No notes or reminders yet.")
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "➕ New Note", "callback_data": "note|new"}],
+        [{"text": "⏰ New Reminder", "callback_data": "note|new_reminder"}],
+    ]
+    for n in (notes or [])[:8]:
+        nid = n.get("id")
+        txt = str(n.get("body") or "")[:30]
+        rows.append([{
+            "text": f"Delete: {txt}",
+            "callback_data": f"note|delete|{nid}",
+        }])
+    rows.append(_back_row("account"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_new_note_prompt() -> Rendered:
+    return (
+        "<b>NEW NOTE</b>\n\n"
+        "Reply with your note (up to 500 characters).\n"
+        "Type /cancel to go back.",
+        _kb([_back_row("notes")])
+    )
+
+
+def render_new_reminder_prompt() -> Rendered:
+    text = (
+        "<b>NEW REMINDER</b>\n\n"
+        "Choose type:"
+    )
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "🕐 Time-based (1h)", "callback_data": "note|set_reminder|time|1h"}],
+        [{"text": "🕐 Time-based (4h)", "callback_data": "note|set_reminder|time|4h"}],
+        [{"text": "🕐 Time-based (24h)", "callback_data": "note|set_reminder|time|24h"}],
+        [{"text": "📈 MC-based", "callback_data": "note|set_reminder|mc"}],
+        _back_row("notes"),
+    ]
+    return text, _kb(rows)
 
 
 def _chart_keyboard(token: str) -> List[Dict[str, str]]:
@@ -576,8 +769,15 @@ def render_positions(ctx: Dict[str, Any]) -> Rendered:
         invested = float(pos.get("total_invested_usd") or 0)
         current = float(pos.get("current_value_usd") or invested)
         pnl_pct = ((current / invested) - 1) * 100 if invested > 0 else 0
+        # PnL color dot
+        if pnl_pct > 0:
+            dot = "🟢"
+        elif pnl_pct < -20:
+            dot = "🔴"
+        else:
+            dot = "🟡"
         lines.extend([
-            f"<b>${symbol}</b> {pnl_pct:+.1f}%",
+            f"{dot} <b>${symbol}</b> {pnl_pct:+.1f}%",
             f"Entry: ${entry:.8f} | At risk: ${invested:,.2f}",
             f"TP: {pos.get('take_profit_x') or '-'}x | SL: {pos.get('stop_loss_pct') or '-'}%",
             "",
@@ -586,7 +786,11 @@ def render_positions(ctx: Dict[str, Any]) -> Rendered:
         rows.append([
             {"text": "Close 25%", "callback_data": f"pos|close|{pos.get('id')}|25"},
             {"text": "Close 50%", "callback_data": f"pos|close|{pos.get('id')}|50"},
+            {"text": "Close 75%", "callback_data": f"pos|close|{pos.get('id')}|75"},
             {"text": "Close 100%", "callback_data": f"pos|close|{pos.get('id')}|100"},
+        ])
+        rows.append([
+            {"text": "Close Custom %", "callback_data": f"pos|close_custom|{pos.get('id')}"},
         ])
         rows.append([
             {"text": "SL -25%", "callback_data": f"pos|sl|{pos.get('id')}|-25"},
@@ -599,6 +803,111 @@ def render_positions(ctx: Dict[str, Any]) -> Rendered:
             {"text": "Archive", "callback_data": f"pos|archive|{pos.get('id')}"},
         ])
     rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_close_confirm(ctx: Dict[str, Any]) -> Rendered:
+    """Confirmation screen with fee breakdown before closing a position."""
+    symbol = str(ctx.get("token_symbol") or "???")
+    pos_id = ctx.get("position_id")
+    sell_pct = int(ctx.get("sell_pct") or 100)
+    gross = float(ctx.get("gross_sol") or 0)
+    fee = round(gross * 0.01, 4)
+    net = round(gross - fee, 4)
+    remaining = ctx.get("remaining_info") or ""
+
+    lines = [
+        f"<b>CONFIRM CLOSE</b>",
+        "",
+        f"Selling <b>{sell_pct}%</b> of <b>{html.escape(symbol)}</b>",
+        "",
+        "💰 <b>Breakdown</b>",
+        f"Gross proceeds: {gross} SOL",
+        f"Platform fee (1%): {fee} SOL",
+        f"Net received: {net} SOL",
+    ]
+    if remaining:
+        lines.append(f"Remaining held: {remaining}")
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "✅ Confirm Sale", "callback_data": f"pos|close_confirm|{pos_id}|{sell_pct}"}],
+        [{"text": "❌ Cancel", "callback_data": "nav|positions"}],
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_runrest_confirm(ctx: Dict[str, Any]) -> Rendered:
+    """Confirmation for take 50% + run rest."""
+    symbol = str(ctx.get("token_symbol") or "???")
+    pos_id = ctx.get("position_id")
+    gross = float(ctx.get("gross_sol") or 0)
+    fee = round(gross * 0.01, 4)
+    net = round(gross - fee, 4)
+
+    lines = [
+        "<b>TAKE 50% + RUN ♾️</b>",
+        "",
+        f"Sell <b>50%</b> of <b>{html.escape(symbol)}</b>",
+        "",
+        "💰 <b>Breakdown</b>",
+        f"Gross: {gross} SOL | Fee (1%): {fee} SOL",
+        f"Net: {net} SOL",
+        "",
+        "Remaining 50%: TP removed (♾️), SL kept, moved to Archive",
+    ]
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "✅ Confirm", "callback_data": f"pos|runrest_confirm|{pos_id}"}],
+        [{"text": "❌ Cancel", "callback_data": "nav|positions"}],
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_archived_holdings(ctx: Dict[str, Any]) -> Rendered:
+    """List of archived (no-TP-monitored) positions."""
+    archived = ctx.get("archived") or []
+    lines = ["<b>ARCHIVED HOLDINGS</b>", ""]
+    total_value = 0.0
+    if not archived:
+        lines.append("No archived holdings.")
+    else:
+        for pos in archived[:15]:
+            symbol = html.escape(pos.get("token_symbol") or "???")
+            remaining = float(pos.get("remaining_amount") or 0)
+            current_val = float(pos.get("current_value_usd") or 0)
+            total_value += current_val
+            lines.append(f"<b>{symbol}</b> — Hold: {remaining:.0f} tokens — Est: ${current_val:,.2f}")
+        lines.append("")
+        lines.append(f"Total archived value: ${total_value:,.2f}")
+
+    rows: List[List[Dict[str, str]]] = []
+    for pos in archived[:15]:
+        pid = pos.get("id")
+        rows.append([{
+            "text": f"Manage {html.escape(pos.get('token_symbol') or '???')}",
+            "callback_data": f"pos|manage_archived|{pid}",
+        }])
+    rows.append(_back_row("positions"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_archived_token_manage(ctx: Dict[str, Any]) -> Rendered:
+    """Manage a single archived token."""
+    symbol = str(ctx.get("token_symbol") or "???")
+    pos_id = ctx.get("position_id")
+    remaining = float(ctx.get("remaining_amount") or 0)
+    current_val = float(ctx.get("current_value_usd") or 0)
+
+    lines = [
+        f"<b>ARCHIVED: {html.escape(symbol)}</b>",
+        "",
+        f"Holding: {remaining:.0f} tokens",
+        f"Est. value: ${current_val:,.2f}",
+    ]
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "▶️ Restore to Active", "callback_data": f"pos|restore|{pos_id}"}],
+        [{"text": "Close 50%", "callback_data": f"pos|close|{pos_id}|50"}],
+        [{"text": "Close 100%", "callback_data": f"pos|close|{pos_id}|100"}],
+        _back_row("archived"),
+    ]
     return "\n".join(lines), _kb(rows)
 
 
@@ -661,28 +970,87 @@ def render_account(ctx: Dict[str, Any]) -> Rendered:
 def render_token_stats_prompt() -> Rendered:
     text = (
         "<b>TOKEN STATS</b>\n\n"
-        "Paste a Solana token contract address to inspect it. Risk score, fake-volume, and MC filters are not part of the bot filter stack."
+        "Paste a Solana token contract address or type a ticker to inspect it.\n"
+        "Token data from SolanaTracker."
     )
     return text, _kb([_back_row("main")])
 
 
 def render_token_details(ctx: Dict[str, Any]) -> Rendered:
     token = ctx.get("token_address") or ""
+    symbol = str(ctx.get("symbol") or "???")
+    name = str(ctx.get("name") or "")
     manual = bool(ctx.get("manual"))
+    price = ctx.get("price_usd")
+    mc = ctx.get("market_cap_usd")
+    liquidity = ctx.get("liquidity_usd")
+    vol_24h = ctx.get("volume_24h_usd")
+    holders = ctx.get("holders")
+    lp_burn = ctx.get("lp_burn_pct")
+    mint_revoked = ctx.get("is_mint_revoked")
+    freeze_revoked = ctx.get("is_freeze_revoked")
+    ath = ctx.get("ath_price")
+    age = ctx.get("age_days")
+
     lines = [
-        "<b>TOKEN DETAILS</b>",
+        f"<b>TOKEN DETAILS</b>",
         "",
+        f"<b>{html.escape(symbol)}</b> — {html.escape(name)}" if name else f"<b>{html.escape(symbol)}</b>",
         f"CA: <code>{html.escape(token)}</code>",
         "",
-        "Open the chart links below for live price/liquidity context.",
-        "No risk score, fake-volume, or MC filter is applied by the autonomous bot.",
     ]
+    if mc is not None:
+        mc_str = f"${float(mc):,.0f}" if float(mc) >= 1000000 else f"${float(mc):,.2f}"
+        lines.append(f"MC: <b>{mc_str}</b>")
+    if price is not None:
+        lines.append(f"Price: ${float(price):.8f}")
+    if ath is not None:
+        lines.append(f"ATH: ${float(ath):.8f}")
+    if liquidity is not None:
+        lines.append(f"Liquidity: ${float(liquidity):,.0f}")
+    if vol_24h is not None:
+        lines.append(f"Volume 24h: ${float(vol_24h):,.0f}")
+    if holders is not None:
+        lines.append(f"Holders: {holders}")
+    if lp_burn is not None:
+        lines.append(f"LP Burn: {lp_burn}%")
+    if mint_revoked is not None or freeze_revoked is not None:
+        mint = "✅ Revoked" if mint_revoked else "⚠️ Active"
+        freeze = "✅ Revoked" if freeze_revoked else "⚠️ Active"
+        lines.append(f"Mint: {mint} | Freeze: {freeze}")
+    if age is not None:
+        lines.append(f"Age: {age} day(s)")
+    lines.append("")
+    lines.append("Token data from SolanaTracker.")
+
     rows: List[List[Dict[str, str]]] = [
         _chart_keyboard(token),
     ]
     if manual:
-        rows.append([{"text": "Confirm Manual Trade", "callback_data": "exec|manual_confirm"}])
+        rows.append([{"text": "⚡ Trade This Token", "callback_data": "exec|manual_preview"}])
     rows.append(_back_row("manual_trade" if manual else "main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_token_search_results(ctx: Dict[str, Any]) -> Rendered:
+    """Show search results when multiple tokens match a ticker query."""
+    results = ctx.get("results") or []
+    manual = bool(ctx.get("manual"))
+    lines = ["<b>SEARCH RESULTS</b>", "", "Multiple tokens found. Select one:"]
+    rows: List[List[Dict[str, str]]] = []
+    for r in results[:8]:
+        symbol = str(r.get("symbol") or "???")
+        name = str(r.get("name") or "")
+        addr = str(r.get("mint") or r.get("address") or "")
+        liq = r.get("liquidityUsd")
+        liq_str = f" — Liq: ${float(liq):,.0f}" if liq else ""
+        lines.append(f"<b>{html.escape(symbol)}</b> {html.escape(name)}{liq_str}")
+        label = f"select_{symbol}"[:30]
+        rows.append([{
+            "text": f"{symbol} — {addr[:8]}...",
+            "callback_data": f"exec|token_search_select|{addr}",
+        }])
+    rows.append(_back_row("main"))
     return "\n".join(lines), _kb(rows)
 
 
@@ -698,6 +1066,204 @@ def render_manual_trade_entry() -> Rendered:
         _back_row("main"),
     ]
     return text, _kb(rows)
+
+
+# ── Manual Trade Flow ──────────────────────────────────────────────────────
+
+def render_manual_trade_preview(ctx: Dict[str, Any]) -> Rendered:
+    """Token preview + sizing screen before a manual trade."""
+    token = ctx.get("token_address") or ""
+    symbol = str(ctx.get("symbol") or "???")
+    name = str(ctx.get("name") or "")
+    price = ctx.get("price_usd")
+    mc = ctx.get("market_cap_usd")
+    liquidity = ctx.get("liquidity_usd")
+    vol_24h = ctx.get("volume_24h_usd")
+    ath = ctx.get("ath_price")
+
+    # Portfolio context
+    total_wallet = float(ctx.get("total_wallet_sol") or 10)
+    pool_pct = float(ctx.get("trading_pool_pct") or 50)
+    pool_sol = round(total_wallet * pool_pct / 100, 2)
+    deployed_pct = float(ctx.get("deployed_pct") or 0)
+    deployed_sol = round(pool_sol * deployed_pct / 100, 2)
+    available_sol = round(pool_sol - deployed_sol, 2)
+
+    # Current trade settings from state
+    amount_pool_pct = ctx.get("amount_pool_pct")
+    amount_total_pct = ctx.get("amount_total_pct")
+    tp = ctx.get("tp_x")
+    sl = ctx.get("sl_pct")
+    slippage = ctx.get("slippage_bps")
+    mev = ctx.get("mev_on")
+
+    lines = [
+        f"<b>MANUAL TRADE — {html.escape(symbol)}</b>",
+        f"<code>{html.escape(token)}</code>",
+        "",
+    ]
+    if price is not None:
+        lines.append(f"Price: ${float(price):.8f}")
+    if mc is not None:
+        lines.append(f"MC: ${float(mc):,.0f}")
+    if liquidity is not None:
+        lines.append(f"Liq: ${float(liquidity):,.0f}")
+    if vol_24h is not None:
+        lines.append(f"Vol 24h: ${float(vol_24h):,.0f}")
+    if ath is not None:
+        lines.append(f"ATH: ${float(ath):.8f}")
+    lines.append("")
+    lines.append("💼 <b>Portfolio</b>")
+    lines.append(f"Total: {total_wallet:.1f} SOL | Pool: {pool_sol} SOL")
+    lines.append(f"Deployed: {deployed_sol} SOL | Available: {available_sol} SOL")
+    lines.append("")
+    lines.append("💰 <b>Position Size</b>")
+    if amount_pool_pct:
+        amount_sol = round(pool_sol * float(amount_pool_pct) / 100, 2)
+        lines.append(f"% of Pool: <b>{amount_pool_pct}%</b> = {amount_sol} SOL")
+    if amount_total_pct:
+        amount_total_sol = round(total_wallet * float(amount_total_pct) / 100, 2)
+        lines.append(f"% of Total: <b>{amount_total_pct}%</b> = {amount_total_sol} SOL")
+
+    if tp or sl or slippage or mev is not None:
+        lines.append("")
+        lines.append("🔧 <b>Settings</b>")
+        if tp:
+            lines.append(f"TP: {tp}x{' (no TP)' if tp == 'inf' else ''}")
+        if sl:
+            lines.append(f"SL: {sl}%")
+        if slippage:
+            lines.append(f"Slippage: {float(slippage)/100:.1f}%")
+        if mev is not None:
+            lines.append(f"MEV: {'ON ✅' if mev in (True, 'on', 'true') else 'OFF'}")
+
+    rows: List[List[Dict[str, str]]] = [
+        # Pool % presets
+        [
+            {"text": "10% Pool", "callback_data": "exec|set_amount|pool|10"},
+            {"text": "25% Pool", "callback_data": "exec|set_amount|pool|25"},
+            {"text": "50% Pool", "callback_data": "exec|set_amount|pool|50"},
+            {"text": "75% Pool", "callback_data": "exec|set_amount|pool|75"},
+        ],
+        # Total % presets
+        [
+            {"text": "5% Total", "callback_data": "exec|set_amount|total|5"},
+            {"text": "10% Total", "callback_data": "exec|set_amount|total|10"},
+            {"text": "25% Total", "callback_data": "exec|set_amount|total|25"},
+        ],
+    ]
+    # TP presets
+    rows.append([
+        {"text": "TP 2x", "callback_data": "exec|set_tp|2"},
+        {"text": "TP 3x", "callback_data": "exec|set_tp|3"},
+        {"text": "TP 5x", "callback_data": "exec|set_tp|5"},
+        {"text": "TP 10x", "callback_data": "exec|set_tp|10"},
+    ])
+    rows.append([
+        {"text": "TP: No TP", "callback_data": "exec|set_tp|inf"},
+    ])
+    # SL presets
+    rows.append([
+        {"text": "SL -25%", "callback_data": "exec|set_sl|-25"},
+        {"text": "SL -50%", "callback_data": "exec|set_sl|-50"},
+        {"text": "SL -75%", "callback_data": "exec|set_sl|-75"},
+    ])
+    # Slippage link + MEV
+    rows.append([
+        {"text": "⚡ Slippage & MEV →", "callback_data": "exec|manual_slippage"},
+    ])
+    rows.append([
+        {"text": "✅ Review & Buy", "callback_data": "exec|manual_review"},
+    ])
+    rows.append([{"text": "❌ Cancel", "callback_data": "nav|main"}])
+    return "\n".join(lines), _kb(rows)
+
+
+def render_manual_trade_slippage(ctx: Dict[str, Any]) -> Rendered:
+    """Per-trade slippage and MEV configuration."""
+    slippage_bps = ctx.get("slippage_bps")
+    current_slippage = f"{float(slippage_bps)/100:.1f}%" if slippage_bps else "Not set"
+    mev_on = ctx.get("mev_on", True)
+
+    lines = [
+        "<b>SLIPPAGE & MEV</b>",
+        "",
+        f"Slippage: <b>{current_slippage}</b>",
+        f"MEV: <b>{'ON ✅' if mev_on in (True, 'on', 'true') else 'OFF ⚪'}</b>",
+        "",
+        "<b>Slippage Presets</b>",
+    ]
+    rows: List[List[Dict[str, str]]] = [
+        [
+            {"text": "0.5%", "callback_data": "exec|set_slippage|50"},
+            {"text": "1%", "callback_data": "exec|set_slippage|100"},
+            {"text": "2%", "callback_data": "exec|set_slippage|200"},
+            {"text": "5%", "callback_data": "exec|set_slippage|500"},
+        ],
+        [
+            {"text": "MEV ON (Rec)", "callback_data": "exec|set_mev|on"},
+            {"text": "MEV OFF (Fast)", "callback_data": "exec|set_mev|off"},
+        ],
+        [{"text": "✅ Done", "callback_data": "exec|back_to_preview"}],
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_manual_trade_confirm(ctx: Dict[str, Any]) -> Rendered:
+    """Final confirmation screen with fee breakdown before executing."""
+    symbol = str(ctx.get("symbol") or "???")
+    token = ctx.get("token_address") or ""
+    price = ctx.get("price_usd")
+
+    amount_pool_pct = ctx.get("amount_pool_pct")
+    amount_total_pct = ctx.get("amount_total_pct")
+    tp = ctx.get("tp_x")
+    sl = ctx.get("sl_pct")
+    slippage_bps = ctx.get("slippage_bps")
+    mev_on = ctx.get("mev_on", True)
+
+    total_wallet = float(ctx.get("total_wallet_sol") or 10)
+    pool_pct = float(ctx.get("trading_pool_pct") or 50)
+    pool_sol = round(total_wallet * pool_pct / 100, 2)
+
+    # Calculate estimated SOL amount
+    if amount_pool_pct:
+        est_sol = round(pool_sol * float(amount_pool_pct) / 100, 3)
+    elif amount_total_pct:
+        est_sol = round(total_wallet * float(amount_total_pct) / 100, 3)
+    else:
+        est_sol = 0.1
+
+    platform_fee_sol = round(est_sol * 0.01, 4)  # 1% platform fee
+    net_sol = round(est_sol - platform_fee_sol, 4)
+
+    lines = [
+        f"<b>CONFIRM MANUAL TRADE</b>",
+        "",
+        f"Token: <b>{html.escape(symbol)}</b>",
+        f"Amount: <b>{est_sol} SOL</b>",
+    ]
+    if tp:
+        lines.append(f"TP: <b>{tp}x</b>" if tp != "inf" else "TP: <b>♾️ None</b>")
+    if sl:
+        lines.append(f"SL: <b>{sl}%</b>")
+    slippage_str = f"{float(slippage_bps)/100:.1f}%" if slippage_bps else "default"
+    lines.append(f"Slippage: <b>{slippage_str}</b>")
+    lines.append(f"MEV: <b>{'ON ✅' if mev_on in (True, 'on', 'true') else 'OFF'}</b>")
+    lines.append("")
+    lines.append("💰 <b>Fee Breakdown</b>")
+    lines.append(f"Gross: {est_sol} SOL")
+    lines.append(f"Platform fee (1%): {platform_fee_sol} SOL")
+    lines.append(f"You receive: ~{net_sol} SOL")
+    if price:
+        est_tokens = round(est_sol / float(price), 2) if float(price) > 0 else 0
+        lines.append(f"Est. tokens: ~{est_tokens:,.0f}")
+
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "🟢 EXECUTE BUY", "callback_data": "exec|manual_execute"}],
+        [{"text": "⬅️ Adjust", "callback_data": "exec|back_to_preview"}],
+    ]
+    return "\n".join(lines), _kb(rows)
 
 
 # ── Trade History ──────────────────────────────────────────────────────────
@@ -806,12 +1372,15 @@ def render_trade_detail(ctx: Dict[str, Any]) -> Rendered:
 def render_wallets(ctx: Dict[str, Any]) -> Rendered:
     bot_wallets = ctx.get("bot_wallets") or []
     tracked_wallets = ctx.get("tracked_wallets") or []
+    balance = ctx.get("wallet_balance")
     lines = ["<b>MY WALLETS</b>", ""]
     if bot_wallets:
         lines.append("<b>Trading wallet</b>")
         for wallet in bot_wallets[:3]:
             pk = wallet.get("public_key") or ""
             lines.append(f"<code>{pk[:8]}...{pk[-6:] if len(pk) > 6 else pk}</code>")
+            if balance is not None:
+                lines.append(f"Balance: {float(balance):.4f} SOL")
     else:
         lines.append("No trading wallet imported yet.")
     lines.append("")
@@ -824,9 +1393,64 @@ def render_wallets(ctx: Dict[str, Any]) -> Rendered:
             lines.append(f"{tier} <code>{addr[:8]}...{addr[-6:] if len(addr) > 6 else addr}</code> - {alerts}")
     else:
         lines.append("No tracked wallets yet.")
-    rows = [
-        [{"text": "Import Trading Wallet", "callback_data": "wal|import"}],
-        _back_row("main"),
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "Import Private Key", "callback_data": "wal|import"}],
+        [{"text": "Import Seed Phrase", "callback_data": "wal|import_seed"}],
+    ]
+    if bot_wallets:
+        rows.append([{"text": "💰 Fund Wallet", "callback_data": "wal|fund"}])
+    rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_fund_wallet(ctx: Dict[str, Any]) -> Rendered:
+    """Show wallet address + balance + SOL conversion table."""
+    addr = ctx.get("wallet_address") or "No wallet imported"
+    balance = ctx.get("balance_sol")
+    sol_price = float(ctx.get("sol_price") or 150)
+    lines = [
+        "<b>FUND WALLET</b>",
+        "",
+        f"Address: <code>{html.escape(addr)}</code>",
+    ]
+    if balance is not None:
+        bal = float(balance)
+        lines.append(f"Balance: <b>{bal:.4f} SOL</b> (${bal * sol_price:,.2f})")
+    lines.append("")
+    lines.append("<b>$ → SOL</b>")
+    for usd in [10, 25, 50, 100, 500, 1000]:
+        sol = round(usd / sol_price, 4)
+        lines.append(f"${usd} ≈ {sol} SOL")
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "📋 Copy Address", "callback_data": "wal|copy|" + addr}],
+        _back_row("wallets"),
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_tracked_wallet_detail(ctx: Dict[str, Any]) -> Rendered:
+    """Deep dive on a single tracked wallet."""
+    addr = ctx.get("wallet_address") or "unknown"
+    status = "🟢 Active" if ctx.get("is_active") else "⚫ Inactive"
+    last_trade = ctx.get("last_trade_at") or "—"
+    lines = [
+        "<b>TRACKED WALLET</b>",
+        "",
+        f"Address: <code>{html.escape(addr)[:12]}...</code>",
+        f"Status: {status}",
+        f"Last trade: {last_trade}",
+        "",
+        "30-day stats coming soon.",
+    ]
+    recent = ctx.get("recent_activity") or []
+    if recent:
+        lines.append("<b>Recent</b>")
+        for act in recent[:5]:
+            lines.append(f"{act.get('type','')} {act.get('symbol','')}")
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "📋 Copy", "callback_data": f"wal|copy|{addr}"}],
+        [{"text": "➕ Add to Auto-Trader", "callback_data": f"wal|select|{addr}"}],
+        _back_row("wallets"),
     ]
     return "\n".join(lines), _kb(rows)
 

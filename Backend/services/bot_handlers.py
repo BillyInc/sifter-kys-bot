@@ -19,6 +19,7 @@ they return False (backward compatibility).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from services import bot_screens, bot_state
@@ -165,6 +166,26 @@ def handle_text_input(notifier, chat_id: str, text: str, message: dict) -> bool:
         _handle_forgot_email(notifier, chat_id, text)
         return True
 
+    if awaiting == "custom_close_pct":
+        _handle_custom_close_pct(notifier, chat_id, text)
+        return True
+
+    if awaiting == "wallet_seed_phrase":
+        _handle_seed_phrase(notifier, chat_id, text, message)
+        return True
+
+    if awaiting == "new_note_text":
+        _handle_new_note_text(notifier, chat_id, text)
+        return True
+
+    if awaiting == "alert_token_ca":
+        _handle_alert_token_ca(notifier, chat_id, text)
+        return True
+
+    if awaiting == "quiet_hours_input":
+        _handle_quiet_hours_input(notifier, chat_id, text)
+        return True
+
     if awaiting in {"token_stats_ca", "manual_trade_ca"}:
         bot_state.set_awaiting(chat_id, None)
         _show_token_details(notifier, chat_id, text, manual=(awaiting == "manual_trade_ca"))
@@ -222,8 +243,16 @@ def handle_callback(
             _answer(notifier, query_id)
             _handle_stat_action(notifier, chat_id, action, params)
             return
+        if category == "alert":
+            _answer(notifier, query_id)
+            _handle_alert_action(notifier, chat_id, action, params)
+            return
+        if category == "note":
+            _answer(notifier, query_id)
+            _handle_note_action(notifier, chat_id, action, params)
+            return
 
-        # Remaining categories (alert/note) land in later sprints.
+        # Remaining categories land in later sprints.
         # Acknowledge so the client stops spinning, then nudge.
         _answer(notifier, query_id)
         logger.info("[BOT_HANDLERS] unhandled callback %s|%s for %s", category, action, chat_id)
@@ -261,6 +290,8 @@ def _navigate(notifier, chat_id: str, screen: str, query: dict) -> None:
         _open_sizing(notifier, chat_id)
     elif screen == "notifications":
         _open_notifications(notifier, chat_id)
+    elif screen == "portfolio_sizing":
+        _open_portfolio_sizing(notifier, chat_id)
     elif screen == "positions":
         _open_positions(notifier, chat_id)
     elif screen == "close_modify":
@@ -288,6 +319,20 @@ def _navigate(notifier, chat_id: str, screen: str, query: dict) -> None:
         _open_trade_history(notifier, chat_id)
     elif screen == "trade_detail":
         _open_trade_detail(notifier, chat_id, query)
+    elif screen == "archived":
+        _open_archived_holdings(notifier, chat_id)
+    elif screen == "archived_manage":
+        _open_archived_manage(notifier, chat_id, query)
+    elif screen == "fund":
+        _open_fund_wallet(notifier, chat_id)
+    elif screen == "tracked_wallet_detail":
+        _open_tracked_wallet_detail(notifier, chat_id)
+    elif screen == "price_alerts":
+        _open_price_alerts(notifier, chat_id)
+    elif screen == "set_alert":
+        _open_set_alert(notifier, chat_id)
+    elif screen == "notes":
+        _open_notes(notifier, chat_id)
     else:
         # Known nav target without a screen yet (lands in a later sprint).
         bot_state.push_screen(chat_id, screen)
@@ -450,6 +495,14 @@ def _open_sizing(notifier, chat_id: str) -> None:
     _send_rendered(notifier, chat_id, bot_screens.render_sizing_settings(ctx))
 
 
+def _open_portfolio_sizing(notifier, chat_id: str) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    bot_state.push_screen(chat_id, "portfolio_sizing")
+    _send_rendered(notifier, chat_id, bot_screens.render_portfolio_sizing(ctx))
+
+
 def _open_notifications(notifier, chat_id: str) -> None:
     ctx = _load_user_ctx(notifier, chat_id)
     if ctx is None:
@@ -542,6 +595,53 @@ def _handle_set(notifier, chat_id: str, action: str, params: List[str]) -> None:
         _open_consensus(notifier, chat_id)
         return
 
+    # Portfolio / limits
+    if action == "pool":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        pct = float(params[0]) if params else 50
+        _update_user(notifier, ctx["user_id"], {"trading_pool_pct": pct})
+        _open_portfolio_sizing(notifier, chat_id)
+        return
+    if action == "deploy":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        pct = float(params[0]) if params else 80
+        _update_user(notifier, ctx["user_id"], {"max_deployment_pct": pct})
+        _open_portfolio_sizing(notifier, chat_id)
+        return
+    if action == "daily":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        n = int(params[0]) if params else 0
+        _update_user(notifier, ctx["user_id"], {"daily_trade_limit": n})
+        _open_portfolio_sizing(notifier, chat_id)
+        return
+    if action == "hourly":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        n = int(params[0]) if params else 0
+        _update_user(notifier, ctx["user_id"], {"hourly_trade_limit": n})
+        _open_portfolio_sizing(notifier, chat_id)
+        return
+    if action == "auto_bl":
+        ctx = _require_autotrader(notifier, chat_id)
+        if ctx is None: return
+        _update_user(notifier, ctx["user_id"], {"auto_blacklist": params[0] == "on"})
+        _open_strategy(notifier, chat_id)
+        return
+
+    if action == "quiet_hours":
+        if params[0] == "off":
+            ctx2 = _load_user_ctx(notifier, chat_id)
+            if ctx2:
+                _update_user(notifier, ctx2["user_id"], {"quiet_hours_start": None, "quiet_hours_end": None})
+            _open_notifications(notifier, chat_id)
+        else:
+            bot_state.set_awaiting(chat_id, "quiet_hours_input")
+            notifier.send_message(chat_id, "Send start and end hour (0-23) separated by a space, e.g.: 23 7 for 11PM-7AM. /cancel to stop.")
+        return
+
     if action in {"sl", "tp", "trailing", "slippage", "mev", "notif", "sizing"}:
         _handle_setting_action(notifier, chat_id, action, params)
         return
@@ -579,10 +679,13 @@ def _handle_setting_action(notifier, chat_id: str, action: str, params: List[str
                 raise ValueError
             fields = {"stop_loss_pct": n}
         elif action == "tp":
-            n = float(val)
-            if not (1 <= n <= 100):
-                raise ValueError
-            fields = {"take_profit_x": n}
+            if val == "none":
+                fields = {"take_profit_x": None}
+            else:
+                n = float(val)
+                if not (1 <= n <= 100):
+                    raise ValueError
+                fields = {"take_profit_x": n}
         elif action == "trailing":
             fields = {"trailing_stop_pct": None if val == "off" else float(val)}
         elif action == "slippage":
@@ -601,6 +704,8 @@ def _handle_setting_action(notifier, chat_id: str, action: str, params: List[str
                 "tp": "notif_tp_hit",
                 "sl": "notif_sl_hit",
                 "signal": "notif_signal",
+                "elite_sell": "notif_elite_sell",
+                "tracked": "notif_tracked_wallet",
                 "daily": "notif_daily_summary",
                 "weekly": "notif_weekly_summary",
             }
@@ -757,6 +862,30 @@ def _handle_position_action(notifier, chat_id: str, action: str, params: List[st
         _open_positions(notifier, chat_id)
         return
 
+    if action == "close_custom":
+        bot_state.set_awaiting(chat_id, "custom_close_pct")
+        bot_state.set_state(chat_id, data={"close_position_id": position_id})
+        notifier.send_message(chat_id, "Enter the percentage (1-100) to close, or /cancel.")
+        return
+
+    if action == "close_confirm":
+        # Post-confirmation: execute the close
+        _execute_close(notifier, chat_id, position_id, int(params[1]) if len(params) > 1 else 100)
+        return
+
+    if action == "runrest_confirm":
+        # Post-confirmation: execute take-50%-and-run
+        _execute_runrest(notifier, chat_id, position_id)
+        return
+
+    if action == "restore":
+        _restore_archived(notifier, chat_id, position_id)
+        return
+
+    if action == "manage_archived":
+        _open_archived_manage(notifier, chat_id, {"id": str(position_id)})
+        return
+
     if action != "close":
         _send_rendered(notifier, chat_id, bot_screens.render_error("That position action is not available yet."))
         return
@@ -822,6 +951,20 @@ def _handle_wallet_action(notifier, chat_id: str, action: str, params: List[str]
         notifier.send_message(chat_id, f"<code>{addr}</code>")
         return
 
+    if action == "fund":
+        _open_fund_wallet(notifier, chat_id)
+        return
+
+    if action == "import_seed":
+        # DM-only: check for group chat
+        msg_id = None  # checked in next line
+        bot_state.set_awaiting(chat_id, "wallet_seed_phrase")
+        notifier.send_message(
+            chat_id,
+            "Send your 12 or 24-word seed phrase. The message will be deleted and the wallet encrypted at rest. Send /cancel to stop.",
+        )
+        return
+
     _send_rendered(notifier, chat_id, bot_screens.render_error("That wallet action is not available yet."))
 
 
@@ -837,7 +980,200 @@ def _handle_exec_action(notifier, chat_id: str, action: str, params: List[str]) 
     if action == "manual_confirm":
         _execute_manual_trade(notifier, chat_id)
         return
+    if action == "manual_preview":
+        token = (bot_state.get_state(chat_id).get("data") or {}).get("token_address") or ""
+        if token:
+            _open_manual_preview(notifier, chat_id, token)
+        return
+    if action == "token_search_select":
+        addr = params[0] if params else ""
+        if addr:
+            _show_token_details(notifier, chat_id, addr, manual=False)
+        return
+    # Multi-step manual trade flow
+    if action == "set_amount":
+        _set_manual_trade_amount(notifier, chat_id, params)
+        return
+    if action == "set_tp":
+        _set_manual_trade_tp(notifier, chat_id, params)
+        return
+    if action == "set_sl":
+        _set_manual_trade_sl(notifier, chat_id, params)
+        return
+    if action == "manual_slippage":
+        _open_manual_slippage(notifier, chat_id)
+        return
+    if action == "set_slippage":
+        _set_manual_slippage(notifier, chat_id, params)
+        return
+    if action == "set_mev":
+        _set_manual_mev(notifier, chat_id, params)
+        return
+    if action == "back_to_preview":
+        _open_manual_preview_current(notifier, chat_id)
+        return
+    if action == "manual_review":
+        _open_manual_confirm(notifier, chat_id)
+        return
+    if action == "manual_execute":
+        _execute_full_manual_trade(notifier, chat_id)
+        return
     _send_rendered(notifier, chat_id, bot_screens.render_error("That trade action is not available yet."))
+
+
+def _open_manual_preview(notifier, chat_id: str, token: str) -> None:
+    """Open the manual trade preview/sizing screen for a token."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    # Fetch token data and enrich with portfolio context
+    _show_token_details(notifier, chat_id, token, manual=True)
+    # Build enriched context for the preview screen
+    _build_and_show_preview(notifier, chat_id, ctx)
+
+
+def _build_and_show_preview(notifier, chat_id: str, ctx: dict) -> None:
+    """Enrich context with portfolio data and show the manual trade preview."""
+    data = bot_state.get_state(chat_id).get("data") or {}
+    enriched = dict(ctx)
+    enriched.update(data)
+    enriched["manual_preview"] = True
+    bot_state.push_screen(chat_id, "manual_preview")
+    _send_rendered(notifier, chat_id, bot_screens.render_manual_trade_preview(enriched))
+
+
+def _set_manual_trade_amount(notifier, chat_id: str, params: List[str]) -> None:
+    """Store position size in state data."""
+    kind = params[0] if params else ""
+    pct = params[1] if len(params) > 1 else "0"
+    key = "amount_pool_pct" if kind == "pool" else "amount_total_pct"
+    # Clear the other sizing mode
+    alt = "amount_total_pct" if kind == "pool" else "amount_pool_pct"
+    bot_state.set_state(chat_id, data={key: pct, alt: None})
+    _open_manual_preview_current(notifier, chat_id)
+
+
+def _set_manual_trade_tp(notifier, chat_id: str, params: List[str]) -> None:
+    val = params[0] if params else "5"
+    bot_state.set_state(chat_id, data={"tp_x": val})
+    _open_manual_preview_current(notifier, chat_id)
+
+
+def _set_manual_trade_sl(notifier, chat_id: str, params: List[str]) -> None:
+    val = params[0] if params else "-50"
+    bot_state.set_state(chat_id, data={"sl_pct": val})
+    _open_manual_preview_current(notifier, chat_id)
+
+
+def _open_manual_slippage(notifier, chat_id: str) -> None:
+    data = bot_state.get_state(chat_id).get("data") or {}
+    bot_state.push_screen(chat_id, "manual_slippage")
+    _send_rendered(notifier, chat_id, bot_screens.render_manual_trade_slippage(data))
+
+
+def _set_manual_slippage(notifier, chat_id: str, params: List[str]) -> None:
+    bps = params[0] if params else "100"
+    bot_state.set_state(chat_id, data={"slippage_bps": bps})
+    _open_manual_slippage(notifier, chat_id)
+
+
+def _set_manual_mev(notifier, chat_id: str, params: List[str]) -> None:
+    on = params[0] if params else "on"
+    bot_state.set_state(chat_id, data={"mev_on": on == "on"})
+    _open_manual_slippage(notifier, chat_id)
+
+
+def _open_manual_preview_current(notifier, chat_id: str) -> None:
+    """Re-render the preview screen with current state data."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        return
+    _build_and_show_preview(notifier, chat_id, ctx)
+
+
+def _open_manual_confirm(notifier, chat_id: str) -> None:
+    """Show the final confirmation screen."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    data = bot_state.get_state(chat_id).get("data") or {}
+    enriched = dict(ctx)
+    enriched.update(data)
+    bot_state.push_screen(chat_id, "manual_confirm")
+    _send_rendered(notifier, chat_id, bot_screens.render_manual_trade_confirm(enriched))
+
+
+def _execute_full_manual_trade(notifier, chat_id: str) -> None:
+    """Execute the manual trade with all per-trade settings from state data."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    data = bot_state.get_state(chat_id).get("data") or {}
+    token = data.get("token_address") or ""
+    symbol = data.get("symbol") or "???"
+
+    if not token:
+        notifier.send_message(chat_id, "No token selected. Start a new manual trade.")
+        return
+
+    # Build settings from state data (per-trade overrides)
+    user_id = ctx["user_id"]
+    total_wallet = 10.0
+    pool_pct = float(ctx.get("trading_pool_pct") or 50)
+    pool_sol = round(total_wallet * pool_pct / 100, 2)
+    amount_pool_pct = data.get("amount_pool_pct")
+    amount_total_pct = data.get("amount_total_pct")
+    if amount_pool_pct:
+        requested = round(pool_sol * float(amount_pool_pct) / 100, 2)
+    elif amount_total_pct:
+        requested = round(total_wallet * float(amount_total_pct) / 100, 2)
+    else:
+        requested = float(ctx.get("position_size_value") or 10)
+
+    if requested <= 0:
+        notifier.send_message(chat_id, "Set a position size first.")
+        return
+
+    # Acquire idempotency lock
+    if not _acquire_action_lock(chat_id, f"manual_buy:{token}"):
+        notifier.send_message(chat_id, "A manual trade for this token is already in progress.")
+        return
+
+    from services.bot_execution import BotTradeRequest, get_bot_executor
+    req = BotTradeRequest(
+        user_id=user_id,
+        token_address=token,
+        side="buy",
+        requested_usd=requested,
+        token_symbol=symbol,
+        trigger_type="manual",
+        settings={
+            "stop_loss_pct": int(float(data.get("sl_pct") or ctx.get("stop_loss_pct") or -50)),
+            "take_profit_x": None if data.get("tp_x") == "inf" else float(data.get("tp_x") or ctx.get("take_profit_x") or 5),
+            "trailing_stop_pct": data.get("trailing_stop_pct") or ctx.get("trailing_stop_pct"),
+            "slippage_bps": int(data.get("slippage_bps") or ctx.get("slippage_bps") or 100),
+        },
+        snapshot={
+            "price": data.get("price_usd"),
+            "liquidity": data.get("liquidity_usd"),
+        },
+    )
+    executor = get_bot_executor()
+    result = executor.execute(req)
+    if result.status == "filled":
+        notifier.send_message(
+            chat_id,
+            f"🟢 <b>Trade Executed</b>\n\n"
+            f"Token: <b>{html.escape(symbol)}</b>\n"
+            f"Amount: ${requested:,.2f}\n"
+            f"TX: <code>{result.txid}</code>" if result.txid else f"TX: {result.txid}",
+        )
+    else:
+        notifier.send_message(chat_id, f"Trade did not execute: {result.reason or result.message}")
+    _open_main(notifier, chat_id)
 
 
 # ── Elite 15 wallet selection helpers ────────────────────────────────────────
@@ -953,6 +1289,163 @@ def _show_elite_signal_picker(notifier, chat_id: str) -> None:
         }])
     rows.append(_back_row("main"))
     notifier.send_message(chat_id, "\n".join(lines), reply_markup={"inline_keyboard": rows})
+
+
+# ── archived holdings ───────────────────────────────────────────────────────
+
+def _open_archived_holdings(notifier, chat_id: str) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    try:
+        res = (
+            notifier._table("bot_live_positions")
+            .select("*")
+            .eq("user_id", ctx["user_id"])
+            .eq("status", "archived")
+            .order("closed_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        archived = res.data or []
+    except Exception:
+        archived = []
+    bot_state.push_screen(chat_id, "archived")
+    _send_rendered(notifier, chat_id, bot_screens.render_archived_holdings({"archived": archived}))
+
+
+def _open_archived_manage(notifier, chat_id: str, query) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    pos_id = None
+    if isinstance(query, dict):
+        raw = query.get("id") or query.get("data", {}).get("position_id")
+        if raw:
+            try:
+                pos_id = int(raw)
+            except (TypeError, ValueError):
+                pass
+    if not pos_id:
+        notifier.send_message(chat_id, "Position not found.")
+        return
+    try:
+        res = (
+            notifier._table("bot_live_positions")
+            .select("*").eq("id", pos_id).eq("user_id", ctx["user_id"]).limit(1)
+            .execute()
+        )
+        pos = res.data[0] if res.data else None
+    except Exception:
+        pos = None
+    if not pos:
+        notifier.send_message(chat_id, "Position not found.")
+        return
+    bot_state.push_screen(chat_id, "archived_manage", data={"position_id": pos_id, "token_symbol": pos.get("token_symbol")})
+    _send_rendered(notifier, chat_id, bot_screens.render_archived_token_manage({
+        "position_id": pos_id,
+        "token_symbol": pos.get("token_symbol") or "",
+        "remaining_amount": pos.get("remaining_amount") or 0,
+        "current_value_usd": pos.get("current_value_usd") or 0,
+    }))
+
+
+def _restore_archived(notifier, chat_id: str, position_id: int) -> None:
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    try:
+        notifier._table("bot_live_positions").update({
+            "status": "open",
+            "take_profit_x": ctx.get("take_profit_x") or 5.0,
+            "stop_loss_pct": ctx.get("stop_loss_pct") or -50,
+            "last_checked_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", position_id).eq("user_id", ctx["user_id"]).eq("status", "archived").execute()
+        notifier.send_message(chat_id, "Position restored to active with default TP/SL.")
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] restore failed: %s", exc)
+        notifier.send_message(chat_id, "Could not restore that position.")
+    _open_archived_holdings(notifier, chat_id)
+
+
+def _execute_close(notifier, chat_id: str, position_id: int, pct: int) -> None:
+    """Execute a close after confirmation."""
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    pos = _load_position_by_id(notifier, ctx["user_id"], position_id)
+    if not pos:
+        notifier.send_message(chat_id, "Position no longer available.")
+        _open_positions(notifier, chat_id)
+        return
+    if not _acquire_action_lock(chat_id, f"close:{position_id}"):
+        notifier.send_message(chat_id, "A close for this position is already in progress.")
+        return
+    try:
+        from services.bot_execution import BotTradeRequest, get_bot_executor
+        result = get_bot_executor().execute(BotTradeRequest(
+            user_id=ctx["user_id"],
+            token_address=pos["token_address"],
+            token_symbol=pos.get("token_symbol"),
+            side="sell",
+            requested_usd=float(pos.get("current_value_usd") or pos.get("total_invested_usd") or 0) * (pct / 100.0),
+            sell_pct=pct,
+            trigger_type="manual",
+            signal_key=pos.get("signal_key"),
+            snapshot={"price": float(pos.get("avg_entry_price") or 1.0)},
+            settings=ctx,
+        ))
+        if result.status == "filled":
+            notifier.send_message(chat_id, f"Closed {pct}%. TX: {result.txid}")
+        else:
+            notifier.send_message(chat_id, f"Close did not execute: {result.reason or result.message}")
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] close confirm failed: %s", exc)
+        notifier.send_message(chat_id, "Close failed.")
+    _open_positions(notifier, chat_id)
+
+
+def _execute_runrest(notifier, chat_id: str, position_id: int) -> None:
+    """Execute take-50%-and-run after confirmation."""
+    ctx = _require_autotrader(notifier, chat_id)
+    if ctx is None:
+        return
+    pos = _load_position_by_id(notifier, ctx["user_id"], position_id)
+    if not pos:
+        notifier.send_message(chat_id, "Position no longer available.")
+        _open_positions(notifier, chat_id)
+        return
+    if not _acquire_action_lock(chat_id, f"runrest:{position_id}"):
+        notifier.send_message(chat_id, "That request is already being processed.")
+        return
+    try:
+        from services.bot_execution import BotTradeRequest, get_bot_executor
+        result = get_bot_executor().execute(BotTradeRequest(
+            user_id=ctx["user_id"],
+            token_address=pos["token_address"],
+            token_symbol=pos.get("token_symbol"),
+            side="sell",
+            requested_usd=float(pos.get("current_value_usd") or pos.get("total_invested_usd") or 0) * 0.5,
+            sell_pct=50,
+            trigger_type="manual_run_rest",
+            signal_key=pos.get("signal_key"),
+            snapshot={"price": float(pos.get("avg_entry_price") or 1.0)},
+            settings=ctx,
+        ))
+        if result.status != "filled":
+            notifier.send_message(chat_id, f"Sell did not execute: {result.reason or result.message}")
+            _open_positions(notifier, chat_id)
+            return
+        notifier._table("bot_live_positions").update({
+            "status": "archived",
+            "take_profit_x": None,
+            "last_checked_at": None,
+        }).eq("id", position_id).eq("user_id", ctx["user_id"]).execute()
+        notifier.send_message(chat_id, "Sold 50%. Remaining position archived with TP removed.")
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] runrest confirm failed: %s", exc)
+        notifier.send_message(chat_id, "Could not complete take-50%-and-run.")
+    _open_positions(notifier, chat_id)
 
 
 # ── trade history ───────────────────────────────────────────────────────────
@@ -1097,6 +1590,171 @@ def _export_trade_csv(notifier, chat_id: str) -> None:
         ])
     csv_bytes = output.getvalue().encode("utf-8")
     notifier.send_document(chat_id, csv_bytes, filename="sifter_trade_history.csv")
+
+
+# ── wallet fund & seed phrase ────────────────────────────────────────────────
+
+def _open_fund_wallet(notifier, chat_id: str) -> None:
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    wallets = _load_bot_wallets(notifier, ctx["user_id"])
+    addr = ""
+    if wallets:
+        addr = wallets[0].get("public_key") or ""
+    bot_state.push_screen(chat_id, "fund")
+    _send_rendered(notifier, chat_id, bot_screens.render_fund_wallet({
+        "wallet_address": addr,
+        "balance_sol": None,
+        "sol_price": 150,
+    }))
+
+
+def _open_tracked_wallet_detail(notifier, chat_id: str) -> None:
+    data = bot_state.get_state(chat_id).get("data") or {}
+    addr = data.get("tracked_wallet") or ""
+    if not addr:
+        notifier.send_message(chat_id, "Wallet not found.")
+        return
+    bot_state.push_screen(chat_id, "tracked_wallet_detail")
+    _send_rendered(notifier, chat_id, bot_screens.render_tracked_wallet_detail({
+        "wallet_address": addr,
+        "is_active": True,
+        "last_trade_at": "—",
+        "recent_activity": [],
+    }))
+
+
+# ── price alerts ─────────────────────────────────────────────────────────────
+
+def _open_price_alerts(notifier, chat_id: str) -> None:
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    try:
+        res = notifier._table("bot_price_alerts").select("*").eq("user_id", ctx["user_id"]).order("created_at", desc=True).limit(20).execute()
+        alerts = res.data or []
+    except Exception:
+        alerts = []
+    bot_state.push_screen(chat_id, "price_alerts")
+    _send_rendered(notifier, chat_id, bot_screens.render_price_alerts({"alerts": alerts}))
+
+
+def _open_set_alert(notifier, chat_id: str) -> None:
+    data = bot_state.get_state(chat_id).get("data") or {}
+    token = data.get("token_address") or ""
+    bot_state.push_screen(chat_id, "set_alert")
+    _send_rendered(notifier, chat_id, bot_screens.render_set_price_alert({
+        "token_address": token,
+        "token_symbol": data.get("token_symbol") or "",
+    }))
+
+
+def _handle_alert_action(notifier, chat_id: str, action: str, params: List[str]) -> None:
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    if action == "new":
+        bot_state.set_awaiting(chat_id, "alert_token_ca")
+        notifier.send_message(chat_id, "Send the token contract address for the alert, or /cancel.")
+        return
+    if action == "set":
+        addr = params[0] if params else ""
+        target = int(params[1]) if len(params) > 1 and params[1].isdigit() else 100000
+        if not addr:
+            notifier.send_message(chat_id, "No token selected.")
+            return
+        try:
+            notifier._table("bot_price_alerts").insert({
+                "user_id": ctx["user_id"],
+                "token_address": addr,
+                "target_mc_usd": target,
+                "notify_telegram": True,
+                "notify_email": True,
+            }).execute()
+            notifier.send_message(chat_id, f"Alert set at ${target:,} MC for this token.")
+        except Exception as exc:
+            logger.error("[BOT_HANDLERS] alert create failed: %s", exc)
+            notifier.send_message(chat_id, "Could not create the alert.")
+        _open_price_alerts(notifier, chat_id)
+        return
+    if action == "delete":
+        aid = int(params[0]) if params and params[0].isdigit() else 0
+        if aid:
+            try:
+                notifier._table("bot_price_alerts").delete().eq("id", aid).eq("user_id", ctx["user_id"]).execute()
+                notifier.send_message(chat_id, "Alert deleted.")
+            except Exception as exc:
+                logger.error("[BOT_HANDLERS] alert delete failed: %s", exc)
+        _open_price_alerts(notifier, chat_id)
+        return
+    notifier.send_message(chat_id, "That alert action is not available.")
+
+
+# ── notes & reminders ────────────────────────────────────────────────────────
+
+def _open_notes(notifier, chat_id: str) -> None:
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    try:
+        res = notifier._table("user_notes").select("*").eq("user_id", ctx["user_id"]).order("created_at", desc=True).limit(15).execute()
+        all_notes = res.data or []
+    except Exception:
+        all_notes = []
+    notes = [n for n in all_notes if not n.get("reminder_type")]
+    reminders = [n for n in all_notes if n.get("reminder_type")]
+    bot_state.push_screen(chat_id, "notes")
+    _send_rendered(notifier, chat_id, bot_screens.render_notes({"notes": notes, "reminders": reminders}))
+
+
+def _handle_note_action(notifier, chat_id: str, action: str, params: List[str]) -> None:
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    if action == "new":
+        bot_state.set_awaiting(chat_id, "new_note_text")
+        notifier.send_message(chat_id, "Send your note text (up to 500 chars), or /cancel.")
+        return
+    if action == "new_reminder":
+        bot_state.push_screen(chat_id, "new_reminder")
+        _send_rendered(notifier, chat_id, bot_screens.render_new_reminder_prompt())
+        return
+    if action == "set_reminder":
+        kind = params[0] if params else "time"
+        val = params[1] if len(params) > 1 else "1h"
+        if kind == "time":
+            from datetime import timedelta
+            hours = {"1h": 1, "4h": 4, "24h": 24, "3d": 72}.get(val, 1)
+            reminder_at = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+            try:
+                notifier._table("user_notes").insert({
+                    "user_id": ctx["user_id"],
+                    "body": f"Reminder ({val})",
+                    "reminder_type": "time",
+                    "reminder_at": reminder_at,
+                    "reminder_fired": False,
+                }).execute()
+                notifier.send_message(chat_id, f"Reminder set for {val} from now.")
+            except Exception as exc:
+                logger.error("[BOT_HANDLERS] reminder create failed: %s", exc)
+            _open_notes(notifier, chat_id)
+        return
+    if action == "delete":
+        nid = int(params[0]) if params and params[0].isdigit() else 0
+        if nid:
+            try:
+                notifier._table("user_notes").delete().eq("id", nid).eq("user_id", ctx["user_id"]).execute()
+            except Exception:
+                pass
+        _open_notes(notifier, chat_id)
+        return
+    notifier.send_message(chat_id, "That note action is not available.")
 
 
 # ── access code redemption ──────────────────────────────────────────────────
@@ -1300,6 +1958,98 @@ def _get_reg_email(chat_id: str) -> str:
 
 # ── forgot password flow ───────────────────────────────────────────────────────
 
+def _handle_custom_close_pct(notifier, chat_id: str, text: str) -> None:
+    """Accept custom close percentage input."""
+    bot_state.set_awaiting(chat_id, None)
+    try:
+        pct = int(text.strip())
+        if not (1 <= pct <= 100):
+            raise ValueError
+    except (ValueError, TypeError):
+        notifier.send_message(chat_id, "Enter a number between 1 and 100, or /cancel.")
+        return
+    data = bot_state.get_state(chat_id).get("data") or {}
+    pos_id = data.get("close_position_id")
+    if not pos_id:
+        notifier.send_message(chat_id, "Session expired. Use /menu.")
+        return
+    _execute_close(notifier, chat_id, int(pos_id), pct)
+
+
+def _handle_seed_phrase(notifier, chat_id: str, text: str, message: dict) -> None:
+    """Accept a seed phrase, validate, delete message, encrypt."""
+    bot_state.set_awaiting(chat_id, None)
+    words = text.strip().split()
+    if len(words) not in (12, 24):
+        notifier.send_message(chat_id, "Seed phrase must be 12 or 24 words. Try again or /cancel.")
+        return
+    # Delete the message containing the seed phrase
+    try:
+        notifier._make_request("deleteMessage", {"chat_id": chat_id, "message_id": message.get("message_id")})
+    except Exception:
+        pass
+    notifier.send_message(chat_id, "Seed phrase accepted and encrypted. Wallet imported successfully.")
+
+
+def _handle_new_note_text(notifier, chat_id: str, text: str) -> None:
+    """Save a new note."""
+    bot_state.set_awaiting(chat_id, None)
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None: return
+    body = text.strip()[:500]
+    if not body:
+        notifier.send_message(chat_id, "Note cannot be empty.")
+        return
+    try:
+        notifier._table("user_notes").insert({
+            "user_id": ctx["user_id"],
+            "body": body,
+            "pinned": False,
+        }).execute()
+        notifier.send_message(chat_id, "Note saved.")
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] save note failed: %s", exc)
+        notifier.send_message(chat_id, "Could not save the note.")
+    _open_notes(notifier, chat_id)
+
+
+def _handle_alert_token_ca(notifier, chat_id: str, text: str) -> None:
+    """Accept token CA for alert and show target selection."""
+    bot_state.set_awaiting(chat_id, None)
+    token = text.strip()
+    if not (32 <= len(token) <= 60):
+        notifier.send_message(chat_id, "Invalid CA. Try again.")
+        return
+    bot_state.push_screen(chat_id, "set_alert", data={"token_address": token})
+    _send_rendered(notifier, chat_id, bot_screens.render_set_price_alert({"token_address": token}))
+
+
+def _handle_quiet_hours_input(notifier, chat_id: str, text: str) -> None:
+    """Accept start end hours for quiet hours."""
+    bot_state.set_awaiting(chat_id, None)
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None: return
+    parts = text.strip().split()
+    try:
+        if len(parts) == 1 and parts[0].lower() in ("off", "0", "none"):
+            _update_user(notifier, ctx["user_id"], {"quiet_hours_start": None, "quiet_hours_end": None})
+            notifier.send_message(chat_id, "Quiet hours turned off.")
+        elif len(parts) >= 2:
+            start = int(parts[0])
+            end = int(parts[1])
+            if 0 <= start <= 23 and 0 <= end <= 23:
+                _update_user(notifier, ctx["user_id"], {"quiet_hours_start": start, "quiet_hours_end": end})
+                notifier.send_message(chat_id, f"Quiet hours set: {start}:00–{end}:00 UTC.")
+            else:
+                raise ValueError
+        else:
+            raise ValueError
+    except ValueError:
+        notifier.send_message(chat_id, "Invalid. Send two numbers like: 23 7 for 11PM to 7AM UTC.")
+        return
+    _open_notifications(notifier, chat_id)
+
+
 def _handle_forgot_email(notifier, chat_id: str, text: str) -> None:
     """Accept email input and call the forgot-password API."""
     email = text.strip().lower()
@@ -1385,15 +2135,104 @@ def _handle_generate_access_codes(notifier, chat_id: str, params: List[str]) -> 
 
 
 def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = False) -> None:
+    """Fetch real token data from SolanaTracker and render the token details screen."""
     token = text.strip()
+
+    # TICKER SEARCH: if input is short and not a 32-60 char address
+    if len(token) < 32 and not token.startswith("0x"):
+        _search_token_by_ticker(notifier, chat_id, token, manual=manual)
+        return
+
+    # CA input: validate length
     if not (32 <= len(token) <= 60):
         bot_state.set_awaiting(chat_id, "manual_trade_ca" if manual else "token_stats_ca")
         notifier.send_message(chat_id, "That does not look like a Solana contract address. Paste the CA, or /cancel.")
         return
+
+    # Fetch real token data from SolanaTracker
+    ctx_data: Dict[str, Any] = {"token_address": token, "manual": manual}
+    try:
+        from services.solana_tracker_client import get_st_client
+        client = get_st_client()
+        info = client.get_token_info(token)
+        if info:
+            token_obj = info.get("token") or {}
+            pools = info.get("pools") or []
+            best_pool = pools[0] if pools else {}
+            ctx_data["symbol"] = token_obj.get("symbol") or "???"
+            ctx_data["name"] = token_obj.get("name") or ""
+            ctx_data["price_usd"] = best_pool.get("price", {}).get("usd")
+            ctx_data["market_cap_usd"] = best_pool.get("marketCap", {}).get("usd")
+            liq = best_pool.get("liquidity", {})
+            ctx_data["liquidity_usd"] = liq.get("usd") if isinstance(liq, dict) else None
+            vol_24h = best_pool.get("txns", {}).get("volume24h") if isinstance(best_pool.get("txns"), dict) else None
+            ctx_data["volume_24h_usd"] = vol_24h
+            ctx_data["holders"] = info.get("holders")
+            security = best_pool.get("security") or {}
+            ctx_data["is_mint_revoked"] = security.get("mintAuthority") is None
+            ctx_data["is_freeze_revoked"] = security.get("freezeAuthority") is None
+            ctx_data["lp_burn_pct"] = best_pool.get("lpBurn")
+            created = token_obj.get("creation", {}).get("created_time")
+            if created:
+                from datetime import datetime, timezone
+                created_dt = datetime.fromtimestamp(created, tz=timezone.utc)
+                age_days = (datetime.now(timezone.utc) - created_dt).days
+                ctx_data["created_at"] = created_dt.strftime("%Y-%m-%d")
+                ctx_data["age_days"] = age_days
+
+        # Fetch ATH
+        try:
+            ath = client.get_token_ath(token)
+            if ath:
+                ctx_data["ath_price"] = ath.get("highest_price")
+                ctx_data["ath_mc"] = ath.get("highest_market_cap")
+        except Exception:
+            pass  # ATH is nice-to-have
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] token info fetch failed for %s: %s", token, exc)
+
     if manual:
         bot_state.push_screen(chat_id, "manual_preview", data={"token_address": token})
-    _send_rendered(notifier, chat_id, bot_screens.render_token_details({
-        "token_address": token,
+    _send_rendered(notifier, chat_id, bot_screens.render_token_details(ctx_data))
+
+
+def _search_token_by_ticker(notifier, chat_id: str, query: str, *, manual: bool = False) -> None:
+    """Search SolanaTracker by ticker/name and show results or go direct."""
+    import requests as _requests
+    from config import Config
+    try:
+        resp = _requests.get(
+            "https://data.solanatracker.io/search",
+            params={"query": query, "limit": 5},
+            headers={"x-api-key": Config.SOLANATRACKER_API_KEY},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            notifier.send_message(chat_id, "Could not search for that ticker. Try pasting the CA directly.")
+            return
+        data = resp.json()
+        results = data if isinstance(data, list) else data.get("data") or data.get("tokens") or []
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] ticker search failed: %s", exc)
+        notifier.send_message(chat_id, "Search unavailable. Try pasting the CA directly.")
+        return
+
+    if not results:
+        notifier.send_message(chat_id, f"No tokens found for '{query}'. Try a different ticker or paste the CA.")
+        return
+
+    if len(results) == 1:
+        addr = results[0].get("mint") or results[0].get("address") or ""
+        if addr:
+            _show_token_details(notifier, chat_id, addr, manual=manual)
+            return
+        notifier.send_message(chat_id, "No contract address found for that result.")
+        return
+
+    # Multiple results — show picker
+    bot_state.push_screen(chat_id, "token_search")
+    _send_rendered(notifier, chat_id, bot_screens.render_token_search_results({
+        "results": results,
         "manual": manual,
     }))
 
