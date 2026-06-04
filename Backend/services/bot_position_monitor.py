@@ -35,12 +35,39 @@ PAUSE_BETWEEN = 0.3       # seconds between individual position checks
 
 import requests as _requests
 
-def _fetch_current_price(token_address: str) -> Tuple[Optional[float], Optional[str]]:
-    """Fetch current USD price for a Solana token via Jupiter quote.
+def _oracle_price(token_address: str) -> Optional[float]:
+    """Test/paper price override. The mock Elite 15 harness sets scripted prices
+    in Redis (key sifter:mock_price:{token}) so TP/SL/trailing can be forced
+    deterministically without real liquidity. Returns None when not set."""
+    try:
+        import os as _os
+        # Only honor the oracle outside of true live execution.
+        from config import Config
+        if Config.BOT_EXECUTION_MODE == "live":
+            return None
+        import redis as _redis
+        r = _redis.Redis.from_url(
+            _os.environ.get("REDIS_URL", "redis://localhost:6379"),
+            decode_responses=True,
+        )
+        val = r.get(f"sifter:mock_price:{token_address}")
+        return float(val) if val is not None else None
+    except Exception:
+        return None
 
-    Returns (price_usd, error_message).  The error_message is None on success,
-    and a human-friendly string on failure.
+
+def _fetch_current_price(token_address: str) -> Tuple[Optional[float], Optional[str]]:
+    """Fetch current USD price for a Solana token.
+
+    Checks the test price oracle first (set by the mock Elite 15 harness in
+    paper/devnet mode), then falls back to a live Jupiter quote.
+
+    Returns (price_usd, error_message). error_message is None on success.
     """
+    # Scripted price override for testing (paper/devnet only)
+    oracle = _oracle_price(token_address)
+    if oracle is not None:
+        return oracle, None
     try:
         url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=1000000000&slippageBps=50"
         resp = _requests.get(url, timeout=8)

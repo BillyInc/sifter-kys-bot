@@ -45,6 +45,24 @@ class Config:
     TREASURY_WALLET_ADDRESS = os.environ.get("TREASURY_WALLET_ADDRESS", "")
     TREASURY_TOKEN_ACCOUNT = os.environ.get("TREASURY_TOKEN_ACCOUNT", "")
 
+    # Solana on-chain execution endpoints.
+    # Jupiter aggregator API (mainnet-only routing; devnet has near-zero liquidity).
+    JUPITER_BASE_URL = os.environ.get("JUPITER_BASE_URL", "https://quote-api.jup.ag")
+    # RPC endpoint: devnet for testing, mainnet-beta for production.
+    SOLANA_RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+    # Network label used by the execution router to pick devnet vs live behavior.
+    SOLANA_NETWORK = os.environ.get("SOLANA_NETWORK", "devnet")  # devnet | mainnet-beta
+
+    @classmethod
+    def is_live_execution_ready(cls) -> bool:
+        """True only when every prerequisite for real on-chain swaps is set."""
+        return bool(
+            cls.SOLANA_RPC_URL
+            and cls.JUPITER_BASE_URL
+            and cls.WALLET_ENCRYPTION_SECRET
+            and cls.BOT_EXECUTION_MODE in ("devnet", "live")
+        )
+
     # Rate limiting
     RATELIMIT_STORAGE_URI = os.environ.get("REDIS_URL", "redis://localhost:6379")
     RATELIMIT_STRATEGY = "fixed-window"

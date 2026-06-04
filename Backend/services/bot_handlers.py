@@ -1016,7 +1016,86 @@ def _handle_wallet_action(notifier, chat_id: str, action: str, params: List[str]
         )
         return
 
+    if action == "create_email":
+        _create_wallet_via_email(notifier, chat_id)
+        return
+
     _send_rendered(notifier, chat_id, bot_screens.render_error("That wallet action is not available yet."))
+
+
+def _create_wallet_via_email(notifier, chat_id: str) -> None:
+    """Generate a fresh Solana wallet, encrypt + store it, and email the user
+    the seed/secret with their anti-phishing phrase so they can back it up."""
+    ctx = _load_user_ctx(notifier, chat_id)
+    if ctx is None:
+        _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
+        return
+    user_id = ctx["user_id"]
+    try:
+        # Already has a wallet?
+        existing = notifier._table("bot_wallets").select("id").eq("user_id", user_id).limit(1).execute()
+        if existing.data:
+            notifier.send_message(chat_id, "You already have a trading wallet. Use My Wallets to view it.")
+            return
+
+        from solders.keypair import Keypair
+        import base58, base64, hashlib, os
+        from cryptography.fernet import Fernet
+
+        kp = Keypair()
+        secret_bytes = bytes(kp)  # 64-byte secret key
+        public_key = str(kp.pubkey())
+
+        enc_secret = os.environ.get("WALLET_ENCRYPTION_SECRET", "")
+        if not enc_secret:
+            notifier.send_message(chat_id, "Wallet encryption is not configured. Contact support.")
+            return
+        fkey = base64.urlsafe_b64encode(hashlib.sha256(enc_secret.encode()).digest())
+        encrypted = Fernet(fkey).encrypt(secret_bytes).decode()
+
+        notifier._table("bot_wallets").upsert({
+            "user_id": user_id,
+            "public_key": public_key,
+            "encrypted_private_key": encrypted,
+            "wallet_type": "email",
+        }, on_conflict="user_id").execute()
+
+        # Email the secret key (base58) so the user can back it up / import elsewhere.
+        secret_b58 = base58.b58encode(secret_bytes).decode()
+        try:
+            u = notifier._supabase().auth.admin.get_user_by_id(user_id) if hasattr(notifier, "_supabase") else None
+            email = u.user.email if u and getattr(u, "user", None) else None
+        except Exception:
+            email = None
+        if email:
+            try:
+                from services.email_service import get_email_service
+                svc = get_email_service()
+                phrase, _cid = svc._get_user_security(user_id=user_id)
+                from services.email_service import _wrap_html
+                body = (
+                    "<p>Your new SIFTER trading wallet has been created.</p>"
+                    f"<p><strong>Public key:</strong><br><code>{public_key}</code></p>"
+                    f"<p><strong>Secret key (base58) — back this up securely:</strong><br>"
+                    f"<code>{secret_b58}</code></p>"
+                    "<p style='color:#c2410c;'>Never share this key. SIFTER will never ask for it.</p>"
+                )
+                svc._send(email, "Your SIFTER Wallet — back up your key",
+                          _wrap_html("New Wallet Created", body, anti_phishing=phrase))
+            except Exception as exc:
+                logger.warning("[BOT_HANDLERS] wallet email failed: %s", exc)
+
+        notifier.send_message(
+            chat_id,
+            f"✨ <b>Wallet Created</b>\n\n"
+            f"Public key:\n<code>{public_key}</code>\n\n"
+            "Your secret key has been emailed for backup. Fund this wallet to start trading.",
+        )
+    except ImportError:
+        notifier.send_message(chat_id, "Wallet generation requires the solders library. Run `uv sync`.")
+    except Exception as exc:
+        logger.error("[BOT_HANDLERS] create wallet failed: %s", exc)
+        notifier.send_message(chat_id, "Could not create a wallet right now. Please try again.")
 
 
 def _handle_exec_action(notifier, chat_id: str, action: str, params: List[str]) -> None:

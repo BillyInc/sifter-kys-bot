@@ -393,6 +393,7 @@ CREATE TABLE IF NOT EXISTS sifter_dev.user_notes (
     pinned          BOOLEAN NOT NULL DEFAULT FALSE,
     reminder_type   TEXT,                             -- NULL | time | mc
     reminder_at     TIMESTAMPTZ,
+    reminder_token  TEXT,                             -- token CA for MC-based reminders
     reminder_mc_usd NUMERIC,
     reminder_fired  BOOLEAN NOT NULL DEFAULT FALSE,
     notify_telegram BOOLEAN NOT NULL DEFAULT TRUE,
@@ -472,6 +473,35 @@ CREATE POLICY "Users can manage own bot wallet"
 DROP POLICY IF EXISTS "System can manage bot wallets" ON sifter_dev.bot_wallets;
 CREATE POLICY "System can manage bot wallets"
     ON sifter_dev.bot_wallets FOR ALL USING (true) WITH CHECK (true);
+
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 11b. PATCH EXISTING DEPLOYMENTS (CREATE TABLE IF NOT EXISTS won't add columns
+--      to tables that already exist — these ALTERs are idempotent and safe).
+-- ────────────────────────────────────────────────────────────────────────────
+ALTER TABLE sifter_dev.user_notes
+    ADD COLUMN IF NOT EXISTS reminder_token  TEXT,
+    ADD COLUMN IF NOT EXISTS reminder_mc_usd NUMERIC,
+    ADD COLUMN IF NOT EXISTS notify_telegram BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS notify_email    BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE sifter_dev.bot_price_alerts
+    ADD COLUMN IF NOT EXISTS triggered    BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS triggered_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS active       BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE sifter_dev.bot_wallets
+    ADD COLUMN IF NOT EXISTS encrypted_private_key TEXT,
+    ADD COLUMN IF NOT EXISTS wallet_type           TEXT DEFAULT 'private_key';
+
+ALTER TABLE sifter_dev.telegram_users
+    ADD COLUMN IF NOT EXISTS paper_mode           BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS auto_blacklist       BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS anti_phishing_phrase TEXT,
+    ADD COLUMN IF NOT EXISTS reset_token          TEXT,
+    ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS notif_elite_sell     BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS notif_tracked_wallet BOOLEAN NOT NULL DEFAULT TRUE;
 
 
 -- ────────────────────────────────────────────────────────────────────────────

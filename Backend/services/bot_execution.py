@@ -278,7 +278,22 @@ class BotExecutionRouter:
 
     def _resolve_mode(self) -> str:
         mode = (Config.BOT_EXECUTION_MODE or "safe_noop").lower()
-        return mode if mode in VALID_MODES else "safe_noop"
+        if mode not in VALID_MODES:
+            return "safe_noop"
+        # LIVE-MODE SAFETY GATE: refuse real-money trading unless every
+        # prerequisite is met AND the operator has explicitly confirmed.
+        if mode == "live":
+            import os
+            confirmed = os.environ.get("LIVE_TRADING_CONFIRMED", "").lower() == "true"
+            ready = Config.is_live_execution_ready() if hasattr(Config, "is_live_execution_ready") else False
+            if not (confirmed and ready and Config.TREASURY_WALLET_ADDRESS):
+                logger.critical(
+                    "[BOT_EXEC] LIVE mode requested but prerequisites unmet "
+                    "(confirmed=%s ready=%s treasury=%s) — DOWNGRADING to safe_noop",
+                    confirmed, ready, bool(Config.TREASURY_WALLET_ADDRESS),
+                )
+                return "safe_noop"
+        return mode
 
     def _kill_switch_active(self) -> bool:
         try:
@@ -338,8 +353,34 @@ class BotExecutionRouter:
         return result
 
     def _execute_live(self, req: BotTradeRequest, mode: str) -> ExecutionResult:
-        """Route to the live Jupiter adapter. Shares the same NormalizedTradeSignal
-        interface as the paper adapter so they can be swapped transparently."""
+        """Route to the live Jupiter adapter (devnet/live). Decrypts the user's
+        wallet, loads fee config + SOL price, injects them, and lets the adapter
+        do the real quote/swap/sign/submit. Shares the NormalizedTradeSignal
+        interface with paper so the two are swappable."""
+        # Build enriched settings without mutating the caller's dict.
+        settings = dict(req.settings or {})
+        snapshot = dict(req.snapshot or {})
+
+        # 1. Decrypt the user's keypair (only reached in devnet/live).
+        keypair_bytes, err = self._load_keypair(req.user_id)
+        if err:
+            return self._rejected(req, "wallet_unavailable", err)
+        settings["_keypair"] = keypair_bytes
+
+        # 2. Fee config (platform fee + treasury account).
+        fee_bps, fee_account = self._load_fee_config()
+        settings["platform_fee_bps"] = fee_bps
+        if fee_account:
+            settings["fee_account"] = fee_account
+
+        # 3. SOL/USD price for buy sizing.
+        if req.side in ("buy", "swap") and not snapshot.get("sol_price_usd"):
+            try:
+                from services.bot_position_monitor import _fetch_sol_price
+                snapshot["sol_price_usd"] = _fetch_sol_price()
+            except Exception:
+                pass
+
         signal = NormalizedTradeSignal(
             source="bot",
             side=req.side,
@@ -353,11 +394,94 @@ class BotExecutionRouter:
         result = LiveJupiterExecutionAdapter().execute(
             signal=signal,
             requested_usd=req.requested_usd,
-            snapshot=req.snapshot or {},
-            settings=req.settings or {},
+            snapshot=snapshot,
+            settings=settings,
         )
         result.payload = {**(result.payload or {}), "execution_mode": mode}
+
+        # 4. Log the platform fee on a successful fill (buy or sell).
+        if result.status == "filled" and fee_bps:
+            self._log_fee(req, result, fee_bps)
         return result
+
+    def _load_keypair(self, user_id: str):
+        """Load + decrypt the user's trading wallet key. Returns (key_bytes, error)."""
+        try:
+            from services.supabase_client import get_supabase_client, SCHEMA_NAME
+            from config import Config
+            sb = get_supabase_client()
+            res = (
+                sb.schema(SCHEMA_NAME).table("bot_wallets")
+                .select("encrypted_key, key_iv, key_tag, encrypted_private_key, public_key")
+                .eq("user_id", user_id).limit(1).execute()
+            )
+            if not res.data:
+                return None, "No trading wallet imported"
+            row = res.data[0]
+            secret = Config.WALLET_ENCRYPTION_SECRET
+            if not secret:
+                return None, "WALLET_ENCRYPTION_SECRET not configured"
+
+            # Scheme A: AES-GCM (private key import via telegram_notifier)
+            if row.get("encrypted_key") and row.get("key_iv") and row.get("key_tag"):
+                import hashlib
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                raw_key = hashlib.pbkdf2_hmac(
+                    "sha256", (secret + user_id).encode(), user_id.encode(), 200_000,
+                )
+                aes = AESGCM(raw_key)
+                plaintext = aes.decrypt(
+                    bytes.fromhex(row["key_iv"]),
+                    bytes.fromhex(row["encrypted_key"]) + bytes.fromhex(row["key_tag"]),
+                    None,
+                )
+                return bytearray(plaintext), None
+
+            # Scheme B: Fernet (seed-phrase import)
+            if row.get("encrypted_private_key"):
+                import base64, hashlib
+                from cryptography.fernet import Fernet
+                fkey = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+                pk = Fernet(fkey).decrypt(row["encrypted_private_key"].encode())
+                return bytearray(pk), None
+
+            return None, "Wallet has no decryptable key material"
+        except Exception as exc:
+            return None, f"Wallet decrypt failed: {exc}"
+
+    def _load_fee_config(self):
+        """Return (platform_fee_bps, treasury_token_account). 0 bps when disabled."""
+        try:
+            from services.supabase_client import get_supabase_client, SCHEMA_NAME
+            sb = get_supabase_client()
+            res = (
+                sb.schema(SCHEMA_NAME).table("fee_config")
+                .select("platform_fee_bps, treasury_token_account, enabled")
+                .eq("scope", "global").limit(1).execute()
+            )
+            if res.data and res.data[0].get("enabled"):
+                row = res.data[0]
+                return int(row.get("platform_fee_bps") or 0), row.get("treasury_token_account")
+        except Exception:
+            pass
+        return 0, None
+
+    def _log_fee(self, req: BotTradeRequest, result: ExecutionResult, fee_bps: int) -> None:
+        """Best-effort fee log to ClickHouse bot_fee_log."""
+        try:
+            from services.clickhouse_client import get_clickhouse_client
+            ch = get_clickhouse_client()
+            fee_lamports = (result.payload or {}).get("platform_fee_lamports", 0)
+            ch.insert("bot_fee_log", [[
+                result.txid or "", str(req.user_id), req.token_address,
+                req.token_symbol or "", req.side, req.trigger_type or "auto_elite",
+                fee_bps, float(fee_lamports) / 1e9, result.txid or "",
+            ]], column_names=[
+                "trade_id", "user_id", "token_address", "token_symbol",
+                "swap_direction", "trigger_type", "fee_bps", "fee_sol", "tx_hash",
+            ])
+        except Exception as exc:
+            logger.warning("[BOT_EXEC] fee log failed: %s", exc)
 
     def _rejected(self, req: BotTradeRequest, reason: str, message: str) -> ExecutionResult:
         return ExecutionResult(

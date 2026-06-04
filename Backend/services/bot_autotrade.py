@@ -78,6 +78,46 @@ def _load_elite_selections_for_user(supabase, user_id: str) -> Set[str]:
         return set()  # don't block trading on a DB error
 
 
+def _load_elite_set(supabase) -> Set[str]:
+    """Return the canonical Elite 15 wallet allow-list (the system watchlist).
+
+    This is the source of truth for the security screen's exact-match check.
+    Cached briefly in Redis to avoid a DB hit per signal. Empty set means the
+    Elite set is unknown — the security screen then SKIPS the wallet check
+    (but still enforces dust/mint/provenance)."""
+    import os
+    system_user = os.environ.get("ELITE_SYSTEM_USER_ID", "")
+    if not system_user:
+        return set()
+    # Try Redis cache first
+    try:
+        import redis as _redis
+        r = _redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        cached = r.smembers("sifter:elite_set")
+        if cached:
+            return set(cached)
+    except Exception:
+        r = None
+    try:
+        res = (
+            _table(supabase, "wallet_watchlist")
+            .select("wallet_address")
+            .eq("user_id", system_user)
+            .execute()
+        )
+        elite = {row["wallet_address"] for row in (res.data or []) if row.get("wallet_address")}
+        if elite and r is not None:
+            try:
+                r.sadd("sifter:elite_set", *elite)
+                r.expire("sifter:elite_set", 300)  # 5 min
+            except Exception:
+                pass
+        return elite
+    except Exception as exc:
+        logger.warning("[BOT_AUTOTRADE] could not load elite set: %s", exc)
+        return set()
+
+
 def queue_autonomous_trade(
     *,
     user_id: str,
@@ -115,6 +155,27 @@ def queue_autonomous_trade(
         token_address = signal.get("token_address") or ""
         if not token_address:
             return {"status": "skipped", "reason": "missing_token"}
+
+        # ── Security screen (BEFORE filters) ───────────────────────────────────
+        # Address poisoning, ticker/mint mimicry, dust bait, transfer-in fakes.
+        # The Elite set is the canonical wallet allow-list; exact-match only.
+        try:
+            from services.bot_security import security_screen
+            elite_set = _load_elite_set(supabase)
+            sec_ok, sec_reason = security_screen(
+                signal, elite_set,
+                require_elite_wallet=bool(elite_set),
+                check_liquidity=True,
+            )
+            if not sec_ok:
+                _insert_signal_queue(
+                    supabase, user_id=user_id, signal=signal,
+                    requested_usd=0, status="skipped", skip_reason=sec_reason,
+                )
+                return {"status": "skipped", "reason": sec_reason}
+        except Exception as _sec_exc:
+            logger.warning("[BOT_AUTOTRADE] security screen error (failing closed): %s", _sec_exc)
+            return {"status": "skipped", "reason": "security_error"}
 
         blacklist = load_blacklist_set(supabase, user_id)
         ok, reason = passes_auto_trade_filters(user_row, signal, blacklist)

@@ -649,22 +649,22 @@ class TelegramNotifier:
             return
 
         if text == "/start":
-        try:
-            from services import bot_handlers, bot_state
-            # If user is already linked, restore their session instead of
-            # kicking them back to Welcome.
-            ctx = bot_handlers._load_user_ctx(self, chat_id)
-            if ctx:
-                bot_handlers._open_main(self, chat_id)
+            try:
+                from services import bot_handlers, bot_state
+                # If user is already linked, restore their session instead of
+                # kicking them back to Welcome.
+                ctx = bot_handlers._load_user_ctx(self, chat_id)
+                if ctx:
+                    bot_handlers._open_main(self, chat_id)
+                    return
+                # Truly new user — show Welcome.
+                bot_state.clear_state(chat_id)
+                bot_handlers._open_welcome(self, chat_id)
                 return
-            # Truly new user — show Welcome.
-            bot_state.clear_state(chat_id)
-            bot_handlers._open_welcome(self, chat_id)
+            except Exception as e:
+                logger.error("[TELEGRAM] welcome screen open failed: %s", e)
+            self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
             return
-        except Exception as e:
-            logger.error("[TELEGRAM] welcome screen open failed: %s", e)
-        self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
-        return
 
         if text.startswith("/autotrade"):
             parts = text.split()

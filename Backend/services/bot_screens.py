@@ -1419,6 +1419,8 @@ def render_wallets(ctx: Dict[str, Any]) -> Rendered:
         [{"text": "Import Private Key", "callback_data": "wal|import"}],
         [{"text": "Import Seed Phrase", "callback_data": "wal|import_seed"}],
     ]
+    if not bot_wallets:
+        rows.append([{"text": "✨ Create New Wallet (Email)", "callback_data": "wal|create_email"}])
     if bot_wallets:
         rows.append([{"text": "💰 Fund Wallet", "callback_data": "wal|fund"}])
     rows.append(_back_row("main"))

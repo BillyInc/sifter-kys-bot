@@ -1039,6 +1039,143 @@ def monitor_bot_positions():
         traceback.print_exc()
 
 
+@celery.task(name='tasks.check_bot_price_alerts', max_retries=0)
+def check_bot_price_alerts():
+    """Fire MC price alerts whose target has been reached. Runs every ~30s."""
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.bot_position_monitor import _fetch_current_price, _fetch_sol_price
+        sb = get_supabase_client()
+        res = (
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts")
+            .select("*").eq("active", True).eq("triggered", False).limit(100).execute()
+        )
+        alerts = res.data or []
+        fired = 0
+        for a in alerts:
+            token = a.get("token_address")
+            target_mc = float(a.get("target_mc_usd") or 0)
+            if not token or target_mc <= 0:
+                continue
+            # Approximate current MC via SolanaTracker token info.
+            try:
+                from services.solana_tracker_client import get_st_client
+                info = get_st_client().get_token_info(token)
+                pools = (info or {}).get("pools") or []
+                current_mc = float(pools[0].get("marketCap", {}).get("usd") or 0) if pools else 0
+            except Exception:
+                current_mc = 0
+            if current_mc and current_mc >= target_mc:
+                _fire_price_alert(sb, a, current_mc)
+                fired += 1
+        if fired:
+            print(f"[PRICE_ALERTS] fired {fired} alert(s)")
+    except Exception as exc:
+        print(f"[PRICE_ALERTS] task failed: {exc}")
+
+
+def _fire_price_alert(sb, alert, current_mc):
+    from services.supabase_client import SCHEMA_NAME
+    user_id = alert["user_id"]
+    # Telegram
+    if alert.get("notify_telegram"):
+        try:
+            from services.telegram_notifier import TelegramNotifier
+            tg = sb.schema(SCHEMA_NAME).table("telegram_users").select(
+                "telegram_chat_id").eq("user_id", user_id).limit(1).execute()
+            if tg.data and tg.data[0].get("telegram_chat_id"):
+                TelegramNotifier().send_message(
+                    str(tg.data[0]["telegram_chat_id"]),
+                    f"🔔 <b>Price Alert</b>\n\n{alert.get('token_symbol') or 'Token'} "
+                    f"hit ${float(alert.get('target_mc_usd') or 0):,.0f} MC "
+                    f"(now ${current_mc:,.0f}).",
+                )
+        except Exception:
+            pass
+    # Email
+    if alert.get("notify_email"):
+        try:
+            from services.email_service import get_email_service
+            u = sb.auth.admin.get_user_by_id(user_id)
+            email = u.user.email if u and getattr(u, "user", None) else None
+            if email:
+                get_email_service().send_mc_alert(email, user_id, alert, current_mc)
+        except Exception:
+            pass
+    # Mark triggered (unless repeat)
+    try:
+        if alert.get("repeat_on_hit"):
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts").update(
+                {"last_fired_at": datetime.utcnow().isoformat()}
+            ).eq("id", alert["id"]).execute()
+        else:
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts").update(
+                {"triggered": True, "triggered_at": datetime.utcnow().isoformat(), "active": False}
+            ).eq("id", alert["id"]).execute()
+    except Exception:
+        pass
+
+
+@celery.task(name='tasks.check_bot_reminders', max_retries=0)
+def check_bot_reminders():
+    """Fire due notes/reminders (time + MC based). Runs every ~30s."""
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        sb = get_supabase_client()
+        now_iso = datetime.utcnow().isoformat()
+        res = (
+            sb.schema(SCHEMA_NAME).table("user_notes")
+            .select("*").eq("reminder_fired", False)
+            .not_.is_("reminder_type", "null").limit(100).execute()
+        )
+        fired = 0
+        for note in (res.data or []):
+            rtype = note.get("reminder_type")
+            due = False
+            if rtype == "time" and note.get("reminder_at"):
+                due = note["reminder_at"] <= now_iso
+            elif rtype == "mc" and note.get("reminder_token") and note.get("reminder_mc_usd"):
+                try:
+                    from services.solana_tracker_client import get_st_client
+                    info = get_st_client().get_token_info(note["reminder_token"])
+                    pools = (info or {}).get("pools") or []
+                    cur = float(pools[0].get("marketCap", {}).get("usd") or 0) if pools else 0
+                    due = cur >= float(note["reminder_mc_usd"])
+                except Exception:
+                    due = False
+            if due:
+                _fire_reminder(sb, note)
+                fired += 1
+        if fired:
+            print(f"[REMINDERS] fired {fired} reminder(s)")
+    except Exception as exc:
+        print(f"[REMINDERS] task failed: {exc}")
+
+
+def _fire_reminder(sb, note):
+    from services.supabase_client import SCHEMA_NAME
+    user_id = note["user_id"]
+    body = note.get("body") or "Reminder"
+    if note.get("notify_telegram", True):
+        try:
+            from services.telegram_notifier import TelegramNotifier
+            tg = sb.schema(SCHEMA_NAME).table("telegram_users").select(
+                "telegram_chat_id").eq("user_id", user_id).limit(1).execute()
+            if tg.data and tg.data[0].get("telegram_chat_id"):
+                TelegramNotifier().send_message(
+                    str(tg.data[0]["telegram_chat_id"]),
+                    f"⏰ <b>Reminder</b>\n\n{body}",
+                )
+        except Exception:
+            pass
+    try:
+        sb.schema(SCHEMA_NAME).table("user_notes").update(
+            {"reminder_fired": True}
+        ).eq("id", note["id"]).execute()
+    except Exception:
+        pass
+
+
 @celery.task(name='tasks.send_paper_trader_daily_digest')
 def send_paper_trader_daily_digest():
     """Send the daily paper trader HTML digest to configured recipients."""

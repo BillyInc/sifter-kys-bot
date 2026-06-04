@@ -525,6 +525,49 @@ class EmailService:
     # 3) Error alert (to admin)
     # ------------------------------------------------------------------
 
+    def send_mc_alert(self, email: str, user_id: str, alert: dict, current_mc: float) -> bool:
+        """Notify a user that a token hit their target market cap."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
+        symbol = alert.get("token_symbol") or "token"
+        target = float(alert.get("target_mc_usd") or 0)
+        token = alert.get("token_address") or ""
+        bot_username = os.environ.get("TELEGRAM_BOT_USERNAME", "SifterTradingBot")
+        link = f"https://t.me/{bot_username}?start=TRADE_{token}"
+        body = (
+            f'<p style="margin:0 0 12px 0;">🔔 <strong>Price Alert Hit</strong></p>'
+            f'<p style="margin:0 0 4px 0;"><strong>{symbol}</strong> reached your target.</p>'
+            f'<p style="margin:0 0 4px 0;">Target MC: ${target:,.0f}</p>'
+            f'<p style="margin:0 0 16px 0;">Current MC: ${current_mc:,.0f}</p>'
+            f'<p style="margin:16px 0;"><a href="{link}" style="background:#229ED9;color:#fff;'
+            f'padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;">Open in Telegram</a></p>'
+        )
+        html = _wrap_html(f"Price Alert — {symbol}", body, chat_id=chat_id, anti_phishing=phrase)
+        return self._send(email, f"🔔 {symbol} hit ${target:,.0f} MC", html)
+
+    def send_weekly_summary(self, email: str, user_id: str, stats: dict) -> bool:
+        """Weekly performance summary for a bot user."""
+        phrase, chat_id = self._get_user_security(user_id=user_id) if user_id else ("", "")
+        trades = stats.get("trades", 0)
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        win_rate = stats.get("win_rate", 0)
+        pnl = float(stats.get("total_pnl_usd", 0))
+        fees = float(stats.get("total_fees_usd", 0))
+        best = stats.get("best_trade", "—")
+        worst = stats.get("worst_trade", "—")
+        color = _pnl_color(pnl)
+        body = (
+            '<p style="margin:0 0 12px 0;">Your SIFTER trading week in review:</p>'
+            f'<p style="margin:0 0 4px 0;"><strong>Trades:</strong> {trades} ({wins}W / {losses}L)</p>'
+            f'<p style="margin:0 0 4px 0;"><strong>Win rate:</strong> {win_rate:.0f}%</p>'
+            f'<p style="margin:0 0 4px 0;"><strong>Net PnL:</strong> <span style="color:{color};">${pnl:+,.2f}</span></p>'
+            f'<p style="margin:0 0 4px 0;"><strong>Fees paid:</strong> ${fees:,.2f}</p>'
+            f'<p style="margin:0 0 4px 0;"><strong>Best:</strong> {best}</p>'
+            f'<p style="margin:0 0 16px 0;"><strong>Worst:</strong> {worst}</p>'
+        )
+        html = _wrap_html("Your Weekly Summary", body, chat_id=chat_id, anti_phishing=phrase)
+        return self._send(email, f"SIFTER Weekly — ${pnl:+,.2f}", html)
+
     def send_error_alert(
         self,
         task_name: str,

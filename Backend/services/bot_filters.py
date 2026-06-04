@@ -38,7 +38,10 @@ def passes_auto_trade_filters(
         "below_consensus" | "blacklisted"
 
     Exactly two checks — see the module docstring for why there are no
-    fake-volume / risk-score / market-cap filters.
+    fake-volume / risk-score / market-cap filters. Security screening
+    (address poisoning / mimicry / dust) runs SEPARATELY in
+    ``bot_autotrade.queue_autonomous_trade`` before this predicate, because it
+    requires network lookups (token liquidity) and is not a pure function.
     """
     # 1. Consensus threshold: how many Elite wallets must agree (0-15).
     wallet_count = int(signal.get("wallet_count") or 1)
