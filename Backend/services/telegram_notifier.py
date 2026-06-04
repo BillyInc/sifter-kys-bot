@@ -15,18 +15,14 @@ from typing import Dict, List, Optional
 
 import requests
 
-from services.execution_adapters import LiveJupiterExecutionAdapter
 from services.supabase_client import SCHEMA_NAME, get_supabase_client
 from services.paper_trade_runtime import get_paper_trade_runtime, is_operator_chat_id
 
 logger = logging.getLogger(__name__)
 
-# ── Module-level state ────────────────────────────────────────────────────────
-
-_wallet_import_pending: dict = {}  # chat_id -> "awaiting_private_key"
-
-
 # ── Module-level helpers ──────────────────────────────────────────────────────
+# Note: navigation/awaited-input state lives in Redis (services/bot_state.py).
+# The wallet-import flow uses awaiting="wallet_private_key" there.
 
 def _fmt_mcap(usd):
     """Format a market cap value into human-readable string."""
@@ -155,12 +151,29 @@ class TelegramNotifier:
         return self.supabase.schema(self.schema).table(name)
 
     def _make_request(self, method: str, data: dict = None) -> dict:
-        try:
-            response = requests.post(f"{self.base_url}/{method}", json=data, timeout=10)
-            return response.json()
-        except Exception as e:
-            logger.error(f"[TELEGRAM] API error: {e}")
-            return {"ok": False, "error": str(e)}
+        """Call Telegram Bot API with exponential-backoff retries."""
+        import time as _time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(f"{self.base_url}/{method}", json=data, timeout=10)
+                result = response.json()
+                # If Telegram rate-limits us, wait and retry
+                if not result.get("ok") and result.get("error_code") == 429:
+                    retry_after = int(result.get("parameters", {}).get("retry_after", 2 ** attempt))
+                    _time.sleep(retry_after)
+                    continue
+                return result
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < max_retries - 1:
+                    _time.sleep(2 ** attempt)
+                    continue
+                logger.error(f"[TELEGRAM] API error after {max_retries} retries: {e}")
+                return {"ok": False, "error": str(e)}
+            except Exception as e:
+                logger.error(f"[TELEGRAM] API error: {e}")
+                return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "max_retries_exceeded"}
 
     def _is_operator(self, chat_id: str) -> bool:
         """Check if chat_id belongs to an operator."""
@@ -172,35 +185,16 @@ class TelegramNotifier:
             return False
 
     def _notify_paper_trade_event(self, user_id: str, event_type: str, details: dict) -> None:
-        """Send paper trade notification to user's Telegram."""
-        chat_id = self.get_user_chat_id(user_id)
-        if not chat_id:
-            return
+        """Log paper trade events for operator review. Does NOT notify users.
 
+        Paper trades are simulated for operator evaluation only. Real user
+        notifications come from bot_position_monitor and bot_autotrade.
+        """
         symbol = details.get("token_symbol", "???")
-
-        if event_type == "open":
-            usd = details.get("amount_usd", 0)
-            trigger = details.get("trigger_type", "manual")
-            tag = " [Elite 15]" if trigger == "auto_elite" else ""
-            self.send_message(chat_id, f"📝 <b>Paper Trade Opened</b>{tag}\n\nBUY {symbol}\nAmount: ${usd:,.2f}")
-
-        elif event_type == "tp_exit":
-            pct = details.get("pct", 0)
-            mult = details.get("multiplier", 0)
-            self.send_message(chat_id, f"🎯 <b>Take Profit Hit</b>\n\n{symbol} reached {mult:.1f}x\nSold {pct}% of position")
-
-        elif event_type == "sl_exit":
-            mult = details.get("multiplier", 0)
-            self.send_message(chat_id, f"🛑 <b>Stop Loss Triggered</b>\n\n{symbol} dropped to {mult:.2f}x\nPosition closed")
-
-        elif event_type == "age_exit":
-            days = details.get("age_days", 14)
-            self.send_message(chat_id, f"⏰ <b>Max Age Exit</b>\n\n{symbol} open for {days:.0f} days\nPosition closed")
-
-        elif event_type == "close":
-            reason = details.get("reason", "manual")
-            self.send_message(chat_id, f"📕 <b>Position Closed</b>\n\n{symbol} — {reason}")
+        logger.info(
+            "[PAPER_TRADE] user=%s event=%s symbol=%s details=%s",
+            user_id, event_type, symbol, details,
+        )
 
     def _get_redis(self):
         """Return a Redis connection."""
@@ -217,6 +211,21 @@ class TelegramNotifier:
         if reply_markup:
             payload["reply_markup"] = reply_markup
         return self._make_request("sendMessage", payload).get("ok", False)
+
+    def send_document(self, chat_id: str, file_bytes: bytes, filename: str = "file.csv") -> bool:
+        """Send a file via Telegram Bot API sendDocument (multipart/form-data)."""
+        import requests as _requests
+        url = f"https://api.telegram.org/bot{self._token}/sendDocument"
+        try:
+            resp = _requests.post(
+                url,
+                data={"chat_id": chat_id, "parse_mode": "HTML"},
+                files={"document": (filename, file_bytes, "text/csv")},
+                timeout=30,
+            )
+            return resp.json().get("ok", False)
+        except Exception:
+            return False
 
     def verify_connection_token(
         self,
@@ -456,44 +465,44 @@ class TelegramNotifier:
         usd_amount: float,
     ) -> str | None:
         try:
-            result = self._table("bot_wallets").select(
-                "public_key, encrypted_key, key_iv, key_tag"
-            ).eq("user_id", user_id).limit(1).execute()
-            if not result.data:
-                logger.warning(f"[BOT TRADE] No bot wallet registered for {user_id[:8]}...")
-                return None
+            # Route through the bot execution boundary. The selected mode
+            # (Config.BOT_EXECUTION_MODE) decides what actually happens:
+            #   safe_noop → record only (no funds, no key decryption)
+            #   paper     → realistic simulated fill
+            #   devnet/live → real Jupiter swap (key decrypted there only)
+            from services.bot_execution import BotTradeRequest, get_bot_executor
 
-            encryption_secret = os.environ.get("WALLET_ENCRYPTION_SECRET")
-            if not encryption_secret:
-                raise RuntimeError("WALLET_ENCRYPTION_SECRET env var not set")
-
-            private_key_bytes = self._decrypt_wallet_key(
-                encrypted_hex=result.data[0]["encrypted_key"],
-                iv_hex=result.data[0]["key_iv"],
-                tag_hex=result.data[0]["key_tag"],
-                secret=encryption_secret,
-                user_id=user_id,
-            )
-
+            # Look up the bot wallet's public key for live routing (no key
+            # material is decrypted here — that happens inside the live adapter
+            # only when the mode requires it).
+            public_key = None
             try:
-                execution = LiveJupiterExecutionAdapter().execute(
+                result = self._table("bot_wallets").select("public_key").eq(
+                    "user_id", user_id
+                ).limit(1).execute()
+                if result.data:
+                    public_key = result.data[0].get("public_key")
+            except Exception:
+                public_key = None
+
+            execution = get_bot_executor().execute(
+                BotTradeRequest(
                     user_id=user_id,
                     token_address=token_address,
                     side=side,
-                    usd_amount=usd_amount,
-                    wallet_public_key=result.data[0].get("public_key"),
+                    requested_usd=usd_amount,
+                    trigger_type="auto_elite",
+                    wallet_public_key=public_key,
                 )
-                if execution.status == "filled":
-                    return execution.txid
-                logger.warning(
-                    "[BOT TRADE] Live execution rejected at %s: %s",
-                    execution.stage,
-                    execution.reason,
-                )
-                return None
-            finally:
-                for i in range(len(private_key_bytes)):
-                    private_key_bytes[i] = 0
+            )
+            if execution.status == "filled":
+                return execution.txid
+            logger.warning(
+                "[BOT TRADE] execution rejected at %s: %s",
+                execution.stage,
+                execution.reason,
+            )
+            return None
         except Exception as e:
             logger.error(f"[BOT TRADE] execute_auto_trade_for_user error: {e}")
             return None
@@ -536,34 +545,124 @@ class TelegramNotifier:
         first_name = message["from"].get("first_name", "")
         last_name = message["from"].get("last_name")
 
-        # Intercept wallet import flow
-        if chat_id in _wallet_import_pending:
-            if text.lower() == '/cancel':
-                _wallet_import_pending.pop(chat_id, None)
-                self.send_message(chat_id, "❌ Wallet import cancelled.")
+        # ── New menu system (additive, backward-compatible) ──────────────
+        # 1. Consume awaited free-text input (only fires when bot_state has an
+        #    `awaiting` set). Returns False otherwise → fall through to legacy.
+        # 2. New menu commands (e.g. /menu). handle_command self-guards and
+        #    returns False for anything it doesn't own → fall through to legacy.
+        try:
+            from services import bot_handlers
+            if bot_handlers.handle_text_input(self, chat_id, text, message):
                 return
-            self._handle_wallet_key_message(chat_id, text, message)
+            if bot_handlers.handle_command(self, chat_id, text, message):
+                return
+        except Exception as e:
+            logger.error("[TELEGRAM] new-menu message dispatch error: %s", e)
+            # Fall through to legacy handling on any error.
+
+        # ── Redirect legacy slash commands to the new button menu ────────
+        # All user-facing commands are now accessible via clickable buttons
+        # in /menu. Tell the user where to find them instead of executing the
+        # legacy (often paper-trading-leaking) path.
+        _REDIRECTED_COMMANDS = {
+            "/autotrade": "Use the Auto-Trader button in /menu to toggle, set consensus, and manage your bot.",
+            "/setamount": "Use the Portfolio & Sizing button in /menu to set your trade amount.",
+            "/setmax": "Use the Portfolio & Sizing button in /menu to configure your deployment limits.",
+            "/settings": "Use the Settings button in /menu to adjust your strategy, sizing, and notifications.",
+            "/importwallet": "Use the My Wallets button in /menu → Import Trading Wallet.",
+            "/mywallet": "Use the My Wallets button in /menu to view your wallets.",
+            "/stop": "Use the Pause Bot button on the Auto-Trader dashboard in /menu.",
+            "/mypositions": "Use the Active Trades button in /menu to view and manage your positions.",
+            "/portfolio": "Use the Auto-Trader dashboard in /menu for your portfolio overview.",
+            "/pnl": "Use the Auto-Trader dashboard in /menu for your PnL summary.",
+            "/history": "Use the Trade History button in /menu to view your closed trades.",
+        }
+        cmd_key = text.split()[0].lower() if text else ""
+        if cmd_key in _REDIRECTED_COMMANDS:
+            self.send_message(chat_id, _REDIRECTED_COMMANDS[cmd_key])
+            try:
+                from services import bot_handlers
+                bot_handlers.handle_command(self, chat_id, "/menu", message)
+            except Exception:
+                pass
             return
 
         if text.startswith("/start "):
             token = text.split(" ", 1)[1]
+
+            # ── Email/magic deep-link prefixes ───────────────────────────
+            # TRADE_<ca>  → open manual-trade preview for that token
+            # SESSION_<chat_id> → restore the user's session (from email footer)
+            # MAGIC-<token> → redeem a magic access link
+            if token.startswith("TRADE_"):
+                ca = token[len("TRADE_"):]
+                try:
+                    from services import bot_handlers, bot_state
+                    if bot_handlers._load_user_ctx(self, chat_id):
+                        bot_state.set_awaiting(chat_id, None)
+                        bot_handlers._open_manual_preview(self, chat_id, ca)
+                    else:
+                        bot_handlers._open_welcome(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] TRADE_ deep link failed: %s", e)
+                    self.send_message(chat_id, "Could not open that trade. Use /menu.")
+                    return
+            if token.startswith("SESSION_"):
+                try:
+                    from services import bot_handlers
+                    if bot_handlers._load_user_ctx(self, chat_id):
+                        bot_handlers._open_main(self, chat_id)
+                    else:
+                        bot_handlers._open_welcome(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] SESSION_ deep link failed: %s", e)
+                    return
+            if token.startswith("MAGIC-") or token.startswith("MAGIC_"):
+                magic_token = token[len("MAGIC-"):] if token.startswith("MAGIC-") else token[len("MAGIC_"):]
+                try:
+                    from services import bot_handlers
+                    bot_handlers.handle_text_input(self, chat_id, f"MAGIC-{magic_token}", message)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] MAGIC deep link failed: %s", e)
+
             user_id = self.verify_connection_token(token, chat_id, username, first_name, last_name)
             if user_id:
+                # Land the freshly-linked user on the new menu.
+                try:
+                    from services import bot_handlers, bot_state
+                    bot_state.clear_state(chat_id)
+                    bot_handlers._open_main(self, chat_id)
+                    return
+                except Exception as e:
+                    logger.error("[TELEGRAM] post-link menu open failed: %s", e)
                 self.send_message(
                     chat_id,
                     "\u2705 <b>Connected!</b>\n\n"
                     "Your Sifter account is now linked.\n\n"
-                    "<b>Auto-trading:</b>\n"
-                    "/autotrade on\n"
-                    "/autotrade off\n"
-                    "/autotrade status\n"
-                    "/setamount 200",
+                    "Send /menu to open the bot.",
                 )
             else:
                 self.send_message(chat_id, "\u274c <b>Link failed.</b> Generate a new link from the dashboard.")
             return
 
         if text == "/start":
+            try:
+                from services import bot_handlers, bot_state
+                # If user is already linked, restore their session instead of
+                # kicking them back to Welcome.
+                ctx = bot_handlers._load_user_ctx(self, chat_id)
+                if ctx:
+                    bot_handlers._open_main(self, chat_id)
+                    return
+                # Truly new user — show Welcome.
+                bot_state.clear_state(chat_id)
+                bot_handlers._open_welcome(self, chat_id)
+                return
+            except Exception as e:
+                logger.error("[TELEGRAM] welcome screen open failed: %s", e)
             self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
             return
 
@@ -801,7 +900,8 @@ class TelegramNotifier:
             if message["chat"].get("type") != "private":
                 self.send_message(chat_id, "⚠️ For security, use this command in a <b>direct message</b> to the bot.")
                 return
-            _wallet_import_pending[chat_id] = "awaiting_private_key"
+            from services import bot_state
+            bot_state.set_awaiting(chat_id, "wallet_private_key")
             self.send_message(
                 chat_id,
                 "🔐 <b>Wallet Import</b>\n\n"
@@ -815,7 +915,8 @@ class TelegramNotifier:
             return
 
         if text == "/cancel":
-            _wallet_import_pending.pop(chat_id, None)
+            from services import bot_state
+            bot_state.clear_state(chat_id)
             self.send_message(chat_id, "Cancelled.")
             return
 
@@ -971,6 +1072,13 @@ class TelegramNotifier:
             return
 
         if text == "/help":
+            try:
+                from services import bot_screens
+                body, keyboard = bot_screens.render_help()
+                self.send_message(chat_id, body, keyboard)
+                return
+            except Exception as e:
+                logger.error("[TELEGRAM] menu help failed: %s", e)
             self.send_message(
                 chat_id,
                 "<b>Sifter KYS Bot Commands</b>\n\n"
@@ -1002,6 +1110,25 @@ class TelegramNotifier:
         query_id = query["id"]
         chat_id = str(query["from"]["id"])
         data = query["data"]
+
+        # ── New menu system (additive) ───────────────────────────────────
+        # Legacy callback formats keep their exact behavior below; only NEW
+        # pipe-delimited categories are routed to the menu handlers. Anything
+        # unrecognized falls through to the legacy no-op.
+        if not (data.startswith("cp_p:") or data.startswith("cp_b:") or data.startswith("sell|")):
+            parts = data.split("|")
+            if len(parts) >= 2:
+                try:
+                    from services import bot_handlers
+                    if parts[0] in bot_handlers.NEW_CATEGORIES:
+                        bot_handlers.handle_callback(
+                            self, chat_id, query, parts[0], parts[1], parts[2:]
+                        )
+                        return
+                except Exception as e:
+                    logger.error("[TELEGRAM] new-menu callback dispatch error: %s", e)
+                    self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
+                    return
 
         if data.startswith("cp_p:") or data.startswith("cp_b:"):
             ca = data.split(":", 1)[1]
@@ -1043,16 +1170,47 @@ class TelegramNotifier:
                     return
 
                 user_id = user_result.data[0]["user_id"]
-                from services.paper_trading_manager import get_paper_trading_manager
-                ptm = get_paper_trading_manager()
+                # Route through BotExecutionRouter (NOT paper trading)
+                from services.bot_execution import BotTradeRequest, get_bot_executor
+                from services.bot_handlers import _acquire_action_lock
 
-                if pct >= 100:
-                    success = ptm.close_position(user_id, token_address)
-                    result_text = "✅ Position closed." if success else "❌ Failed to close position."
+                if not _acquire_action_lock(owner_chat_id, f"legacy_sell:{token_address}"):
+                    self._make_request(
+                        "answerCallbackQuery",
+                        {"callback_query_id": query_id, "text": "Already processing.", "show_alert": True},
+                    )
+                    return
+
+                # Look up the open position for this user+token
+                pos_res = self._table("bot_live_positions").select("*").eq(
+                    "user_id", user_id
+                ).eq("token_address", token_address).eq("status", "open").limit(1).execute()
+                position = pos_res.data[0] if pos_res.data else None
+
+                if not position:
+                    self._make_request(
+                        "answerCallbackQuery",
+                        {"callback_query_id": query_id, "text": "No open position found for this token.", "show_alert": True},
+                    )
+                    return
+
+                req = BotTradeRequest(
+                    user_id=user_id,
+                    token_address=token_address,
+                    token_symbol=position.get("token_symbol"),
+                    side="sell",
+                    requested_usd=float(position.get("current_value_usd") or position.get("total_invested_usd") or 0) * (pct / 100.0),
+                    sell_pct=pct,
+                    trigger_type="manual",
+                    signal_key=position.get("signal_key"),
+                    snapshot={"price": float(position.get("avg_entry_price") or 1.0)},
+                    settings={"stop_loss_pct": position.get("stop_loss_pct"), "take_profit_x": position.get("take_profit_x")},
+                )
+                result = get_bot_executor().execute(req)
+                if result.status == "filled":
+                    result_text = f"✅ Sold {pct}% — TX: {result.txid[:8]}..." if result.txid else f"✅ Sold {pct}%."
                 else:
-                    result = ptm.partial_close_position(user_id, token_address, pct, reason="telegram_sell")
-                    sold_value = result.get("sol_received", 0)
-                    result_text = f"✅ Sold {pct}% — ${sold_value:,.2f}" if sold_value > 0 else f"❌ Failed to sell {pct}%."
+                    result_text = f"❌ Sell did not execute: {result.reason or result.message}"
 
                 self._make_request(
                     "answerCallbackQuery",
@@ -1073,10 +1231,11 @@ class TelegramNotifier:
             self._make_request("answerCallbackQuery", {"callback_query_id": query_id})
 
     def _handle_wallet_key_message(self, chat_id: str, raw_text: str, message: dict):
-        """Process a private key message during wallet import flow."""
-        # Remove pending state immediately
-        _wallet_import_pending.pop(chat_id, None)
+        """Process a private key message during wallet import flow.
 
+        Called by bot_handlers.handle_text_input when awaiting='wallet_private_key';
+        the awaited state is already cleared by the caller.
+        """
         # Delete the message containing the key for security
         message_id = message.get("message_id")
         if message_id:

@@ -51,6 +51,10 @@ dependencies = [
     "cryptography>=42.0.0",
     # Solana key decoding
     "base58>=2.1.0",
+    # Solana keypair derivation + on-chain signing/submission (devnet/live)
+    "PyNaCl>=1.5.0",
+    "solders>=0.21.0",
+    "solana>=0.34.0",
 ]
 
 [project.optional-dependencies]

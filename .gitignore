@@ -40,3 +40,6 @@ dist/
 build/
 ngrok.zip
 
+'n# Python/pytest cache'n.pytest_cache/'npytest-cache_files-*'n__pycache__/'n*.pyc'n
+'n# Python/pytest cache'n.pytest_cache/'npytest-cache_files-*'n__pycache__/'n*.pyc'n
+'n# Python/pytest cache'n.pytest_cache/'npytest-cache_files-*'n__pycache__/'n*.pyc'n

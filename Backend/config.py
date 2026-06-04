@@ -28,6 +28,40 @@ class Config:
         if x.strip().isdigit()
     ]
     WALLET_ENCRYPTION_SECRET = os.environ.get("WALLET_ENCRYPTION_SECRET", "")
+    # Bot username (no @ prefix) for deep links, e.g. SifterTradingBot
+    BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", os.environ.get("BOT_USERNAME", ""))
+    MAGIC_LINK_BASE_URL = os.environ.get("MAGIC_LINK_BASE_URL", "")
+    # Web dashboard URL for bot Welcome/Login/Register buttons (empty = hidden)
+    DASHBOARD_URL = os.environ.get("DASHBOARD_URL", os.environ.get("FRONTEND_URL", ""))
+
+    # Bot trade execution mode: safe_noop | paper | devnet | live
+    # Defaults to safe_noop so the full UI/flows can be exercised with zero funds.
+    # Real Jupiter execution + platform fees are only reachable in devnet/live.
+    BOT_EXECUTION_MODE = os.environ.get("BOT_EXECUTION_MODE", "safe_noop")
+
+    # Platform trading fee — wired but NOT applied until execution mode is devnet/live
+    # AND fee_config.enabled is true. 100 bps = 1%.
+    PLATFORM_FEE_BPS = int(os.environ.get("PLATFORM_FEE_BPS", "100"))
+    TREASURY_WALLET_ADDRESS = os.environ.get("TREASURY_WALLET_ADDRESS", "")
+    TREASURY_TOKEN_ACCOUNT = os.environ.get("TREASURY_TOKEN_ACCOUNT", "")
+
+    # Solana on-chain execution endpoints.
+    # Jupiter aggregator API (mainnet-only routing; devnet has near-zero liquidity).
+    JUPITER_BASE_URL = os.environ.get("JUPITER_BASE_URL", "https://quote-api.jup.ag")
+    # RPC endpoint: devnet for testing, mainnet-beta for production.
+    SOLANA_RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+    # Network label used by the execution router to pick devnet vs live behavior.
+    SOLANA_NETWORK = os.environ.get("SOLANA_NETWORK", "devnet")  # devnet | mainnet-beta
+
+    @classmethod
+    def is_live_execution_ready(cls) -> bool:
+        """True only when every prerequisite for real on-chain swaps is set."""
+        return bool(
+            cls.SOLANA_RPC_URL
+            and cls.JUPITER_BASE_URL
+            and cls.WALLET_ENCRYPTION_SECRET
+            and cls.BOT_EXECUTION_MODE in ("devnet", "live")
+        )
 
     # Rate limiting
     RATELIMIT_STORAGE_URI = os.environ.get("REDIS_URL", "redis://localhost:6379")
@@ -73,6 +107,11 @@ class Config:
     def is_clickhouse_configured(cls) -> bool:
         """Check if ClickHouse is properly configured."""
         return bool(cls.CLICKHOUSE_HOST and cls.CLICKHOUSE_PASSWORD)
+
+    @classmethod
+    def is_live_execution_enabled(cls) -> bool:
+        """True only when the bot is configured to submit real on-chain swaps."""
+        return cls.BOT_EXECUTION_MODE == "live"
 
     @classmethod
     def is_supabase_configured(cls) -> bool:

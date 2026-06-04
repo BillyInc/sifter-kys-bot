@@ -61,7 +61,7 @@ interface ResultsPanelState {
 export default function SifterKYS() {
   const {
     user, loading: authLoading, isAuthenticated,
-    signOut, getAccessToken, signIn, signUp, resetPassword, updatePassword
+    signOut, getAccessToken, signIn, signUp, resetPassword, updatePassword, isPasswordRecovery
   } = useAuth();
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -685,8 +685,11 @@ export default function SifterKYS() {
       </div>
     );
   }
+  if (isPasswordRecovery || window.location.pathname === '/reset-password') {
+    return <Auth onSignIn={signIn} onSignUp={signUp} onResetPassword={resetPassword} onUpdatePassword={updatePassword} isPasswordRecovery={true} />;
+  }
   if (!isAuthenticated) {
-    return <Auth onSignIn={signIn} onSignUp={signUp} onResetPassword={resetPassword} onUpdatePassword={updatePassword} isPasswordRecovery={false} />;
+    return <Auth onSignIn={signIn} onSignUp={signUp} onResetPassword={resetPassword} onUpdatePassword={updatePassword} isPasswordRecovery={isPasswordRecovery || window.location.pathname === '/reset-password'} />;
   }
 
   const config = getPanelConfig(openPanel);

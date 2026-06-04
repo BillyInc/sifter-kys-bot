@@ -791,6 +791,15 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
 
         telegram_notifier = TelegramNotifier(bot_token)
         supabase = get_supabase_client()
+        tg_settings = {}
+        try:
+            tg_res = supabase.schema(SCHEMA_NAME).table('telegram_users').select(
+                'alerts_enabled, notif_signal, notif_trade_open, notif_trade_close, '
+                'notif_tp_hit, notif_sl_hit, notif_daily_summary, notif_weekly_summary'
+            ).eq('user_id', user_id).limit(1).execute()
+            tg_settings = tg_res.data[0] if tg_res.data else {}
+        except Exception:
+            tg_settings = {}
 
         wallet_address = alert_data.get('wallet_address', '')
         wallet_result = supabase.schema(SCHEMA_NAME).table('wallet_watchlist').select(
@@ -831,10 +840,6 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
         }
 
         if alert_type == 'elite15_trade':
-            if hasattr(telegram_notifier, 'send_elite15_alert'):
-                telegram_notifier.send_elite15_alert(user_id, payload)
-            else:
-                telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
             if alert_data.get('side') == 'buy':
                 _queue_bot_auto_trade(
                     user_id=user_id,
@@ -843,6 +848,26 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
                     supabase=supabase,
                     schema_name=SCHEMA_NAME,
                 )
+            if tg_settings.get('alerts_enabled', True) and tg_settings.get('notif_signal', True):
+                if hasattr(telegram_notifier, 'send_elite15_alert'):
+                    telegram_notifier.send_elite15_alert(user_id, payload)
+                else:
+                    telegram_notifier.send_wallet_alert(user_id, payload, alert_data.get('activity_id'))
+            # Manual-trader email: send a deep link so they can open Telegram
+            # and take the trade. Fires for buy signals regardless of auto-trade.
+            if alert_data.get('side') == 'buy':
+                try:
+                    user_email = None
+                    try:
+                        u = supabase.auth.admin.get_user_by_id(user_id)
+                        user_email = u.user.email if u and getattr(u, 'user', None) else None
+                    except Exception:
+                        user_email = None
+                    if user_email:
+                        from services.email_service import get_email_service
+                        get_email_service().send_manual_signal(user_email, user_id, alert_data)
+                except Exception as _e:
+                    print(f"[TELEGRAM TASK] manual signal email failed: {_e}")
         elif alert_type in ('watchlist_trade', 'trade'):
             if hasattr(telegram_notifier, 'send_watchlist_alert'):
                 telegram_notifier.send_watchlist_alert(user_id, payload)
@@ -885,95 +910,15 @@ def send_telegram_alert_async(user_id: str, alert_type: str, alert_data: dict):
 def _queue_bot_auto_trade(user_id, alert_data, notification_id, supabase, schema_name):
     """Create a pending bot_auto_trades row when Elite 15 auto-trade is enabled."""
     try:
-        tg_result = supabase.schema(schema_name).table('telegram_users').select(
-            'auto_trade_enabled, auto_trade_max_usd, auto_trade_hourly_limit, auto_trade_daily_limit'
-        ).eq('user_id', user_id).limit(1).execute()
+        from services.bot_autotrade import queue_autonomous_trade
 
-        if not tg_result.data or not tg_result.data[0].get('auto_trade_enabled'):
-            return
-
-        row_cfg = tg_result.data[0]
-        max_usd = float(row_cfg.get('auto_trade_max_usd') or 100)
-        hourly_limit = int(row_cfg.get('auto_trade_hourly_limit') or 1)
-        daily_limit = int(row_cfg.get('auto_trade_daily_limit') or 8)
-        usd_amount = min(float(alert_data.get('usd_value') or 0), max_usd)
-
-        # Portfolio-based position cap (40% per token)
-        try:
-            from services.supabase_client import get_supabase_client, SCHEMA_NAME
-            sb = get_supabase_client()
-            token_address = alert_data.get('token_address', '')
-            # Check existing position in this token
-            existing = sb.schema(SCHEMA_NAME).table("paper_portfolio").select(
-                "total_invested_usd"
-            ).eq("user_id", user_id).eq("token_address", token_address).eq("status", "open").execute()
-            existing_usd = float(existing.data[0]["total_invested_usd"]) if existing.data else 0
-
-            # Get total portfolio value
-            all_positions = sb.schema(SCHEMA_NAME).table("paper_portfolio").select(
-                "total_invested_usd"
-            ).eq("user_id", user_id).eq("status", "open").execute()
-            portfolio_total = sum(float(p["total_invested_usd"]) for p in (all_positions.data or []))
-
-            # Per-token cap: 40% of portfolio (minimum $1000 assumed portfolio if no positions)
-            effective_portfolio = max(portfolio_total, 1000.0)
-            per_token_cap = effective_portfolio * 0.40
-            headroom = max(0, per_token_cap - existing_usd)
-
-            if headroom <= 0:
-                print(f"[TRADE] Position cap reached for {token_address[:8]} — user {user_id[:8]}")
-                return {"status": "skipped", "reason": "position_cap_reached"}
-
-            usd_amount = min(usd_amount, headroom)
-        except Exception as cap_exc:
-            print(f"[TRADE] Position cap check failed (proceeding): {cap_exc}")
-
-        signal_key = alert_data.get('signal_key')
-
-        now = datetime.utcnow()
-        one_hour_ago = now.replace(minute=0, second=0, microsecond=0).isoformat()
-        one_day_ago = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        hourly_count = supabase.schema(schema_name).table('bot_auto_trades').select(
-            'id', count='exact'
-        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
-            'created_at', one_hour_ago
-        ).execute().count or 0
-        daily_count = supabase.schema(schema_name).table('bot_auto_trades').select(
-            'id', count='exact'
-        ).eq('user_id', user_id).in_('status', ['pending', 'executing', 'executed']).gte(
-            'created_at', one_day_ago
-        ).execute().count or 0
-
-        if hourly_count >= hourly_limit or daily_count >= daily_limit:
-            return
-
-        if signal_key:
-            duplicate = supabase.schema(schema_name).table('bot_auto_trades').select(
-                'id'
-            ).eq('user_id', user_id).eq('signal_key', signal_key).limit(1).execute()
-            if duplicate.data:
-                return
-
-        row = supabase.schema(schema_name).table('bot_auto_trades').insert({
-            'user_id': user_id,
-            'source': 'elite15',
-            'side': alert_data.get('side', 'buy'),
-            'token_address': alert_data.get('token_address', ''),
-            'token_ticker': alert_data.get('token_ticker', 'UNKNOWN'),
-            'usd_amount': usd_amount,
-            'wallet_address': alert_data.get('wallet_address', ''),
-            'wallet_tier': alert_data.get('wallet_tier', 'S'),
-            'tx_hash_signal': alert_data.get('tx_hash', ''),
-            'signal_key': signal_key,
-            'wallet_count': alert_data.get('wallet_count', 1),
-            'status': 'pending',
-            'notification_id': notification_id,
-        }).execute()
-
-        if row.data:
-            execute_bot_auto_trade.delay(row.data[0]['id'])
+        queued = queue_autonomous_trade(user_id=user_id, signal=alert_data, supabase=supabase)
+        queue_id = queued.get("queue_id")
+        if queue_id and queued.get("status") == "pending":
+            execute_bot_auto_trade.delay(queue_id)
+        return queued
     except Exception as e:
-        print(f"[TELEGRAM TASK] Failed to queue auto-trade for {user_id[:8]}...: {e}")
+        logger.warning("[TELEGRAM TASK] Failed to queue auto-trade for %s: %s", user_id[:8] if user_id else "?", e)
 
 
 @celery.task(name='tasks.execute_bot_auto_trade', max_retries=2)
@@ -1001,87 +946,234 @@ def execute_bot_auto_trade(trade_id: int):
 
     supabase = get_supabase_client()
     try:
-        result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
-            'id', trade_id
-        ).limit(1).execute()
-        if not result.data:
-            return {'status': 'not_found'}
+        from services.bot_autotrade import execute_queued_autonomous_trade
 
-        trade = result.data[0]
-        if trade['status'] != 'pending':
-            return {'status': 'skipped', 'reason': trade['status']}
+        result = execute_queued_autonomous_trade(queue_id=trade_id, supabase=supabase)
+        if result.get("status") == "executed":
+            _notify_bot_queue_result(trade_id, result, supabase)
+        return result
 
-        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
-            'status': 'executing',
-            'updated_at': datetime.utcnow().isoformat(),
-        }).eq('id', trade_id).eq('status', 'pending').execute()
-
-        existing = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('id').eq(
-            'user_id', trade['user_id']
-        ).eq('token_address', trade['token_address']).eq('side', 'buy').neq(
-            'id', trade_id
-        ).in_(
-            'status', ['pending', 'executing', 'executed']
-        ).execute()
-        if existing.data:
-            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
-                'status': 'skipped',
-                'error_message': 'duplicate_buy_prevention',
-                'updated_at': datetime.utcnow().isoformat(),
-            }).eq('id', trade_id).execute()
-            return {'status': 'skipped', 'reason': 'duplicate'}
-
-        bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-        from services.telegram_notifier import TelegramNotifier
-
-        notifier = TelegramNotifier(bot_token)
-        result_txid = notifier.execute_auto_trade_for_user(
-            user_id=trade['user_id'],
-            token_address=trade['token_address'],
-            side=trade['side'],
-            usd_amount=float(trade['usd_amount']),
-        )
-
-        if not result_txid:
-            raise RuntimeError('execute_auto_trade_for_user returned None')
-
-        supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
-            'status': 'executed',
-            'result_txid': result_txid,
-            'updated_at': datetime.utcnow().isoformat(),
-        }).eq('id', trade_id).execute()
-
-        if hasattr(notifier, 'send_auto_trade_confirmation'):
-            notifier.send_auto_trade_confirmation(trade['user_id'], trade, result_txid)
-        return {'status': 'executed', 'txid': result_txid}
     except Exception as e:
         print(f"[BOT TRADE] Error for {trade_id}: {e}")
+        import traceback
+        traceback.print_exc()
         try:
             from services.alert_router import alert, P0
             alert(P0, "TRADE", f"Trade execution failed: {e}", details={"trade_id": trade_id})
         except ImportError:
             pass
+        return {"status": "error", "error": str(e)}
+
+def _notify_bot_queue_result(queue_id: int, result: dict, supabase):
+    """Best-effort notification after the autonomous bot enters a trade."""
+    try:
+        bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        if not bot_token:
+            return
+        row_res = supabase.schema(SCHEMA_NAME).table('bot_signal_queue').select('*').eq(
+            'id', queue_id
+        ).limit(1).execute()
+        if not row_res.data:
+            return
+
+        row = row_res.data[0]
+        settings = supabase.schema(SCHEMA_NAME).table('telegram_users').select(
+            'alerts_enabled, notif_trade_open'
+        ).eq('user_id', row['user_id']).limit(1).execute()
+        prefs = settings.data[0] if settings.data else {}
+        if not (prefs.get('alerts_enabled', True) and prefs.get('notif_trade_open', True)):
+            return
+        trade_result = result.get('result') or {}
+        from services.telegram_notifier import TelegramNotifier
+
+        TelegramNotifier(bot_token).send_auto_trade_confirmation(
+            row['user_id'],
+            {
+                'token_ticker': row.get('token_ticker'),
+                'token_address': row.get('token_address'),
+                'usd_amount': trade_result.get('executed_usd') or row.get('requested_usd'),
+                'wallet_count': row.get('wallet_count'),
+                'signal_key': row.get('signal_key'),
+            },
+            trade_result.get('txid') or '',
+        )
         try:
-            supabase.schema(SCHEMA_NAME).table('bot_auto_trades').update({
-                'status': 'failed',
-                'error_message': str(e)[:500],
-                'updated_at': datetime.utcnow().isoformat(),
-            }).eq('id', trade_id).execute()
-            bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-            if bot_token:
-                from services.telegram_notifier import TelegramNotifier
-                trade_result = supabase.schema(SCHEMA_NAME).table('bot_auto_trades').select('*').eq(
-                    'id', trade_id
-                ).limit(1).execute()
-                if trade_result.data and hasattr(TelegramNotifier(bot_token), 'send_auto_trade_failed'):
-                    TelegramNotifier(bot_token).send_auto_trade_failed(
-                        trade_result.data[0]['user_id'],
-                        trade_result.data[0],
-                        str(e),
-                    )
+            user_res = supabase.schema(SCHEMA_NAME).table('users').select('email').eq(
+                'user_id', row['user_id']
+            ).limit(1).execute()
+            email = user_res.data[0].get('email') if user_res.data else None
+            if email:
+                from config import Config
+                from services.email_service import EmailService
+
+                EmailService().send_bot_trade_open(email, {
+                    'token_ticker': row.get('token_ticker'),
+                    'token_address': row.get('token_address'),
+                    'usd_amount': trade_result.get('executed_usd') or row.get('requested_usd'),
+                    'trigger_type': row.get('trigger_type') or 'auto_elite',
+                    'take_profit_x': row.get('take_profit_x'),
+                    'stop_loss_pct': row.get('stop_loss_pct'),
+                    'txid': trade_result.get('txid') or trade_result.get('entry_txid'),
+                }, dashboard_url=Config.DASHBOARD_URL, user_id=row['user_id'])
+        except Exception as exc:
+            print(f"[BOT TRADE] Email notification failed for queue {queue_id}: {exc}")
+    except Exception as exc:
+        print(f"[BOT TRADE] Notification failed for queue {queue_id}: {exc}")
+
+
+@celery.task(name='tasks.monitor_bot_positions', max_retries=0)
+def monitor_bot_positions():
+    """Periodic check of open bot positions for TP/SL/trailing-stop triggers."""
+    try:
+        from services.bot_position_monitor import monitor_positions
+        result = monitor_positions()
+        if result.get("errors"):
+            print(f"[POS_MONITOR] Completed: {result['closed']} closed, {result['skipped']} skipped, {len(result['errors'])} errors")
+            for err in result["errors"][:5]:
+                print(f"[POS_MONITOR] Error: {err}")
+        elif result["closed"] > 0:
+            print(f"[POS_MONITOR] Completed: {result['closed']} positions closed")
+    except Exception as exc:
+        print(f"[POS_MONITOR] Task failed: {exc}")
+        import traceback
+        traceback.print_exc()
+
+
+@celery.task(name='tasks.check_bot_price_alerts', max_retries=0)
+def check_bot_price_alerts():
+    """Fire MC price alerts whose target has been reached. Runs every ~30s."""
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.bot_position_monitor import _fetch_current_price, _fetch_sol_price
+        sb = get_supabase_client()
+        res = (
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts")
+            .select("*").eq("active", True).eq("triggered", False).limit(100).execute()
+        )
+        alerts = res.data or []
+        fired = 0
+        for a in alerts:
+            token = a.get("token_address")
+            target_mc = float(a.get("target_mc_usd") or 0)
+            if not token or target_mc <= 0:
+                continue
+            # Approximate current MC via SolanaTracker token info.
+            try:
+                from services.solana_tracker_client import get_st_client
+                info = get_st_client().get_token_info(token)
+                pools = (info or {}).get("pools") or []
+                current_mc = float(pools[0].get("marketCap", {}).get("usd") or 0) if pools else 0
+            except Exception:
+                current_mc = 0
+            if current_mc and current_mc >= target_mc:
+                _fire_price_alert(sb, a, current_mc)
+                fired += 1
+        if fired:
+            print(f"[PRICE_ALERTS] fired {fired} alert(s)")
+    except Exception as exc:
+        print(f"[PRICE_ALERTS] task failed: {exc}")
+
+
+def _fire_price_alert(sb, alert, current_mc):
+    from services.supabase_client import SCHEMA_NAME
+    user_id = alert["user_id"]
+    # Telegram
+    if alert.get("notify_telegram"):
+        try:
+            from services.telegram_notifier import TelegramNotifier
+            tg = sb.schema(SCHEMA_NAME).table("telegram_users").select(
+                "telegram_chat_id").eq("user_id", user_id).limit(1).execute()
+            if tg.data and tg.data[0].get("telegram_chat_id"):
+                TelegramNotifier().send_message(
+                    str(tg.data[0]["telegram_chat_id"]),
+                    f"🔔 <b>Price Alert</b>\n\n{alert.get('token_symbol') or 'Token'} "
+                    f"hit ${float(alert.get('target_mc_usd') or 0):,.0f} MC "
+                    f"(now ${current_mc:,.0f}).",
+                )
         except Exception:
             pass
-        return {'status': 'error', 'error': str(e)}
+    # Email
+    if alert.get("notify_email"):
+        try:
+            from services.email_service import get_email_service
+            u = sb.auth.admin.get_user_by_id(user_id)
+            email = u.user.email if u and getattr(u, "user", None) else None
+            if email:
+                get_email_service().send_mc_alert(email, user_id, alert, current_mc)
+        except Exception:
+            pass
+    # Mark triggered (unless repeat)
+    try:
+        if alert.get("repeat_on_hit"):
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts").update(
+                {"last_fired_at": datetime.utcnow().isoformat()}
+            ).eq("id", alert["id"]).execute()
+        else:
+            sb.schema(SCHEMA_NAME).table("bot_price_alerts").update(
+                {"triggered": True, "triggered_at": datetime.utcnow().isoformat(), "active": False}
+            ).eq("id", alert["id"]).execute()
+    except Exception:
+        pass
+
+
+@celery.task(name='tasks.check_bot_reminders', max_retries=0)
+def check_bot_reminders():
+    """Fire due notes/reminders (time + MC based). Runs every ~30s."""
+    try:
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        sb = get_supabase_client()
+        now_iso = datetime.utcnow().isoformat()
+        res = (
+            sb.schema(SCHEMA_NAME).table("user_notes")
+            .select("*").eq("reminder_fired", False)
+            .not_.is_("reminder_type", "null").limit(100).execute()
+        )
+        fired = 0
+        for note in (res.data or []):
+            rtype = note.get("reminder_type")
+            due = False
+            if rtype == "time" and note.get("reminder_at"):
+                due = note["reminder_at"] <= now_iso
+            elif rtype == "mc" and note.get("reminder_token") and note.get("reminder_mc_usd"):
+                try:
+                    from services.solana_tracker_client import get_st_client
+                    info = get_st_client().get_token_info(note["reminder_token"])
+                    pools = (info or {}).get("pools") or []
+                    cur = float(pools[0].get("marketCap", {}).get("usd") or 0) if pools else 0
+                    due = cur >= float(note["reminder_mc_usd"])
+                except Exception:
+                    due = False
+            if due:
+                _fire_reminder(sb, note)
+                fired += 1
+        if fired:
+            print(f"[REMINDERS] fired {fired} reminder(s)")
+    except Exception as exc:
+        print(f"[REMINDERS] task failed: {exc}")
+
+
+def _fire_reminder(sb, note):
+    from services.supabase_client import SCHEMA_NAME
+    user_id = note["user_id"]
+    body = note.get("body") or "Reminder"
+    if note.get("notify_telegram", True):
+        try:
+            from services.telegram_notifier import TelegramNotifier
+            tg = sb.schema(SCHEMA_NAME).table("telegram_users").select(
+                "telegram_chat_id").eq("user_id", user_id).limit(1).execute()
+            if tg.data and tg.data[0].get("telegram_chat_id"):
+                TelegramNotifier().send_message(
+                    str(tg.data[0]["telegram_chat_id"]),
+                    f"⏰ <b>Reminder</b>\n\n{body}",
+                )
+        except Exception:
+            pass
+    try:
+        sb.schema(SCHEMA_NAME).table("user_notes").update(
+            {"reminder_fired": True}
+        ).eq("id", note["id"]).execute()
+    except Exception:
+        pass
 
 
 @celery.task(name='tasks.send_paper_trader_daily_digest')
@@ -1282,6 +1374,13 @@ def sync_elite_15_to_monitor():
         if to_add or to_remove:
             helius_synced = _sync_helius_webhook(list(elite_15_addresses))
 
+        # 6. Wallet Replacement Notification — notify all autotrader users
+        if to_add or to_remove:
+            _send_elite_replacement_notification(
+                to_add=to_add, to_remove=to_remove,
+                elite_15=elite_15, supabase=supabase,
+            )
+
         print(f"\n[ELITE SYNC] Complete")
         print(f"  Elite 15 wallets:  {len(elite_15_addresses)}")
         print(f"  Already monitored: {len(existing_addresses & elite_15_addresses)}")
@@ -1303,6 +1402,54 @@ def sync_elite_15_to_monitor():
         import traceback
         traceback.print_exc()
         return {'status': 'error', 'error': str(e)}
+
+
+def _send_elite_replacement_notification(to_add, to_remove, elite_15, supabase):
+    """Notify all autotrader users when Elite 15 composition changes."""
+    try:
+        # Fetch all autotrader users with Telegram linked
+        users_res = (
+            supabase.schema(SCHEMA_NAME).table("telegram_users")
+            .select("telegram_chat_id, user_id")
+            .eq("auto_trade_enabled", True)
+            .execute()
+        )
+        if not users_res.data:
+            return
+
+        # Build notification message
+        lines = ["<b>🔄 Elite 15 Update</b>", ""]
+        if to_remove:
+            lines.append("<b>Removed:</b>")
+            for addr in to_remove:
+                w = next((w for w in elite_15 if w.get("wallet_address") == addr), None)
+                short = f"<code>{addr[:6]}...{addr[-4:]}</code>"
+                lines.append(f"⬇️ {short}")
+            lines.append("")
+        if to_add:
+            lines.append("<b>Promoted:</b>")
+            for addr in to_add:
+                w = next((w for w in elite_15 if w.get("wallet_address") == addr), {})
+                short = f"<code>{addr[:6]}...{addr[-4:]}</code>"
+                score = w.get("professional_score", 0)
+                win = w.get("win_rate_7d", w.get("win_rate", 0))  # Elite100Manager produces win_rate_7d
+                lines.append(f"⬆️ {short} — Score: {score:.0f}, Win: {win:.0f}%")
+            lines.append("")
+        lines.append("Use /menu → Elite 15 to manage your selections.")
+
+        msg = "\n".join(lines)
+        from services.telegram_notifier import TelegramNotifier
+        tn = TelegramNotifier()
+        sent = 0
+        for row in users_res.data[:100]:  # cap at 100 to avoid rate limits
+            try:
+                tn.send_message(str(row["telegram_chat_id"]), msg)
+                sent += 1
+            except Exception:
+                pass
+        print(f"[ELITE SYNC] Wallet replacement notification sent to {sent} users")
+    except Exception as exc:
+        print(f"[ELITE SYNC] Wallet replacement notification failed: {exc}")
 
 
 # =============================================================================
@@ -1470,8 +1617,7 @@ def flush_signal_aggregator():
             users = (
                 supabase.schema(SCHEMA_NAME)
                 .table("telegram_users")
-                .select("user_id, auto_trade_enabled, auto_trade_max_usd, auto_trade_source, alerts_enabled")
-                .eq("alerts_enabled", True)
+                .select("user_id, auto_trade_enabled, auto_trade_max_usd, auto_trade_source, alerts_enabled, notif_signal")
                 .eq("auto_trade_enabled", True)
                 .execute()
                 .data or []

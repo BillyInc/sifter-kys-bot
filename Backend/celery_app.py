@@ -141,6 +141,29 @@ celery.conf.beat_schedule = {
         'options': {'expires': 7200, 'queue': 'discovery'}
     },
 
+    # ── Bot Position Monitor ──────────────────────────────────
+
+    # Check open positions for TP/SL/trailing stop every 15 seconds
+    'monitor-bot-positions': {
+        'task': 'tasks.monitor_bot_positions',
+        'schedule': 15.0,
+        'options': {'expires': 60, 'queue': 'alerts'}
+    },
+
+    # Fire MC price alerts every 30 seconds
+    'check-bot-price-alerts': {
+        'task': 'tasks.check_bot_price_alerts',
+        'schedule': 30.0,
+        'options': {'expires': 60, 'queue': 'alerts'}
+    },
+
+    # Fire notes/reminders every 30 seconds
+    'check-bot-reminders': {
+        'task': 'tasks.check_bot_reminders',
+        'schedule': 30.0,
+        'options': {'expires': 60, 'queue': 'alerts'}
+    },
+
     # ── Disaster Recovery ────────────────────────────────────
 
     # ClickHouse → Supabase backup every Monday at 2:00 AM UTC
@@ -177,6 +200,9 @@ celery.conf.task_routes = {
     'tasks.flush_signal_aggregator': {'queue': 'alerts'},
     'tasks.send_telegram_alert_async':    {'queue': 'alerts'},
     'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
+    'tasks.monitor_bot_positions':      {'queue': 'alerts'},
+    'tasks.check_bot_price_alerts':     {'queue': 'alerts'},
+    'tasks.check_bot_reminders':        {'queue': 'alerts'},
     # ── Analysis pipeline tasks (migrated from RQ) ──────────────
     'worker.perform_wallet_analysis':           {'queue': 'high'},
     'worker.perform_trending_batch_analysis':   {'queue': 'batch'},

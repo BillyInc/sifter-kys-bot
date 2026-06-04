@@ -256,3 +256,194 @@ GROUP BY wallet_address
 """
 
 DROP_MV_WALLET_AGGREGATE_SQL = "DROP VIEW IF EXISTS mv_wallet_aggregate"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Telegram trading-bot analytics (bot rebuild). Additive — never alters the
+# tables above. All ReplacingMergeTree, read with FINAL. No fake-volume /
+# risk-score / market-cap columns (intentionally excluded from the build).
+# ════════════════════════════════════════════════════════════════════════════
+
+CREATE_BOT_SIGNAL_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS bot_signal_log
+(
+    signal_key      String,
+    token_address   String,
+    token_symbol    String  DEFAULT '',
+    wallet_count    UInt16  DEFAULT 1,
+    signal_type     String  DEFAULT 'single',
+    total_usd       Float64 DEFAULT 0,
+    consensus_met   UInt8   DEFAULT 0,
+    blacklisted     UInt8   DEFAULT 0,
+    users_notified  UInt32  DEFAULT 0,
+    users_executed  UInt32  DEFAULT 0,
+    emitted_at      DateTime,
+    updated_at      DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (signal_key)
+PARTITION BY toYYYYMM(emitted_at)
+"""
+
+CREATE_BOT_TRADE_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS bot_trade_log
+(
+    trade_id            String,
+    user_id             String,
+    signal_key          String  DEFAULT '',
+    token_address       String,
+    token_symbol        String  DEFAULT '',
+    side                String  DEFAULT 'buy',
+    trigger_type        String  DEFAULT 'auto_elite',
+    signal_type         String  DEFAULT 'single',
+    wallet_count        UInt16  DEFAULT 1,
+    execution_mode      String  DEFAULT 'safe_noop',
+    status              String  DEFAULT 'filled',
+    stage               String  DEFAULT 'confirm',
+    reason              String  DEFAULT '',
+    requested_usd       Float64 DEFAULT 0,
+    executed_usd        Float64 DEFAULT 0,
+    effective_price_usd Float64 DEFAULT 0,
+    price_impact_bps    UInt32  DEFAULT 0,
+    slippage_bps        UInt32  DEFAULT 0,
+    realized_pnl_usd    Float64 DEFAULT 0,
+    roi_pct             Float64 DEFAULT 0,
+    txid                String  DEFAULT '',
+    created_at          DateTime,
+    updated_at          DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (user_id, trade_id)
+PARTITION BY toYYYYMM(created_at)
+"""
+
+CREATE_BOT_FEE_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS bot_fee_log
+(
+    fee_id           String,
+    trade_id         String,
+    user_id          String,
+    token_address    String,
+    token_symbol     String  DEFAULT '',
+    side             String  DEFAULT 'buy',
+    trigger_type     String  DEFAULT 'auto_elite',
+    gross_usd        Float64 DEFAULT 0,
+    fee_bps          UInt16  DEFAULT 100,
+    fee_usd          Float64 DEFAULT 0,
+    treasury_wallet  String  DEFAULT '',
+    fee_txid         String  DEFAULT '',
+    collected_at     DateTime,
+    updated_at       DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (fee_id)
+PARTITION BY toYYYYMM(collected_at)
+"""
+
+# ── Per-user bot stats (feeds My Account / Stats screen) ──
+CREATE_USER_BOT_STATS_AGG_SQL = """
+CREATE TABLE IF NOT EXISTS user_bot_stats_agg
+(
+    user_id             String,
+    total_trades        UInt32  DEFAULT 0,
+    closed_trades       UInt32  DEFAULT 0,
+    winning_trades      UInt32  DEFAULT 0,
+    losing_trades       UInt32  DEFAULT 0,
+    win_rate            Float64 DEFAULT 0,
+    total_pnl_usd       Float64 DEFAULT 0,
+    avg_roi_pct         Float64 DEFAULT 0,
+    best_trade_mult     Float64 DEFAULT 1,
+    best_trade_symbol   String  DEFAULT '',
+    total_executed_usd  Float64 DEFAULT 0,
+    last_trade_at       DateTime,
+    updated_at          DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (user_id)
+"""
+
+CREATE_MV_USER_BOT_STATS_SQL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_user_bot_stats
+TO user_bot_stats_agg
+AS
+SELECT
+    user_id,
+    count()                                          AS total_trades,
+    countIf(status = 'closed')                       AS closed_trades,
+    countIf(roi_pct > 0 AND status = 'closed')       AS winning_trades,
+    countIf(roi_pct <= 0 AND status = 'closed')      AS losing_trades,
+    if(
+        countIf(status = 'closed') > 0,
+        countIf(roi_pct > 0 AND status = 'closed') * 100.0
+            / countIf(status = 'closed'),
+        0
+    )                                                AS win_rate,
+    sum(realized_pnl_usd)                            AS total_pnl_usd,
+    avg(roi_pct)                                     AS avg_roi_pct,
+    if(max(roi_pct) > 0, 1 + max(roi_pct) / 100, 1)  AS best_trade_mult,
+    argMax(token_symbol, roi_pct)                    AS best_trade_symbol,
+    sum(executed_usd)                                AS total_executed_usd,
+    max(created_at)                                  AS last_trade_at,
+    now()                                            AS updated_at
+FROM bot_trade_log
+GROUP BY user_id
+"""
+
+# ── Fee revenue rollups (feed operator Fee Revenue panel) ──
+CREATE_FEE_REVENUE_AGG_SQL = """
+CREATE TABLE IF NOT EXISTS fee_revenue_agg
+(
+    day                  Date,
+    total_trades         UInt32  DEFAULT 0,
+    total_fee_usd        Float64 DEFAULT 0,
+    auto_trade_fee_usd   Float64 DEFAULT 0,
+    manual_trade_fee_usd Float64 DEFAULT 0,
+    updated_at           DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (day)
+"""
+
+CREATE_FEE_BY_TOKEN_AGG_SQL = """
+CREATE TABLE IF NOT EXISTS fee_by_token_agg
+(
+    token_address    String,
+    token_symbol     String  DEFAULT '',
+    total_fee_usd    Float64 DEFAULT 0,
+    trade_count      UInt32  DEFAULT 0,
+    last_fee_at      DateTime,
+    updated_at       DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (token_address)
+"""
+
+CREATE_MV_FEE_REVENUE_SQL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_fee_revenue
+TO fee_revenue_agg
+AS
+SELECT
+    toDate(collected_at)                                       AS day,
+    count()                                                    AS total_trades,
+    sum(fee_usd)                                               AS total_fee_usd,
+    sumIf(fee_usd, trigger_type = 'auto_elite')                AS auto_trade_fee_usd,
+    sumIf(fee_usd, trigger_type = 'manual')                    AS manual_trade_fee_usd,
+    now()                                                      AS updated_at
+FROM bot_fee_log
+GROUP BY day
+"""
+
+CREATE_MV_FEE_BY_TOKEN_SQL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_fee_by_token
+TO fee_by_token_agg
+AS
+SELECT
+    token_address,
+    argMax(token_symbol, collected_at)  AS token_symbol,
+    sum(fee_usd)                        AS total_fee_usd,
+    count()                             AS trade_count,
+    max(collected_at)                   AS last_fee_at,
+    now()                               AS updated_at
+FROM bot_fee_log
+GROUP BY token_address
+"""
