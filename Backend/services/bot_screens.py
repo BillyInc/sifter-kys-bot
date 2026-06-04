@@ -26,6 +26,17 @@ Keyboard = Dict[str, List[List[Dict[str, str]]]]
 Rendered = Tuple[str, Optional[Keyboard]]
 
 
+# Friendly text for token-security block reasons (from bot_security.check_token_safety).
+_SECURITY_REASON_TEXT = {
+    "mint_not_revoked": "Mint authority is still active (can mint more supply).",
+    "freeze_not_revoked": "Freeze authority is still active (can freeze your tokens).",
+    "rugged": "This token is flagged as rugged.",
+    "lp_not_burned": "Liquidity is not burned/locked.",
+    "security_unavailable": "Safety data is unavailable right now.",
+}
+
+
+
 # ── keyboard helpers ────────────────────────────────────────────────────────
 
 def nav_button(label: str, screen: str) -> Dict[str, str]:
@@ -995,6 +1006,27 @@ def render_token_stats_prompt() -> Rendered:
     return text, _kb([_back_row("main")])
 
 
+_HOLDER_TAG_EMOJI = {
+    "pool": "🏦 Pool", "developer": "🛠 Dev", "dev": "🛠 Dev",
+    "kol": "📢 KOL", "bot": "🤖 Bot", "exchange": "🏛 CEX",
+    "sniper": "🎯 Sniper", "insider": "🕵 Insider",
+}
+
+
+def _fmt_metric(metric: Dict[str, Any]) -> str:
+    """Render a normalized risk metric {count, pct} → 'N wallets • X%'."""
+    if not isinstance(metric, dict):
+        return "—"
+    count = metric.get("count")
+    pct = metric.get("pct")
+    parts = []
+    if count is not None:
+        parts.append(f"{count} wallet" + ("s" if count != 1 else ""))
+    if pct is not None:
+        parts.append(f"{float(pct):.1f}%")
+    return " • ".join(parts) if parts else "—"
+
+
 def render_token_details(ctx: Dict[str, Any]) -> Rendered:
     token = ctx.get("token_address") or ""
     symbol = str(ctx.get("symbol") or "???")
@@ -1004,7 +1036,7 @@ def render_token_details(ctx: Dict[str, Any]) -> Rendered:
     mc = ctx.get("market_cap_usd")
     liquidity = ctx.get("liquidity_usd")
     vol_24h = ctx.get("volume_24h_usd")
-    holders = ctx.get("holders")
+    holders = ctx.get("holders_total") if ctx.get("holders_total") is not None else ctx.get("holders")
     lp_burn = ctx.get("lp_burn_pct")
     mint_revoked = ctx.get("is_mint_revoked")
     freeze_revoked = ctx.get("is_freeze_revoked")
@@ -1031,19 +1063,69 @@ def render_token_details(ctx: Dict[str, Any]) -> Rendered:
         lines.append(f"Volume 24h: ${float(vol_24h):,.0f}")
     if holders is not None:
         lines.append(f"Holders: {holders}")
-    if lp_burn is not None:
-        lines.append(f"LP Burn: {lp_burn}%")
-    if mint_revoked is not None or freeze_revoked is not None:
-        mint = "✅ Revoked" if mint_revoked else "⚠️ Active"
-        freeze = "✅ Revoked" if freeze_revoked else "⚠️ Active"
-        lines.append(f"Mint: {mint} | Freeze: {freeze}")
     if age is not None:
         lines.append(f"Age: {age} day(s)")
+
+    # ── Security ───────────────────────────────────────────────────────────
+    has_security = (
+        mint_revoked is not None or freeze_revoked is not None
+        or lp_burn is not None or ctx.get("rugged") is not None
+    )
+    if has_security:
+        lines.append("")
+        lines.append("<b>Security</b>")
+        if mint_revoked is not None:
+            lines.append(f"Mint: {'✅ Revoked' if mint_revoked else '⚠️ Active'}")
+        if freeze_revoked is not None:
+            lines.append(f"Freeze: {'✅ Revoked' if freeze_revoked else '⚠️ Active'}")
+        if lp_burn is not None:
+            lines.append(f"LP Burned: {lp_burn}%")
+        if ctx.get("rugged") is not None:
+            lines.append(f"Rugged: {'🛑 YES' if ctx.get('rugged') else '✅ No'}")
+        if ctx.get("jupiter_verified") is not None:
+            lines.append(f"Jupiter Verified: {'✅ Yes' if ctx.get('jupiter_verified') else '—'}")
+        if ctx.get("risk_score") is not None:
+            lines.append(f"Risk Score: {ctx.get('risk_score')}")
+
+    # ── Risk (bundlers / snipers / dev / top10) ────────────────────────────
+    bundlers = ctx.get("bundlers")
+    snipers = ctx.get("snipers")
+    dev = ctx.get("dev_holdings")
+    top10 = ctx.get("top10")
+    if any(isinstance(m, dict) and (m.get("count") is not None or m.get("pct") is not None)
+           for m in (bundlers, snipers, dev, top10)):
+        lines.append("")
+        lines.append("<b>Risk</b>")
+        if isinstance(bundlers, dict) and (bundlers.get("count") is not None or bundlers.get("pct") is not None):
+            lines.append(f"Bundlers: {_fmt_metric(bundlers)}")
+        if isinstance(snipers, dict) and (snipers.get("count") is not None or snipers.get("pct") is not None):
+            lines.append(f"Snipers: {_fmt_metric(snipers)}")
+        if isinstance(dev, dict) and dev.get("pct") is not None:
+            lines.append(f"Dev holds: {float(dev['pct']):.1f}%")
+        if isinstance(top10, dict) and top10.get("pct") is not None:
+            lines.append(f"Top 10: {float(top10['pct']):.1f}%")
+
+    # ── Top holders ────────────────────────────────────────────────────────
+    top_holders = ctx.get("top_holders") or []
+    if top_holders:
+        lines.append("")
+        lines.append("<b>Top Holders</b>")
+        for i, h in enumerate(top_holders[:5], start=1):
+            wallet = str(h.get("wallet") or "")[:6]
+            pct = h.get("pct")
+            usd = h.get("usd")
+            tag = (h.get("tag") or "").lower()
+            tag_str = f" [{_HOLDER_TAG_EMOJI.get(tag, tag.title())}]" if tag else ""
+            pct_str = f"{float(pct):.1f}%" if pct is not None else "—"
+            usd_str = f" ${float(usd):,.0f}" if usd is not None else ""
+            lines.append(f"{i}. {html.escape(wallet)}…  {pct_str}{usd_str}{tag_str}")
+
     lines.append("")
     lines.append("Token data from SolanaTracker.")
 
     rows: List[List[Dict[str, str]]] = [
         _chart_keyboard(token),
+        [{"text": "🔄 Refresh", "callback_data": f"exec|refresh_token|{token}"}],
     ]
     if manual:
         rows.append([{"text": "⚡ Trade This Token", "callback_data": "exec|manual_preview"}])
@@ -1102,6 +1184,8 @@ def render_manual_trade_preview(ctx: Dict[str, Any]) -> Rendered:
     liquidity = ctx.get("liquidity_usd")
     vol_24h = ctx.get("volume_24h_usd")
     ath = ctx.get("ath_price")
+    security_ok = ctx.get("security_ok")
+    security_reason = ctx.get("security_reason")
 
     # Portfolio context
     total_wallet = float(ctx.get("total_wallet_sol") or 10)
@@ -1158,6 +1242,20 @@ def render_manual_trade_preview(ctx: Dict[str, Any]) -> Rendered:
             lines.append(f"Slippage: {float(slippage)/100:.1f}%")
         if mev is not None:
             lines.append(f"MEV: {'ON ✅' if mev in (True, 'on', 'true') else 'OFF'}")
+
+    # Token-level rug gate — block the buy flow if the token is unsafe.
+    if security_ok is False:
+        reason_text = _SECURITY_REASON_TEXT.get(
+            security_reason, "This token failed the safety check."
+        )
+        lines.append("")
+        lines.append(f"🛑 <b>BLOCKED</b> — {reason_text}")
+        lines.append("Manual buy is disabled for this token.")
+        rows: List[List[Dict[str, str]]] = [
+            _chart_keyboard(token),
+            [{"text": "❌ Back", "callback_data": "nav|main"}],
+        ]
+        return "\n".join(lines), _kb(rows)
 
     rows: List[List[Dict[str, str]]] = [
         # Pool % presets

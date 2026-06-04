@@ -18,6 +18,7 @@ they return False (backward compatibility).
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -36,6 +37,32 @@ NEW_CATEGORIES = frozenset({
 
 # Menu commands this module owns (return False from handle_command otherwise).
 NEW_COMMANDS = frozenset({"/menu"})
+
+
+def _risk_metric(value: Any) -> Dict[str, Optional[float]]:
+    """Normalize a SolanaTracker risk metric to {count, pct}.
+
+    SolanaTracker reports some risk fields as a bare number and others as a
+    nested object ({count, percentage}/{wallets, total}). We accept either so
+    the display never crashes on shape drift.
+    """
+    if value is None:
+        return {"count": None, "pct": None}
+    if isinstance(value, (int, float)):
+        # A bare number is treated as a percentage (top10, dev holdings).
+        return {"count": None, "pct": float(value)}
+    if isinstance(value, dict):
+        count = value.get("count")
+        if count is None:
+            count = value.get("wallets")
+        pct = value.get("percentage")
+        if pct is None:
+            pct = value.get("pct") or value.get("totalPercentage") or value.get("percent")
+        return {
+            "count": int(count) if isinstance(count, (int, float)) else None,
+            "pct": float(pct) if isinstance(pct, (int, float)) else None,
+        }
+    return {"count": None, "pct": None}
 
 
 # ── data fetch helpers ──────────────────────────────────────────────────────
@@ -1125,6 +1152,19 @@ def _handle_exec_action(notifier, chat_id: str, action: str, params: List[str]) 
         if addr:
             _show_token_details(notifier, chat_id, addr, manual=False)
         return
+    if action == "refresh_token":
+        addr = params[0] if params else ""
+        if not addr:
+            # Fall back to whatever token is in state.
+            addr = (bot_state.get_state(chat_id).get("data") or {}).get("token_address") or ""
+        if addr:
+            # Re-fetch live data and re-render. force_refresh bypasses the ST
+            # client cache so MC/liq/vol/holders/rugged reflect the latest values.
+            manual_ctx = bot_state.get_state(chat_id).get("screen") in ("manual_preview", "manual_trade")
+            _show_token_details(notifier, chat_id, addr, manual=manual_ctx, force_refresh=True)
+        else:
+            notifier.send_message(chat_id, "No token to refresh. Paste a CA first.")
+        return
     # Multi-step manual trade flow
     if action == "set_amount":
         _set_manual_trade_amount(notifier, chat_id, params)
@@ -1270,6 +1310,17 @@ def _execute_full_manual_trade(notifier, chat_id: str) -> None:
 
     if requested <= 0:
         notifier.send_message(chat_id, "Set a position size first.")
+        return
+
+    # Token-level rug gate — re-check before spending (Redis-cached, cheap).
+    from services.bot_security import check_token_safety
+    sec_ok, sec_reason = check_token_safety(token)
+    if not sec_ok:
+        notifier.send_message(
+            chat_id,
+            f"🛑 Trade blocked for safety: <code>{html.escape(str(sec_reason))}</code>. "
+            "No position was opened.",
+        )
         return
 
     # Acquire idempotency lock
@@ -2510,8 +2561,11 @@ def _handle_generate_access_codes(notifier, chat_id: str, params: List[str]) -> 
     notifier.send_message(chat_id, text)
 
 
-def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = False) -> None:
-    """Fetch real token data from SolanaTracker and render the token details screen."""
+def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = False, force_refresh: bool = False) -> None:
+    """Fetch real token data from SolanaTracker and render the token details screen.
+
+    ``force_refresh`` bypasses the ST client cache so the Refresh button pulls
+    live MC/liquidity/volume/holders/rugged values."""
     token = text.strip()
 
     # TICKER SEARCH: if input is short and not a 32-60 char address
@@ -2530,7 +2584,7 @@ def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = Fal
     try:
         from services.solana_tracker_client import get_st_client
         client = get_st_client()
-        info = client.get_token_info(token)
+        info = client.get_token_info(token, force_refresh=force_refresh)
         if info:
             token_obj = info.get("token") or {}
             pools = info.get("pools") or []
@@ -2548,6 +2602,24 @@ def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = Fal
             ctx_data["is_mint_revoked"] = security.get("mintAuthority") is None
             ctx_data["is_freeze_revoked"] = security.get("freezeAuthority") is None
             ctx_data["lp_burn_pct"] = best_pool.get("lpBurn")
+            # Token-level rug gate verdict (reuses the info we just fetched).
+            try:
+                from services.bot_security import check_token_safety
+                sec_ok, sec_reason = check_token_safety(token, token_info=info)
+            except Exception:
+                sec_ok, sec_reason = False, "security_unavailable"
+            ctx_data["security_ok"] = sec_ok
+            ctx_data["security_reason"] = sec_reason
+            # Risk block (GET /tokens/{address} → risk{}). Defensive parsing —
+            # fields may be scalars or {count, percentage} objects.
+            risk = info.get("risk") or {}
+            ctx_data["risk_score"] = risk.get("score")
+            ctx_data["jupiter_verified"] = bool(risk.get("jupiterVerified"))
+            ctx_data["rugged"] = bool(risk.get("rugged"))
+            ctx_data["bundlers"] = _risk_metric(risk.get("bundlers"))
+            ctx_data["snipers"] = _risk_metric(risk.get("snipers"))
+            ctx_data["dev_holdings"] = _risk_metric(risk.get("dev"))
+            ctx_data["top10"] = _risk_metric(risk.get("top10"))
             created = token_obj.get("creation", {}).get("created_time")
             if created:
                 from datetime import datetime, timezone
@@ -2564,11 +2636,35 @@ def _show_token_details(notifier, chat_id: str, text: str, *, manual: bool = Fal
                 ctx_data["ath_mc"] = ath.get("highest_market_cap")
         except Exception:
             pass  # ATH is nice-to-have
+
+        # Fetch top holders with identity enrichment (Call 2). Best-effort.
+        try:
+            holders_resp = client.get_token_holders(token, enrich=True, force_refresh=force_refresh)
+            if holders_resp:
+                ctx_data["holders_total"] = holders_resp.get("total")
+                accounts = holders_resp.get("accounts") or []
+                top = []
+                for acc in accounts[:5]:
+                    val = acc.get("value") or {}
+                    identity = acc.get("identity") or {}
+                    top.append({
+                        "wallet": acc.get("wallet") or acc.get("address") or "",
+                        "pct": acc.get("percentage"),
+                        "usd": val.get("usd") if isinstance(val, dict) else None,
+                        "tag": identity.get("type") if isinstance(identity, dict) else None,
+                    })
+                ctx_data["top_holders"] = top
+        except Exception:
+            pass  # holders list is nice-to-have
     except Exception as exc:
         logger.error("[BOT_HANDLERS] token info fetch failed for %s: %s", token, exc)
 
     if manual:
-        bot_state.push_screen(chat_id, "manual_preview", data={"token_address": token})
+        bot_state.push_screen(chat_id, "manual_preview", data={
+            "token_address": token,
+            "security_ok": ctx_data.get("security_ok"),
+            "security_reason": ctx_data.get("security_reason"),
+        })
     _send_rendered(notifier, chat_id, bot_screens.render_token_details(ctx_data))
 
 
@@ -2625,6 +2721,16 @@ def _execute_manual_trade(notifier, chat_id: str) -> None:
         return
     if not _acquire_action_lock(chat_id, f"manual_buy:{token}"):
         notifier.send_message(chat_id, "That manual trade is already being processed.")
+        return
+    # Token-level rug gate — re-check before spending (Redis-cached, cheap).
+    from services.bot_security import check_token_safety
+    sec_ok, sec_reason = check_token_safety(token)
+    if not sec_ok:
+        notifier.send_message(
+            chat_id,
+            f"🛑 Trade blocked for safety: <code>{html.escape(str(sec_reason))}</code>. "
+            "No position was opened.",
+        )
         return
     amount = float(ctx.get("auto_trade_max_usd") or ctx.get("position_size_value") or 100)
     notifier.send_message(chat_id, f"Executing manual trade for <code>{token}</code>...")

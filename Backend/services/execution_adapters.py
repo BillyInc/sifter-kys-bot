@@ -295,7 +295,13 @@ class LiveJupiterExecutionAdapter:
                 "dynamicComputeUnitLimit": True,
             }
             # MEV protection / priority: higher priority fee = faster + harder to sandwich.
-            if mev_protection:
+            # An explicit priority_fee_lamports overrides "auto" — the router ramps
+            # this on network congestion / retries so fills land under load.
+            explicit_priority = settings.get("priority_fee_lamports")
+            if explicit_priority is not None and int(explicit_priority) > 0:
+                swap_body["prioritizationFeeLamports"] = int(explicit_priority)
+                swap_body["asLegacyTransaction"] = False
+            elif mev_protection:
                 swap_body["prioritizationFeeLamports"] = "auto"
                 swap_body["asLegacyTransaction"] = False
             else:

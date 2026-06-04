@@ -691,3 +691,177 @@ class TestAutonomousBotQueue:
         assert row["stop_loss_pct"] == -25
         assert row["take_profit_x"] == 3
         assert row["trailing_stop_pct"] == 20
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Token-level rug gate wiring (auto / paper / manual / notifications)
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestTokenSafetyAutotrade:
+    """An unsafe token must be skipped in the autonomous queue."""
+
+    def _supabase(self):
+        supabase = MagicMock()
+        table = supabase.schema.return_value.table
+
+        def table_side_effect(name):
+            t = MagicMock()
+            if name == "telegram_users":
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{
+                    "user_id": "u1", "auto_trade_enabled": True, "access_tier": "autotrader",
+                    "consensus_threshold": 1, "auto_trade_max_usd": 100, "tier1_pct_of_pool": 30,
+                }]
+            elif name == "bot_signal_queue":
+                t.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+                t.insert.return_value.execute.return_value.data = [{"id": 9, "status": "skipped"}]
+            return t
+
+        table.side_effect = table_side_effect
+        return supabase
+
+    def test_unsafe_token_skipped_with_reason(self):
+        from services import bot_autotrade
+        supabase = self._supabase()
+        with patch("services.bot_security.check_token_safety", return_value=(False, "mint_not_revoked")), \
+             patch.object(bot_autotrade, "_load_elite_set", return_value=set()):
+            result = bot_autotrade.queue_autonomous_trade(
+                user_id="u1",
+                signal={"signal_key": "s1", "token_address": "TOK", "wallet_count": 1,
+                        "total_usd": 200, "usd_value": 200, "side": "buy"},
+                supabase=supabase,
+            )
+        assert result["status"] == "skipped"
+        assert result["reason"] == "mint_not_revoked"
+
+
+class TestTokenSafetyPaperTrader:
+    """_fetch_token_snapshot must mark unsafe tokens unsafe."""
+
+    def _trader(self):
+        with patch("services.paper_trader.get_supabase_client", return_value=MagicMock()), \
+             patch("services.paper_trader.get_paper_trade_runtime", return_value=MagicMock()), \
+             patch("services.paper_trader.PaperExecutionAdapter", return_value=MagicMock()), \
+             patch.object(__import__("services.paper_trader", fromlist=["PaperTrader"]).PaperTrader,
+                          "_load_state", lambda self: None):
+            from services.paper_trader import PaperTrader
+            return PaperTrader(starting_balance_usd=10_000)
+
+    def _token_data(self, **sec):
+        return {
+            "token": {"symbol": "WIF"},
+            "risk": {"rugged": sec.get("rugged", False)},
+            "pools": [{
+                "liquidity": {"usd": 50_000}, "price": {"usd": 0.01},
+                "lpBurn": sec.get("lp_burn", 100), "market": sec.get("market", "raydium"),
+                "security": {
+                    "mintAuthority": sec.get("mint"), "freezeAuthority": sec.get("freeze"),
+                    "honeypot": False,
+                },
+            }],
+        }
+
+    def test_rugged_token_marked_unsafe(self):
+        trader = self._trader()
+        st = MagicMock()
+        st.get_token_info.return_value = self._token_data(rugged=True)
+        with patch("services.solana_tracker_client.get_st_client", return_value=st):
+            snap = trader._fetch_token_snapshot("TOK")
+        assert snap is not None
+        assert snap["safe"] is False
+        assert snap["reason"] == "rugged"
+
+    def test_clean_token_marked_safe(self):
+        trader = self._trader()
+        st = MagicMock()
+        st.get_token_info.return_value = self._token_data()
+        with patch("services.solana_tracker_client.get_st_client", return_value=st):
+            snap = trader._fetch_token_snapshot("TOK")
+        assert snap is not None and snap["safe"] is True
+
+
+class TestTokenSafetyManualExecute:
+    """_execute_full_manual_trade must abort before building a trade request."""
+
+    def test_unsafe_token_aborts_execute(self):
+        from services import bot_handlers
+        notifier = MagicMock()
+        ctx = {"user_id": "u1", "trading_pool_pct": 50}
+        state = {"data": {"token_address": "TOK", "symbol": "WIF", "amount_total_pct": "10"}}
+        with patch.object(bot_handlers, "_load_user_ctx", return_value=ctx), \
+             patch("services.bot_state.get_state", return_value=state), \
+             patch("services.bot_security.check_token_safety", return_value=(False, "rugged")), \
+             patch("services.bot_execution.get_bot_executor") as get_exec, \
+             patch.object(bot_handlers, "_open_main"):
+            bot_handlers._execute_full_manual_trade(notifier, "123")
+        get_exec.assert_not_called()                 # never reached execution
+        notifier.send_message.assert_called()        # user told why
+        assert "blocked" in notifier.send_message.call_args[0][1].lower()
+
+
+class TestTokenSafetyNotification:
+    """send_elite15_alert must suppress alerts for unsafe tokens."""
+
+    @pytest.fixture
+    def notifier(self):
+        with patch("services.telegram_notifier.get_supabase_client", return_value=MagicMock()):
+            from services.telegram_notifier import TelegramNotifier
+            n = TelegramNotifier(bot_token="test-token")
+        n.get_user_chat_id = MagicMock(return_value="999")
+        n.send_message = MagicMock(return_value=True)
+        return n
+
+    def _payload(self):
+        return {
+            "action": "buy",
+            "token": {"symbol": "WIF", "address": "TOK"},
+            "trade": {"amount_usd": 500},
+            "wallet": {"address": "EliteWallet111", "tier": "S"},
+            "links": {},
+        }
+
+    def test_unsafe_token_suppresses_alert(self, notifier):
+        with patch("services.bot_security.check_token_safety", return_value=(False, "rugged")):
+            sent = notifier.send_elite15_alert("u1", self._payload())
+        assert sent is False
+        notifier.send_message.assert_not_called()
+
+    def test_safe_token_sends_alert(self, notifier):
+        with patch("services.bot_security.check_token_safety", return_value=(True, None)):
+            sent = notifier.send_elite15_alert("u1", self._payload())
+        assert sent is True
+        notifier.send_message.assert_called_once()
+
+
+class TestTokenSafetyManualPreviewScreen:
+    """The manual preview must hide the Buy flow when the token is unsafe."""
+
+    def _ctx(self, **over):
+        base = {
+            "token_address": "TOK", "symbol": "WIF", "price_usd": 0.01,
+            "trading_pool_pct": 50,
+        }
+        base.update(over)
+        return base
+
+    def test_unsafe_hides_buy_button(self):
+        from services import bot_screens
+        text, kb = bot_screens.render_manual_trade_preview(
+            self._ctx(security_ok=False, security_reason="rugged")
+        )
+        flat = json.dumps(kb)
+        assert "exec|manual_review" not in flat      # Review & Buy is gone
+        assert "exec|set_amount" not in flat          # sizing presets gone
+        assert "BLOCKED" in text
+
+    def test_safe_shows_buy_button(self):
+        from services import bot_screens
+        text, kb = bot_screens.render_manual_trade_preview(
+            self._ctx(security_ok=True, security_reason=None)
+        )
+        assert "exec|manual_review" in json.dumps(kb)  # Review & Buy present
+
+    def test_missing_verdict_shows_buy_button(self):
+        # Back-compat: when no verdict is present (None), the flow is unchanged.
+        from services import bot_screens
+        _text, kb = bot_screens.render_manual_trade_preview(self._ctx())
+        assert "exec|manual_review" in json.dumps(kb)

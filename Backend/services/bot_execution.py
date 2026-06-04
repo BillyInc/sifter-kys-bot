@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -43,6 +44,21 @@ from services.supabase_client import SCHEMA_NAME, get_supabase_client
 logger = logging.getLogger(__name__)
 
 VALID_MODES = ("safe_noop", "paper", "devnet", "live")
+
+# ── Adaptive slippage / retry under network congestion ──────────────────────
+# Rejections worth retrying with hotter params (the chain was busy or the quote
+# aged out before confirmation). A slippage/route *mismatch* is also retryable
+# because a wider slippage band may let it route.
+_RETRYABLE_REASONS = frozenset({
+    "stale_quote", "route_failed", "not_confirmed", "submit_error",
+    "no_route", "slippage_exceeded", "price_impact_exceeded",
+})
+# Hard ceiling so escalation can never sell into oblivion. Overridable via env.
+_MAX_SLIPPAGE_BPS = int(os.environ.get("BOT_MAX_SLIPPAGE_BPS", "1000"))  # 10%
+# Total attempts (initial + retries).
+_MAX_EXECUTION_ATTEMPTS = int(os.environ.get("BOT_MAX_EXECUTION_ATTEMPTS", "3"))
+# Each retry multiplies slippage and priority fee by this factor.
+_RETRY_ESCALATION_FACTOR = 1.6
 
 
 @dataclass
@@ -391,18 +407,106 @@ class BotExecutionRouter:
             total_usd=req.requested_usd,
             qualifying_usd=req.requested_usd,
         )
-        result = LiveJupiterExecutionAdapter().execute(
-            signal=signal,
-            requested_usd=req.requested_usd,
-            snapshot=snapshot,
-            settings=settings,
-        )
+
+        # 4. Congestion-aware retry: scale slippage + priority fee to current
+        #    network load, and ramp both on a stale/failed fill so the trade
+        #    lands under load instead of being abandoned. Always capped.
+        result = self._execute_live_with_retry(signal, req, snapshot, settings)
         result.payload = {**(result.payload or {}), "execution_mode": mode}
 
-        # 4. Log the platform fee on a successful fill (buy or sell).
+        # 5. Log the platform fee on a successful fill (buy or sell).
         if result.status == "filled" and fee_bps:
             self._log_fee(req, result, fee_bps)
         return result
+
+    def _execute_live_with_retry(
+        self,
+        signal: NormalizedTradeSignal,
+        req: BotTradeRequest,
+        snapshot: Dict[str, Any],
+        base_settings: Dict[str, Any],
+    ) -> ExecutionResult:
+        """Run the live adapter with congestion-scaled params and bounded retries.
+
+        Step 0 establishes the baseline from the user's configured slippage and
+        the sampled congestion level. Each retry (only on a retryable reason)
+        multiplies slippage and priority fee by ``_RETRY_ESCALATION_FACTOR``,
+        clamped to ``_MAX_SLIPPAGE_BPS``. Stops on a fill, a non-retryable
+        rejection, hitting the attempt cap, or the slippage ceiling."""
+        user_slippage = int(base_settings.get("slippage_bps") or 100)
+
+        # Sample congestion ONCE per trade; derive the starting tuning from it.
+        try:
+            from services.bot_congestion import get_tuning
+            tuning = get_tuning()
+            congestion_level = tuning.level
+            slippage_bps = min(
+                _MAX_SLIPPAGE_BPS, int(round(user_slippage * tuning.slippage_mult))
+            )
+            priority_fee = int(tuning.priority_fee_lamports)
+        except Exception as exc:
+            logger.debug("[BOT_EXEC] congestion sample failed, using user settings: %s", exc)
+            congestion_level = "unknown"
+            slippage_bps = min(_MAX_SLIPPAGE_BPS, user_slippage)
+            priority_fee = 0
+
+        adapter = LiveJupiterExecutionAdapter()
+        result: Optional[ExecutionResult] = None
+
+        for attempt in range(1, _MAX_EXECUTION_ATTEMPTS + 1):
+            attempt_settings = dict(base_settings)
+            attempt_settings["slippage_bps"] = slippage_bps
+            if priority_fee > 0:
+                attempt_settings["priority_fee_lamports"] = priority_fee
+
+            result = adapter.execute(
+                signal=signal,
+                requested_usd=req.requested_usd,
+                snapshot=snapshot,
+                settings=attempt_settings,
+            )
+            result.payload = {
+                **(result.payload or {}),
+                "attempt": attempt,
+                "congestion_level": congestion_level,
+                "slippage_bps_used": slippage_bps,
+                "priority_fee_lamports_used": priority_fee,
+            }
+
+            if result.status == "filled":
+                if attempt > 1:
+                    logger.info(
+                        "[BOT_EXEC] live fill on retry %d token=%s slippage=%dbps priority=%d congestion=%s",
+                        attempt, req.token_address[:12], slippage_bps, priority_fee, congestion_level,
+                    )
+                return result
+
+            # Stop unless the rejection is one a hotter retry could fix.
+            if result.reason not in _RETRYABLE_REASONS:
+                return result
+            if attempt >= _MAX_EXECUTION_ATTEMPTS:
+                break
+            if slippage_bps >= _MAX_SLIPPAGE_BPS:
+                logger.info(
+                    "[BOT_EXEC] slippage ceiling %dbps reached for %s — not retrying",
+                    _MAX_SLIPPAGE_BPS, req.token_address[:12],
+                )
+                break
+
+            # Escalate for the next attempt.
+            next_slippage = min(_MAX_SLIPPAGE_BPS, int(round(slippage_bps * _RETRY_ESCALATION_FACTOR)))
+            next_priority = int((priority_fee or 200_000) * _RETRY_ESCALATION_FACTOR)
+            logger.info(
+                "[BOT_EXEC] retry %d/%d token=%s reason=%s escalating slippage %d→%d priority %d→%d",
+                attempt + 1, _MAX_EXECUTION_ATTEMPTS, req.token_address[:12], result.reason,
+                slippage_bps, next_slippage, priority_fee, next_priority,
+            )
+            slippage_bps = next_slippage
+            priority_fee = next_priority
+
+        return result if result is not None else self._rejected(
+            req, "execution_failed", "Live execution produced no result"
+        )
 
     def _load_keypair(self, user_id: str):
         """Load + decrypt the user's trading wallet key. Returns (key_bytes, error)."""

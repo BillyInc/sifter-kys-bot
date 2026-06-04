@@ -118,12 +118,77 @@ def verify_token_mint(signal: Dict[str, Any], *, fetch_canonical: bool = True) -
     return True, None
 
 
+def check_token_safety(
+    token_address: str,
+    *,
+    token_info: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Token-level rug gate from SolanaTracker ``GET /tokens/{address}``.
+
+    Returns ``(ok, reason)``. A token passes only when ALL hold:
+
+      * mint authority revoked   (``pools[].security.mintAuthority`` is null)
+      * freeze authority revoked (``pools[].security.freezeAuthority`` is null)
+      * not flagged rugged       (``risk.rugged`` is not True)
+      * LP burned OR pre-graduation pump.fun
+        (``pools[].lpBurn > 0`` OR primary market is ``pumpfun`` — pump.fun
+        tokens have ``lpBurn = 0`` until they graduate to Raydium)
+
+    Even an Elite wallet occasionally buys a rug; the Elite set measures finding
+    ability, not rug detection, so every trade path runs this before committing.
+
+    Fails CLOSED: if token data is unavailable (API error, no pools), returns
+    ``(False, "security_unavailable")`` so a transient outage never lets a token
+    through unverified. Pass ``token_info`` to reuse an already-fetched response
+    and avoid a second API call.
+    """
+    try:
+        info = token_info
+        if info is None:
+            from services.solana_tracker_client import get_st_client
+            info = get_st_client().get_token_info(token_address)
+    except Exception as exc:
+        logger.warning("[BOT_SECURITY] token safety lookup failed for %s: %s",
+                       (token_address or "")[:8], exc)
+        return False, "security_unavailable"
+
+    if not info:
+        return False, "security_unavailable"
+
+    pools = info.get("pools") or []
+    if not pools:
+        return False, "security_unavailable"
+
+    # Primary pool = the deepest liquidity pool (same selection the paper
+    # trader's snapshot uses).
+    pool = max(pools, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
+    security = pool.get("security") or {}
+
+    if security.get("mintAuthority") is not None:
+        return False, "mint_not_revoked"
+    if security.get("freezeAuthority") is not None:
+        return False, "freeze_not_revoked"
+
+    risk = info.get("risk") or {}
+    if risk.get("rugged") is True:
+        return False, "rugged"
+
+    lp_burn = pool.get("lpBurn") or 0
+    market = str(pool.get("market") or "").lower()
+    # pump.fun LP only burns at graduation; before that lpBurn is legitimately 0.
+    if lp_burn <= 0 and "pumpfun" not in market:
+        return False, "lp_not_burned"
+
+    return True, None
+
+
 def security_screen(
     signal: Dict[str, Any],
     elite_set: Set[str],
     *,
     require_elite_wallet: bool = True,
     check_liquidity: bool = True,
+    check_token_safety_gate: bool = True,
 ) -> Tuple[bool, Optional[str]]:
     """Run all security checks. Returns (ok, reason).
 
@@ -147,7 +212,13 @@ def security_screen(
     if not ok:
         return False, reason
 
-    # 4. Elite wallet exact match (autonomous only).
+    # 4. Token-level rug gate (mint/freeze revoked, not rugged, LP burned).
+    if check_token_safety_gate:
+        ok, reason = check_token_safety(signal.get("token_address") or "")
+        if not ok:
+            return False, reason
+
+    # 5. Elite wallet exact match (autonomous only).
     if require_elite_wallet:
         wallets = signal.get("wallet_addresses") or signal.get("wallets") or []
         # wallets may be list[str] or list[{"wallet":..}]

@@ -135,18 +135,24 @@ class SolanaTrackerClient:
         path: str,
         params: dict[str, Any] | None = None,
         ttl: int = _CACHE_TTL_1H,
+        *,
+        force_refresh: bool = False,
     ) -> Any:
         """GET with Redis caching.  Returns cached value if present, otherwise
-        fetches from the API and stores the result."""
+        fetches from the API and stores the result.
+
+        ``force_refresh`` skips the cache READ (so a manual Refresh pulls live
+        data) but still WRITES the fresh value back."""
         key = self._cache_key(path, params)
         redis = get_redis_client()
-        try:
-            cached = redis.get(key)
-            if cached is not None:
-                logger.debug("SolanaTracker cache hit: %s", key)
-                return json.loads(cached)
-        except Exception:
-            logger.debug("Redis read failed for %s, falling through to API", key)
+        if not force_refresh:
+            try:
+                cached = redis.get(key)
+                if cached is not None:
+                    logger.debug("SolanaTracker cache hit: %s", key)
+                    return json.loads(cached)
+            except Exception:
+                logger.debug("Redis read failed for %s, falling through to API", key)
 
         data = self._get(path, params)
 
@@ -334,15 +340,33 @@ class SolanaTrackerClient:
 
         return all_positions
 
-    def get_token_info(self, token: str) -> dict | None:
+    def get_token_info(self, token: str, *, force_refresh: bool = False) -> dict | None:
         """Return full token data including pool prices and creation time (cached 1hr).
 
         ``GET /tokens/{tokenAddress}``
 
         Launch price: sort response.pools by createdAt ascending -> earliest pool's price.usd.
         Creation time: response.token.creation.created_time (Unix seconds).
+        ``force_refresh`` bypasses the cache read for a live Refresh.
         """
-        return self._cached_get(f"/tokens/{token}", ttl=3600)
+        return self._cached_get(f"/tokens/{token}", ttl=3600, force_refresh=force_refresh)
+
+    def get_token_holders(self, token: str, *, enrich: bool = True, force_refresh: bool = False) -> dict | None:
+        """Return the top-100 holders with optional identity enrichment.
+
+        ``GET /tokens/{tokenAddress}/holders`` (``?enrich=identity``)
+
+        Response: ``{ total, accounts: [ {wallet, amount, percentage,
+        value: {usd}, identity: {type}} ] }``. ``total`` is the unique holder
+        count. Cached 5 min — holder lists move, but not every second.
+        ``force_refresh`` bypasses the cache read for a live Refresh.
+        Returns None on failure (display is best-effort)."""
+        params: dict[str, Any] = {"enrich": "identity"} if enrich else {}
+        try:
+            return self._cached_get(f"/tokens/{token}/holders", params, ttl=300, force_refresh=force_refresh)
+        except Exception:
+            logger.debug("token holders not found: %s", token)
+            return None
 
     def get_wallet_token_trades(self, token: str, wallet: str) -> list[dict]:
         """Return individual trade records for a token + wallet pair.

@@ -389,8 +389,22 @@ class TelegramNotifier:
         if not chat_id:
             return False
 
-        action = payload.get("action", "buy").upper()
         token = payload.get("token", {})
+        # Token-level rug gate — never notify on an unsafe token. A fake/rugged
+        # "Elite bought X" alert is itself bait, so we suppress it.
+        try:
+            from services.bot_security import check_token_safety
+            sec_ok, sec_reason = check_token_safety(token.get("address") or "")
+            if not sec_ok:
+                logger.debug(
+                    "[NOTIFY] elite15 alert suppressed token=%s reason=%s",
+                    str(token.get("address"))[:8], sec_reason,
+                )
+                return False
+        except Exception:
+            return False  # fail closed — no alert on an unverifiable token
+
+        action = payload.get("action", "buy").upper()
         trade = payload.get("trade", {})
         wallet = payload.get("wallet", {})
         links = payload.get("links", {})
@@ -415,6 +429,19 @@ class TelegramNotifier:
         chat_id = self.get_user_chat_id(user_id)
         if not chat_id:
             return False
+
+        # Token-level rug gate — suppress alerts for unsafe tokens.
+        try:
+            from services.bot_security import check_token_safety
+            sec_ok, sec_reason = check_token_safety(signal.get("token_address") or "")
+            if not sec_ok:
+                logger.debug(
+                    "[NOTIFY] multi-wallet alert suppressed token=%s reason=%s",
+                    str(signal.get("token_address"))[:8], sec_reason,
+                )
+                return False
+        except Exception:
+            return False  # fail closed
 
         wallets = signal.get("wallets", [])
         lines = [
