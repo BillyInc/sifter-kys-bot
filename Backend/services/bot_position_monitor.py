@@ -190,6 +190,47 @@ def _check_position(position: dict, current_price: float) -> Optional[Dict[str, 
     return None
 
 
+# ── execution settings ────────────────────────────────────────────────────────
+
+# Default execution preferences mirror the telegram_users column defaults
+# (slippage_bps DEFAULT 100, mev_protection DEFAULT TRUE).
+DEFAULT_EXIT_SLIPPAGE_BPS = 100
+
+
+def _load_user_exec_settings(supabase, user_id: str, cache: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Load a user's live-execution preferences (slippage + MEV) for exits.
+
+    Exits previously sent only stop_loss_pct/take_profit_x, so every TP/SL sold
+    at the hardcoded adapter default (100 bps) regardless of the user's choice.
+    We now carry the user's configured slippage_bps + mev_protection into the
+    sell request. Results are cached per monitor cycle to avoid a DB hit per
+    position. Falls back to safe defaults on any error."""
+    if not user_id:
+        return {"slippage_bps": DEFAULT_EXIT_SLIPPAGE_BPS, "mev_protection": True}
+    if user_id in cache:
+        return cache[user_id]
+    settings = {"slippage_bps": DEFAULT_EXIT_SLIPPAGE_BPS, "mev_protection": True}
+    try:
+        res = (
+            supabase.schema(SCHEMA_NAME)
+            .table("telegram_users")
+            .select("slippage_bps, mev_protection")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            row = res.data[0]
+            if row.get("slippage_bps") is not None:
+                settings["slippage_bps"] = int(row["slippage_bps"])
+            if row.get("mev_protection") is not None:
+                settings["mev_protection"] = bool(row["mev_protection"])
+    except Exception as exc:
+        logger.warning("[POS_MONITOR] exec settings load failed for %s: %s", str(user_id)[:8], exc)
+    cache[user_id] = settings
+    return settings
+
+
 # ── Celery task entry point ───────────────────────────────────────────────────
 
 def monitor_positions() -> Dict[str, Any]:
@@ -202,6 +243,8 @@ def monitor_positions() -> Dict[str, Any]:
     closed_count = 0
     skipped_count = 0
     errors: List[str] = []
+    # Per-cycle cache of user execution prefs (slippage/MEV) — one DB hit per user.
+    exec_settings_cache: Dict[str, Dict[str, Any]] = {}
 
     try:
         res = (
@@ -279,6 +322,9 @@ def monitor_positions() -> Dict[str, Any]:
 
         try:
             executor = get_bot_executor()
+            # Carry the user's configured slippage + MEV into the exit so TP/SL
+            # don't silently sell at the adapter's hardcoded default.
+            exec_prefs = _load_user_exec_settings(supabase, user_id, exec_settings_cache)
             req = BotTradeRequest(
                 user_id=user_id,
                 token_address=token,
@@ -290,6 +336,8 @@ def monitor_positions() -> Dict[str, Any]:
                 settings={
                     "stop_loss_pct": pos.get("stop_loss_pct"),
                     "take_profit_x": pos.get("take_profit_x"),
+                    "slippage_bps": exec_prefs["slippage_bps"],
+                    "mev_protection": exec_prefs["mev_protection"],
                 },
                 snapshot={"trigger": trigger},
             )

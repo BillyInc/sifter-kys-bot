@@ -428,6 +428,15 @@ class PaperTrader:
             elif liquidity < 10_000:
                 safe = False
                 reason = "low_liquidity"
+            else:
+                # Token-level rug gate: mint/freeze revoked, not rugged, LP
+                # burned (or pre-graduation pump.fun). Reuse the data we just
+                # fetched so this adds no extra API call.
+                from services.bot_security import check_token_safety
+                token_safe, token_reason = check_token_safety(token_address, token_info=data)
+                if not token_safe:
+                    safe = False
+                    reason = token_reason or "unsafe_token"
 
             return {
                 "price": price,
