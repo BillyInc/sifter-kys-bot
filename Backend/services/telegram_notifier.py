@@ -147,6 +147,40 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         print("[TELEGRAM] Notifier ready")
 
+    def configure_bot_ui(self) -> None:
+        """Register the bot's command list, description, and menu button with
+        Telegram. Idempotent — safe to call on every startup. Best-effort: a
+        failed call here must never block boot.
+        """
+        commands = [
+            {"command": "menu", "description": "Open the main menu"},
+            {"command": "help", "description": "How to use the bot"},
+            {"command": "cancel", "description": "Cancel the current step"},
+            {"command": "start", "description": "Connect or restart"},
+        ]
+        description = (
+            "Solana copy-trading, powered by Elite 15 wallet intelligence.\n\n"
+            "• Auto-trade smart money signals\n"
+            "• Set your own SL, TP & consensus filters\n"
+            "• Manual trade any token\n"
+            "• Full portfolio & PnL tracking\n\n"
+            "New? /start — Already a member? /menu"
+        )
+        short_description = (
+            "Solana copy-trading bot. Track Elite smart money wallets, "
+            "auto-trade signals & manage positions."
+        )
+        try:
+            self._make_request("setMyCommands", {"commands": commands})
+            # Native menu button stays the command list — a sensible fallback
+            # alongside the in-chat persistent ☰ Menu / ❓ Help keyboard.
+            self._make_request("setChatMenuButton", {"menu_button": {"type": "commands"}})
+            self._make_request("setMyDescription", {"description": description})
+            self._make_request("setMyShortDescription", {"short_description": short_description})
+            print("[TELEGRAM] ✅ Bot UI configured (commands, description, menu button)")
+        except Exception as e:
+            logger.error("[TELEGRAM] configure_bot_ui failed: %s", e)
+
     def _table(self, name: str):
         return self.supabase.schema(self.schema).table(name)
 
@@ -572,6 +606,21 @@ class TelegramNotifier:
         first_name = message["from"].get("first_name", "")
         last_name = message["from"].get("last_name")
 
+        # ── Persistent reply-keyboard buttons ────────────────────────────
+        # The ☰ Menu / ❓ Help bar sends its label as plain text. Map those
+        # to the menu actions before any other dispatch.
+        try:
+            from services import bot_screens, bot_handlers
+            if text == bot_screens.MENU_BTN_LABEL:
+                bot_handlers._open_main(self, chat_id)
+                return
+            if text == bot_screens.HELP_BTN_LABEL:
+                body, keyboard = bot_screens.render_help()
+                self.send_message(chat_id, body, keyboard)
+                return
+        except Exception as e:
+            logger.error("[TELEGRAM] reply-keyboard dispatch error: %s", e)
+
         # ── New menu system (additive, backward-compatible) ──────────────
         # 1. Consume awaited free-text input (only fires when bot_state has an
         #    `awaiting` set). Returns False otherwise → fall through to legacy.
@@ -682,7 +731,10 @@ class TelegramNotifier:
                 # kicking them back to Welcome.
                 ctx = bot_handlers._load_user_ctx(self, chat_id)
                 if ctx:
-                    bot_handlers._open_main(self, chat_id)
+                    # Resume the user where they left off (last screen in Redis),
+                    # falling back to the main menu for fresh/transient screens.
+                    last_screen = bot_state.get_state(chat_id).get("screen")
+                    bot_handlers.reopen_screen(self, chat_id, last_screen)
                     return
                 # Truly new user — show Welcome.
                 bot_state.clear_state(chat_id)
@@ -818,27 +870,7 @@ class TelegramNotifier:
             return
 
         if text == "/openpositions":
-            if not self._is_operator(chat_id):
-                self.send_message(chat_id, "🔒 Operator access required.")
-                return
-            try:
-                result = self._table("paper_portfolio").select("*").eq("status", "open").execute()
-                positions = result.data or []
-                if not positions:
-                    self.send_message(chat_id, "<b>No open paper positions.</b>")
-                    return
-                lines = [f"<b>Open Paper Positions ({len(positions)})</b>", ""]
-                for pos in positions[:20]:
-                    symbol = html.escape(pos.get("token_symbol") or "???")
-                    invested = float(pos.get("total_invested_usd") or 0)
-                    current = float(pos.get("current_value_usd") or 0)
-                    pnl = current - invested
-                    lines.append(f"• <b>${symbol}</b> — ${invested:.0f} → ${current:.0f} ({pnl:+.0f})")
-                if len(positions) > 20:
-                    lines.append(f"\n<i>...and {len(positions) - 20} more</i>")
-                self.send_message(chat_id, "\n".join(lines))
-            except Exception as e:
-                self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+            self.op_open_positions(chat_id)
             return
 
         if text == "/closeall":
@@ -870,55 +902,15 @@ class TelegramNotifier:
             return
 
         if text == "/paperstats":
-            if not self._is_operator(chat_id):
-                self.send_message(chat_id, "🔒 Operator access required.")
-                return
-            from services.paper_trading_manager import get_paper_trading_manager
-            ptm = get_paper_trading_manager()
-            report = ptm.generate_daily_report()
-            if "error" in report:
-                self.send_message(chat_id, f"❌ Report error: <code>{html.escape(str(report['error'])[:200])}</code>")
-                return
-            self.send_message(
-                chat_id,
-                "<b>Paper Trading Stats</b>\n\n"
-                f"Open positions: <b>{report.get('open_positions', 0)}</b>\n"
-                f"Trades today: <b>{report.get('total_trades', 0)}</b>\n"
-                f"Winning: <b>{report.get('winning_trades', 0)}</b>\n"
-                f"Total invested: <b>${report.get('total_invested_usd', 0):,.2f}</b>\n"
-                f"Current value: <b>${report.get('current_value_usd', 0):,.2f}</b>\n"
-                f"PnL: <b>${report.get('total_pnl_usd', 0):+,.2f}</b>",
-            )
+            self.op_paper_stats(chat_id)
             return
 
         if text == "/users":
-            if not self._is_operator(chat_id):
-                self.send_message(chat_id, "🔒 Operator access required.")
-                return
-            try:
-                all_users = self._table("telegram_users").select("id, auto_trade_enabled").execute().data or []
-                total = len(all_users)
-                auto_on = sum(1 for u in all_users if u.get("auto_trade_enabled"))
-                self.send_message(
-                    chat_id,
-                    f"<b>Telegram Users</b>\n\n"
-                    f"Total connected: <b>{total}</b>\n"
-                    f"Auto-trade enabled: <b>{auto_on}</b>",
-                )
-            except Exception as e:
-                self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+            self.op_users_report(chat_id)
             return
 
         if text == "/digest":
-            if not self._is_operator(chat_id):
-                self.send_message(chat_id, "🔒 Operator access required.")
-                return
-            try:
-                from services.tasks import send_daily_digest
-                send_daily_digest.delay()
-                self.send_message(chat_id, "✅ <b>Daily digest task queued.</b>")
-            except Exception as e:
-                self.send_message(chat_id, f"❌ Failed to queue digest: <code>{html.escape(str(e)[:100])}</code>")
+            self.op_queue_digest(chat_id)
             return
 
         # ── User commands ─────────────────────────────────────────────────────
@@ -1356,6 +1348,83 @@ class TelegramNotifier:
 
     def send_raw_message(self, chat_id: str, text: str, reply_markup: dict = None) -> bool:
         return self.send_message(chat_id, text, reply_markup)
+
+    # ── Operator reports (shared by slash commands and Operator Panel buttons) ──
+    def op_open_positions(self, chat_id: str) -> None:
+        """Show open paper positions. Operator-gated."""
+        if not self._is_operator(chat_id):
+            self.send_message(chat_id, "🔒 Operator access required.")
+            return
+        try:
+            result = self._table("paper_portfolio").select("*").eq("status", "open").execute()
+            positions = result.data or []
+            if not positions:
+                self.send_message(chat_id, "<b>No open paper positions.</b>")
+                return
+            lines = [f"<b>Open Paper Positions ({len(positions)})</b>", ""]
+            for pos in positions[:20]:
+                symbol = html.escape(pos.get("token_symbol") or "???")
+                invested = float(pos.get("total_invested_usd") or 0)
+                current = float(pos.get("current_value_usd") or 0)
+                pnl = current - invested
+                lines.append(f"• <b>${symbol}</b> — ${invested:.0f} → ${current:.0f} ({pnl:+.0f})")
+            if len(positions) > 20:
+                lines.append(f"\n<i>...and {len(positions) - 20} more</i>")
+            self.send_message(chat_id, "\n".join(lines))
+        except Exception as e:
+            self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+
+    def op_paper_stats(self, chat_id: str) -> None:
+        """Show paper-trading daily stats. Operator-gated."""
+        if not self._is_operator(chat_id):
+            self.send_message(chat_id, "🔒 Operator access required.")
+            return
+        from services.paper_trading_manager import get_paper_trading_manager
+        ptm = get_paper_trading_manager()
+        report = ptm.generate_daily_report()
+        if "error" in report:
+            self.send_message(chat_id, f"❌ Report error: <code>{html.escape(str(report['error'])[:200])}</code>")
+            return
+        self.send_message(
+            chat_id,
+            "<b>Paper Trading Stats</b>\n\n"
+            f"Open positions: <b>{report.get('open_positions', 0)}</b>\n"
+            f"Trades today: <b>{report.get('total_trades', 0)}</b>\n"
+            f"Winning: <b>{report.get('winning_trades', 0)}</b>\n"
+            f"Total invested: <b>${report.get('total_invested_usd', 0):,.2f}</b>\n"
+            f"Current value: <b>${report.get('current_value_usd', 0):,.2f}</b>\n"
+            f"PnL: <b>${report.get('total_pnl_usd', 0):+,.2f}</b>",
+        )
+
+    def op_users_report(self, chat_id: str) -> None:
+        """Show connected Telegram user counts. Operator-gated."""
+        if not self._is_operator(chat_id):
+            self.send_message(chat_id, "🔒 Operator access required.")
+            return
+        try:
+            all_users = self._table("telegram_users").select("id, auto_trade_enabled").execute().data or []
+            total = len(all_users)
+            auto_on = sum(1 for u in all_users if u.get("auto_trade_enabled"))
+            self.send_message(
+                chat_id,
+                f"<b>Telegram Users</b>\n\n"
+                f"Total connected: <b>{total}</b>\n"
+                f"Auto-trade enabled: <b>{auto_on}</b>",
+            )
+        except Exception as e:
+            self.send_message(chat_id, f"❌ Error: <code>{html.escape(str(e)[:200])}</code>")
+
+    def op_queue_digest(self, chat_id: str) -> None:
+        """Queue the daily digest Celery task. Operator-gated."""
+        if not self._is_operator(chat_id):
+            self.send_message(chat_id, "🔒 Operator access required.")
+            return
+        try:
+            from services.tasks import send_daily_digest
+            send_daily_digest.delay()
+            self.send_message(chat_id, "✅ <b>Daily digest task queued.</b>")
+        except Exception as e:
+            self.send_message(chat_id, f"❌ Failed to queue digest: <code>{html.escape(str(e)[:100])}</code>")
 
     def _handle_operator_command(self, chat_id: str, command: str):
         if not is_operator_chat_id(chat_id):
