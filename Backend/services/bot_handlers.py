@@ -310,7 +310,32 @@ def handle_callback(
 
 # ── navigation ──────────────────────────────────────────────────────────────
 
+# Screens that enter an awaited free-text input mode. On resume (/start) we do
+# NOT re-open these — landing a returning user in a half-finished input prompt is
+# confusing — so they fall back to the main menu instead.
+_NO_RESUME = frozenset({
+    "manual_trade", "token_stats", "access", "register", "request_access",
+    "set_alert", "welcome",
+    # detail screens that read state from the callback query (absent on resume)
+    "trade_detail", "archived_manage", "elite_wallet_detail", "tracked_wallet_detail",
+})
+
+
 def _navigate(notifier, chat_id: str, screen: str, query: dict) -> None:
+    """Handle a nav|<screen> callback — dispatch directly to the screen."""
+    _dispatch_screen(notifier, chat_id, screen, query)
+
+
+def reopen_screen(notifier, chat_id: str, screen: Optional[str]) -> None:
+    """Re-open the user's last screen (e.g. on /start). Falls back to main for
+    unknown screens or screens that require awaited text input."""
+    if not screen or screen == "main" or screen in _NO_RESUME:
+        _open_main(notifier, chat_id)
+        return
+    _dispatch_screen(notifier, chat_id, screen, None)
+
+
+def _dispatch_screen(notifier, chat_id: str, screen: str, query: Optional[dict]) -> None:
     if screen == "main":
         _open_main(notifier, chat_id)
     elif screen == "settings":
@@ -405,12 +430,31 @@ def _open_welcome(notifier, chat_id: str) -> None:
     _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
 
 
+def _ensure_persistent_keyboard(notifier, chat_id: str) -> None:
+    """Show the persistent ☰ Menu / ❓ Help bar once per session.
+
+    A reply keyboard persists across messages until removed, so we only send it
+    when it hasn't been shown yet (tracked in bot_state data). It can't ride on
+    the same message as an inline keyboard, hence the tiny standalone send.
+    """
+    state = bot_state.get_state(chat_id)
+    if state.get("data", {}).get("kb_shown"):
+        return
+    notifier.send_message(
+        chat_id,
+        "Tip: use the buttons below anytime.",
+        reply_markup=bot_screens.persistent_menu_keyboard(),
+    )
+    bot_state.set_state(chat_id, data={"kb_shown": True}, awaiting=state.get("awaiting"))
+
+
 def _open_main(notifier, chat_id: str) -> None:
     ctx = _load_user_ctx(notifier, chat_id)
     if ctx is None:
         bot_state.clear_state(chat_id)
         _send_rendered(notifier, chat_id, bot_screens.render_welcome(_public_ctx()))
         return
+    _ensure_persistent_keyboard(notifier, chat_id)
     bot_state.push_screen(chat_id, "main")
     _send_rendered(notifier, chat_id, bot_screens.render_main(ctx))
 
@@ -1851,6 +1895,22 @@ def _handle_op_action(notifier, chat_id: str, action: str, params: List[str]) ->
         return
     if action == "gen_codes":
         _handle_generate_access_codes(notifier, chat_id, params)
+        return
+    if action == "users":
+        notifier.op_users_report(chat_id)
+        return
+    if action == "digest":
+        notifier.op_queue_digest(chat_id)
+        return
+    if action == "open_positions":
+        notifier.op_open_positions(chat_id)
+        return
+    if action == "paper_stats":
+        notifier.op_paper_stats(chat_id)
+        return
+    if action in {"paper_status", "paper_start", "paper_stop", "paper_logs",
+                  "paper_failures", "paper_test"}:
+        notifier._handle_operator_command(chat_id, f"/{action}")
         return
     if action == "fee_revenue":
         notifier.send_message(chat_id, "Fee revenue panel: use the web dashboard for full reports. ClickHouse data at bot_fee_log.")

@@ -138,6 +138,12 @@ def create_app() -> Flask:
 
     if telegram_notifier:
         print("\n[TELEGRAM] ✅ Notifier initialized")
+        # Register command list, description, and menu button with Telegram.
+        # Best-effort — never block boot if the API call fails.
+        try:
+            telegram_notifier.configure_bot_ui()
+        except Exception as e:
+            print(f"[TELEGRAM] ⚠️ Bot UI config skipped: {e}")
     else:
         print("\n[TELEGRAM] ⚠️ Notifier disabled (no token)")
 

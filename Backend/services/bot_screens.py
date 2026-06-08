@@ -52,6 +52,24 @@ def _back_row(to: str = "main") -> List[Dict[str, str]]:
     return [nav_button("⬅️ Back", to), nav_button("🏠 Main Menu", "main")]
 
 
+# ── persistent reply keyboard ────────────────────────────────────────────────
+# Unlike inline keyboards (attached to a single message), a reply keyboard sits
+# above the text box and stays there. Tapping a button sends its label as a
+# normal text message, which the router intercepts (see telegram_notifier).
+
+MENU_BTN_LABEL = "☰ Menu"
+HELP_BTN_LABEL = "❓ Help"
+
+
+def persistent_menu_keyboard() -> Dict[str, Any]:
+    """A persistent two-button bar (Menu / Help) shown above the text box."""
+    return {
+        "keyboard": [[{"text": MENU_BTN_LABEL}, {"text": HELP_BTN_LABEL}]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
 # ── screens ─────────────────────────────────────────────────────────────────
 
 def render_main(ctx: Dict[str, Any]) -> Rendered:
@@ -1673,11 +1691,21 @@ def render_operator_panel() -> Rendered:
     ]
     rows: List[List[Dict[str, str]]] = [
         [{"text": "📊 System Health", "callback_data": "op|health"}],
+        [{"text": "👥 Users", "callback_data": "op|users"},
+         {"text": "📰 Send Digest", "callback_data": "op|digest"}],
+        [{"text": "📂 Open Positions", "callback_data": "op|open_positions"},
+         {"text": "📈 Paper Stats", "callback_data": "op|paper_stats"}],
+        [{"text": "📊 Paper Status", "callback_data": "op|paper_status"},
+         {"text": "📜 Paper Logs", "callback_data": "op|paper_logs"}],
+        [{"text": "▶️ Paper Start", "callback_data": "op|paper_start"},
+         {"text": "⏹️ Paper Stop", "callback_data": "op|paper_stop"}],
+        [{"text": "🧪 Paper Test", "callback_data": "op|paper_test"},
+         {"text": "⚠️ Paper Failures", "callback_data": "op|paper_failures"}],
         [{"text": "🚨 Close All Positions", "callback_data": "op|close_all_warn"}],
         [{"text": "🎟️ Generate Access Codes", "callback_data": "op|gen_codes"}],
         [{"text": "💰 Fee Revenue", "callback_data": "op|fee_revenue"}],
         [{"text": "✏️ Change Fee Rate", "callback_data": "op|change_fee"}],
         [{"text": "🔪 Kill Switch", "callback_data": "op|kill"}],
-        nav_button("Main Menu", "main"),
+        [nav_button("Main Menu", "main")],
     ]
     return "\n".join(lines), _kb(rows)
