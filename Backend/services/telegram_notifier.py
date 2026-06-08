@@ -741,9 +741,39 @@ class TelegramNotifier:
                 bot_handlers._open_welcome(self, chat_id)
                 return
             except Exception as e:
-                logger.error("[TELEGRAM] welcome screen open failed: %s", e)
-            self.send_message(chat_id, "\U0001f44b <b>Sifter KYS Bot</b>\n\nConnect from the dashboard to get started.")
+                logger.error("[TELEGRAM] welcome screen open failed: %s", e, exc_info=True)
+                # Still show a usable welcome instead of a dead-end message.
+                try:
+                    from services import bot_screens
+                    body, keyboard = bot_screens.render_welcome({})
+                    self.send_message(chat_id, body, keyboard)
+                except Exception:
+                    self.send_message(chat_id, "\U0001f44b <b>Welcome to SIFTER!</b>\n\nUse /menu to get started.")
             return
+
+        # ── Legacy slash catch-all ───────────────────────────────────────────
+        # Everything user-facing now lives in the button menu. Any slash command
+        # that isn't /start, /menu, /help, /cancel, or an operator command is
+        # bounced to the menu so the old paper-trading/text screens below can
+        # never surface again. Operator commands fall through to their handlers.
+        _ALLOWED_SLASH = {
+            "/start", "/menu", "/help", "/cancel",
+            # operator-only tooling (handled further down)
+            "/kill", "/resume", "/sys", "/openpositions", "/closeall",
+            "/confirmcloseall", "/paperstats", "/users", "/digest",
+            "/paper_status", "/paper_start", "/paper_stop", "/paper_logs",
+            "/paper_failures", "/paper_test",
+        }
+        if text.startswith("/"):
+            cmd = text.split()[0].lower()
+            if cmd not in _ALLOWED_SLASH:
+                self.send_message(chat_id, "That command moved into the menu 👇")
+                try:
+                    from services import bot_handlers
+                    bot_handlers._open_main(self, chat_id)
+                except Exception as e:
+                    logger.error("[TELEGRAM] catch-all menu open failed: %s", e)
+                return
 
         if text.startswith("/autotrade"):
             parts = text.split()

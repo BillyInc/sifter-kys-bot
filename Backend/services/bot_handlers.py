@@ -38,6 +38,10 @@ NEW_CATEGORIES = frozenset({
 # Menu commands this module owns (return False from handle_command otherwise).
 NEW_COMMANDS = frozenset({"/menu"})
 
+# Bump whenever the persistent reply keyboard layout changes — forces existing
+# users to receive the new keyboard on their next menu open.
+KB_VERSION = 1
+
 
 def _risk_metric(value: Any) -> Dict[str, Optional[float]]:
     """Normalize a SolanaTracker risk metric to {count, pct}.
@@ -191,6 +195,14 @@ def handle_text_input(notifier, chat_id: str, text: str, message: dict) -> bool:
         _handle_reg_password(notifier, chat_id, text)
         return True
 
+    if awaiting == "login_email":
+        _handle_login_email(notifier, chat_id, text)
+        return True
+
+    if awaiting == "login_password":
+        _handle_login_password(notifier, chat_id, text, message)
+        return True
+
     if awaiting == "forgot_email":
         _handle_forgot_email(notifier, chat_id, text)
         return True
@@ -314,7 +326,7 @@ def handle_callback(
 # NOT re-open these — landing a returning user in a half-finished input prompt is
 # confusing — so they fall back to the main menu instead.
 _NO_RESUME = frozenset({
-    "manual_trade", "token_stats", "access", "register", "request_access",
+    "manual_trade", "token_stats", "access", "register", "login", "request_access",
     "set_alert", "welcome",
     # detail screens that read state from the callback query (absent on resume)
     "trade_detail", "archived_manage", "elite_wallet_detail", "tracked_wallet_detail",
@@ -348,6 +360,10 @@ def _dispatch_screen(notifier, chat_id: str, screen: str, query: Optional[dict])
     elif screen == "register":
         bot_state.push_screen(chat_id, "register")
         _send_rendered(notifier, chat_id, bot_screens.render_register_prompt(_public_ctx()))
+    elif screen == "login":
+        bot_state.push_screen(chat_id, "login", data={"login_step": "enter_email"})
+        bot_state.set_awaiting(chat_id, "login_email")
+        _send_rendered(notifier, chat_id, bot_screens.render_login_prompt({"login_step": "enter_email"}))
     elif screen == "autotrade":
         _open_autotrade(notifier, chat_id)
     elif screen == "consensus":
@@ -431,21 +447,24 @@ def _open_welcome(notifier, chat_id: str) -> None:
 
 
 def _ensure_persistent_keyboard(notifier, chat_id: str) -> None:
-    """Show the persistent ☰ Menu / ❓ Help bar once per session.
-
-    A reply keyboard persists across messages until removed, so we only send it
-    when it hasn't been shown yet (tracked in bot_state data). It can't ride on
-    the same message as an inline keyboard, hence the tiny standalone send.
+    """Show the persistent ☰ Menu / ❓ Help bar, re-sending when its version
+    changes. A reply keyboard persists across messages, so we normally send it
+    once — but bumping KB_VERSION forces every existing user to get the new
+    layout on their next menu open (no waiting for state TTL).
     """
     state = bot_state.get_state(chat_id)
-    if state.get("data", {}).get("kb_shown"):
+    if state.get("data", {}).get("kb_version") == KB_VERSION:
         return
     notifier.send_message(
         chat_id,
         "Tip: use the buttons below anytime.",
         reply_markup=bot_screens.persistent_menu_keyboard(),
     )
-    bot_state.set_state(chat_id, data={"kb_shown": True}, awaiting=state.get("awaiting"))
+    bot_state.set_state(
+        chat_id,
+        data={"kb_shown": True, "kb_version": KB_VERSION},
+        awaiting=state.get("awaiting"),
+    )
 
 
 def _open_main(notifier, chat_id: str) -> None:
@@ -2169,6 +2188,15 @@ def _handle_access_action(notifier, chat_id: str, action: str, params: List[str]
         }))
         return
 
+    if action == "login_email":
+        # Start in-bot login: ask for email
+        bot_state.push_screen(chat_id, "login", data={"login_step": "enter_email"})
+        bot_state.set_awaiting(chat_id, "login_email")
+        _send_rendered(notifier, chat_id, bot_screens.render_login_prompt({
+            "login_step": "enter_email",
+        }))
+        return
+
     if action == "forgot_password":
         # Start password reset: ask for email
         bot_state.push_screen(chat_id, "forgot_password", data={"pwd_step": "enter_email"})
@@ -2383,6 +2411,84 @@ def _get_reg_email(chat_id: str) -> str:
         return (bot_state.get_state(chat_id).get("data") or {}).get("reg_email") or ""
     except Exception:
         return ""
+
+
+# ── login flow (mirrors registration) ───────────────────────────────────────────
+
+def _get_login_email(chat_id: str) -> str:
+    """Safely retrieve the email stored in the login flow state."""
+    try:
+        return (bot_state.get_state(chat_id).get("data") or {}).get("login_email") or ""
+    except Exception:
+        return ""
+
+
+def _handle_login_email(notifier, chat_id: str, text: str) -> None:
+    """Validate email input and move to password entry."""
+    email = text.strip().lower()
+    if not ("@" in email and "." in email.split("@")[-1]):
+        bot_state.set_awaiting(chat_id, "login_email")
+        _send_rendered(notifier, chat_id, bot_screens.render_login_prompt({
+            "login_step": "enter_email",
+            "login_error": "That doesn't look like a valid email. Please try again.",
+        }))
+        return
+    bot_state.push_screen(chat_id, "login", data={
+        "login_step": "enter_password",
+        "login_email": email,
+    })
+    bot_state.set_awaiting(chat_id, "login_password")
+    _send_rendered(notifier, chat_id, bot_screens.render_login_prompt({
+        "login_step": "enter_password",
+        "login_email": email,
+    }))
+
+
+def _handle_login_password(notifier, chat_id: str, text: str, message: dict) -> None:
+    """Verify credentials via the bot-login API and link the chat."""
+    password = text.strip()
+    # Delete the password message immediately for security.
+    try:
+        notifier._make_request("deleteMessage", {
+            "chat_id": chat_id, "message_id": message.get("message_id"),
+        })
+    except Exception:
+        pass
+
+    email = _get_login_email(chat_id)
+    if not email:
+        bot_state.set_awaiting(chat_id, None)
+        notifier.send_message(chat_id, "Session expired. Use /menu to try again.")
+        return
+
+    import requests as _requests
+    try:
+        from config import Config
+        api_base = getattr(Config, 'API_BASE_URL', None) or f"http://localhost:{Config.PORT}"
+        resp = _requests.post(
+            f"{api_base}/api/auth/bot-login",
+            json={"email": email, "password": password, "chat_id": chat_id},
+            timeout=15,
+        )
+        if resp.status_code == 200 and resp.json().get("success"):
+            bot_state.clear_state(chat_id)
+            notifier.send_message(chat_id, "✅ <b>Logged in!</b> Your Telegram is now linked.")
+            _open_main(notifier, chat_id)
+            return
+        try:
+            msg = resp.json().get("error", "Could not log in.")
+        except Exception:
+            msg = f"Could not log in (HTTP {resp.status_code})."
+        bot_state.set_awaiting(chat_id, "login_password")
+        _send_rendered(notifier, chat_id, bot_screens.render_login_prompt({
+            "login_step": "enter_password",
+            "login_email": email,
+            "login_error": msg,
+        }))
+    except _requests.RequestException as exc:
+        logger.error("[BOT_HANDLERS] bot-login API call failed: %s", exc)
+        bot_state.set_awaiting(chat_id, None)
+        notifier.send_message(chat_id, "Could not reach the login service. Please try again.")
 
 
 # ── forgot password flow ───────────────────────────────────────────────────────

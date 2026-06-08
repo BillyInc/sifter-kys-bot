@@ -171,10 +171,9 @@ def render_settings_home(ctx: Dict[str, Any]) -> Rendered:
 def render_welcome(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
     """Entry screen shown on bare /start (no link token).
 
-    ``ctx`` keys: dashboard_url. Login/Dashboard become URL buttons when a
-    dashboard URL is configured; otherwise they fall back to in-bot guidance.
-    Register-via-bot is routed to ``nav|register`` (a "use the dashboard"
-    screen for now — standalone Telegram signup lands in a later sprint).
+    ``ctx`` keys: dashboard_url (optional). Login and Register both work fully
+    in-bot, so they no longer depend on a dashboard URL — the dashboard buttons
+    are only added as extras when a URL is configured.
     """
     ctx = ctx or {}
     dashboard_url = ctx.get("dashboard_url")
@@ -182,18 +181,19 @@ def render_welcome(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
         "👋 <b>Welcome to SIFTER Trading Bot</b>\n\n"
         "The smart Solana copy-trading system, powered by Elite 15 wallet "
         "signals.\n\n"
-        "<b>Already have an account?</b> Connect it from the dashboard.\n"
-        "<b>New here?</b> Create an account on the dashboard, then link it.\n\n"
-        "Once linked, send /menu anytime to open the bot."
+        "<b>Already have an account?</b> Tap Login.\n"
+        "<b>New here?</b> Tap Register — it takes 20 seconds.\n\n"
+        "You can do everything right here in Telegram."
     )
-    rows: List[List[Dict[str, str]]] = []
+    rows: List[List[Dict[str, str]]] = [
+        [{"text": "🔐 Login", "callback_data": "access|login_email"},
+         {"text": "📝 Register", "callback_data": "nav|register"}],
+    ]
     if dashboard_url:
-        rows.append([{"text": "🔑 Login with Email", "url": dashboard_url}])
-        rows.append([{"text": "🌐 Go to Dashboard", "url": dashboard_url}])
-    rows.append([nav_button("📝 Register via Bot", "register")])
+        rows.append([{"text": "🌐 Open Dashboard", "url": dashboard_url}])
     rows.append([nav_button("❓ Help", "help")])
     if ctx.get("reset_url"):
-        rows.append([{"text": "Reset Password", "url": ctx["reset_url"]}])
+        rows.append([{"text": "🔑 Reset Password", "url": ctx["reset_url"]}])
     return text, _kb(rows)
 
 
@@ -253,6 +253,52 @@ def render_register_prompt(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
             "✅ <b>Account created!</b>\n\n"
             "You're all set. A welcome email has been sent.\n\n"
             "Use <b>/menu</b> to get started."
+        )
+        rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
+    else:
+        text = "Something went wrong. Use /menu to start over."
+        rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
+    return text, _kb(rows)
+
+
+def render_login_prompt(ctx: Optional[Dict[str, Any]] = None) -> Rendered:
+    """In-bot login: email -> password -> verify against Supabase Auth.
+
+    Mirrors ``render_register_prompt``. ``ctx`` keys: login_step
+    (enter_email|enter_password|success), login_email, login_error.
+    """
+    ctx = ctx or {}
+    step = ctx.get("login_step", "enter_email")
+    error = ctx.get("login_error")
+
+    if step == "enter_email":
+        text = (
+            "\U0001f510 <b>Log in to SIFTER</b>\n\n"
+            "Reply with the email address on your account.\n"
+            "Type /cancel to go back."
+        )
+        if error:
+            text += f"\n\n⚠️ <b>{html.escape(error)}</b>"
+        rows: List[List[Dict[str, str]]] = [_back_row("welcome")]
+    elif step == "enter_password":
+        email = html.escape(str(ctx.get("login_email") or ""))
+        text = (
+            f"\U0001f511 <b>Enter your password</b>\n\n"
+            f"Email: <b>{email}</b>\n\n"
+            "Reply with your password.\n"
+            "(For your safety, your message is deleted right after.)\n"
+            "Type /cancel to go back."
+        )
+        if error:
+            text += f"\n\n⚠️ <b>{html.escape(error)}</b>"
+        rows = [
+            [{"text": "🔑 Forgot password?", "callback_data": "access|forgot_password"}],
+            _back_row("welcome"),
+        ]
+    elif step == "success":
+        text = (
+            "✅ <b>Logged in!</b>\n\n"
+            "Your Telegram is now linked. Opening your menu…"
         )
         rows = [[nav_button("\U0001f3e0 Main Menu", "main")]]
     else:
