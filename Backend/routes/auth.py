@@ -275,6 +275,83 @@ def handle_bot_signup():
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@auth_bp.route('/bot-login', methods=['POST'])
+def handle_bot_login():
+    """Log an existing user in from Telegram (email + password) and link chat."""
+    try:
+        data = request.json or {}
+        email = (data.get('email') or '').strip().lower()
+        password = (data.get('password') or '').strip()
+        chat_id = str(data.get('chat_id') or '').strip()
+
+        if not email or not password or not chat_id:
+            return jsonify({'error': 'email, password, and chat_id are required'}), 400
+
+        # Rate-limit by chat_id — login is brute-force-sensitive.
+        try:
+            from services.redis_pool import get_redis_client
+            r = get_redis_client()
+            rl_key = f"sifter:login_attempts:{chat_id}"
+            attempts = r.incr(rl_key)
+            if attempts == 1:
+                r.expire(rl_key, 900)  # 15 minutes
+            if attempts > 5:
+                return jsonify({'error': 'Too many attempts. Try again in 15 minutes.'}), 429
+        except Exception:
+            pass  # never let a Redis hiccup block legitimate logins
+
+        supabase = get_supabase_client()
+
+        # Verify credentials. sign_in_with_password raises on bad creds.
+        try:
+            auth_response = supabase.auth.sign_in_with_password({
+                "email": email,
+                "password": password,
+            })
+            user = getattr(auth_response, "user", None)
+            user_id = user.id if user else None
+        except Exception:
+            return jsonify({'error': 'Invalid email or password.'}), 401
+
+        if not user_id:
+            return jsonify({'error': 'Invalid email or password.'}), 401
+
+        # Link / refresh the Telegram chat_id (same pattern as bot-signup).
+        try:
+            existing = (
+                supabase.schema(SCHEMA_NAME).table("telegram_users")
+                .select("id")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not existing.data:
+                supabase.schema(SCHEMA_NAME).table("telegram_users").insert({
+                    "user_id": user_id,
+                    "telegram_chat_id": chat_id,
+                }).execute()
+            else:
+                supabase.schema(SCHEMA_NAME).table("telegram_users").update({
+                    "telegram_chat_id": chat_id,
+                }).eq("user_id", user_id).execute()
+        except Exception as exc:
+            logger.exception("[AUTH] bot-login: telegram_users link failed for %s: %s", user_id, exc)
+            return jsonify({'error': 'Logged in but could not link Telegram. Try /start.'}), 500
+
+        # Clear the rate-limit counter on success.
+        try:
+            get_redis_client().delete(f"sifter:login_attempts:{chat_id}")
+        except Exception:
+            pass
+
+        logger.info("[AUTH] bot-login success: chat_id=%s, user_id=%s", chat_id, user_id)
+        return jsonify({'success': True, 'user_id': user_id}), 200
+
+    except Exception as e:
+        logger.exception("[AUTH] bot-login error: %s", e)
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 # ── Legacy Dashboard Signup ────────────────────────────────────────────────────
 
 @auth_bp.route('/signup', methods=['POST'])
