@@ -63,6 +63,7 @@ class TestAddressPoisoning:
         ok, reason = bot_security.security_screen(
             _signal(wallet_address=poison), ELITE,
             require_elite_wallet=True, check_liquidity=False,
+            check_token_safety_gate=False,
         )
         assert ok is False
         assert reason == "address_poisoning"

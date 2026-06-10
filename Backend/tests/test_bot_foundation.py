@@ -10,6 +10,7 @@ No real Redis / Supabase / ClickHouse / Telegram calls — everything mocked.
 """
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -227,8 +228,11 @@ class TestBotExecutionSafeNoop:
         from services.bot_execution import BotTradeRequest
         router = self._patched_router()
         with patch("services.bot_execution.Config") as cfg, \
-             patch.object(router, "_kill_switch_active", return_value=True):
+             patch.object(router, "_kill_switch_active", return_value=True), \
+             patch.dict(os.environ, {"LIVE_TRADING_CONFIRMED": "true"}):
             cfg.BOT_EXECUTION_MODE = "live"
+            cfg.is_live_execution_ready.return_value = True
+            cfg.TREASURY_WALLET_ADDRESS = "SomeTreasuryAddress"
             result = router.execute(BotTradeRequest(
                 user_id="u1", token_address="TOK", side="buy", requested_usd=10.0,
             ))
@@ -486,7 +490,7 @@ class TestAutoTradeScreens:
     def test_consensus_picker_has_presets_and_custom(self):
         from services import bot_screens
         text, kb = bot_screens.render_consensus_picker({"consensus_threshold": 5})
-        flat = json.dumps(kb)
+        flat = json.dumps(kb, ensure_ascii=False)
         for n in (1, 3, 5, 8, 10, 12, 15):
             assert f"set|consensus|{n}" in flat
         assert "set|consensus|custom" in flat
@@ -652,11 +656,13 @@ class TestAutonomousBotQueue:
             return t
 
         table.side_effect = table_side_effect
-        result = queue_autonomous_trade(
-            user_id="u1",
-            signal={"signal_key": "sig1", "token_address": "TOK", "wallet_count": 1, "total_usd": 200},
-            supabase=supabase,
-        )
+        with patch("services.bot_security.security_screen", return_value=(True, None)), \
+             patch("services.bot_autotrade._load_elite_set", return_value=set()):
+            result = queue_autonomous_trade(
+                user_id="u1",
+                signal={"signal_key": "sig1", "token_address": "TOK", "wallet_count": 1, "total_usd": 200},
+                supabase=supabase,
+            )
         assert result["queue_id"] == 7
         assert result["status"] == "pending"
 
@@ -667,6 +673,8 @@ class TestAutonomousBotQueue:
         store = object.__new__(BotPositionStore)
         store._table = MagicMock()
         store._log_trade = MagicMock()
+        # select chain returns empty (no existing position) so insert path is taken
+        store._table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         store._table.return_value.insert.return_value.execute.return_value.data = [{"id": 1}]
 
         req = BotTradeRequest(
@@ -722,7 +730,7 @@ class TestTokenSafetyAutotrade:
     def test_unsafe_token_skipped_with_reason(self):
         from services import bot_autotrade
         supabase = self._supabase()
-        with patch("services.bot_security.check_token_safety", return_value=(False, "mint_not_revoked")), \
+        with patch("services.bot_security.security_screen", return_value=(False, "mint_not_revoked")), \
              patch.object(bot_autotrade, "_load_elite_set", return_value=set()):
             result = bot_autotrade.queue_autonomous_trade(
                 user_id="u1",
