@@ -966,6 +966,7 @@ def execute_bot_auto_trade(trade_id: int):
 
 def _notify_bot_queue_result(queue_id: int, result: dict, supabase):
     """Best-effort notification after the autonomous bot enters a trade."""
+    from services.supabase_client import SCHEMA_NAME
     try:
         bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
         if not bot_token:
@@ -1406,6 +1407,7 @@ def sync_elite_15_to_monitor():
 
 def _send_elite_replacement_notification(to_add, to_remove, elite_15, supabase):
     """Notify all autotrader users when Elite 15 composition changes."""
+    from services.supabase_client import SCHEMA_NAME
     try:
         # Fetch all autotrader users with Telegram linked
         users_res = (

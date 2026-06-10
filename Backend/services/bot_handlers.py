@@ -1536,7 +1536,7 @@ def _show_elite_signal_picker(notifier, chat_id: str) -> None:
             "text": f"Trade {ticker}",
             "callback_data": f"exec|manual_ca|{addr}",
         }])
-    rows.append(_back_row("main"))
+    rows.append(bot_screens._back_row("main"))
     notifier.send_message(chat_id, "\n".join(lines), reply_markup={"inline_keyboard": rows})
 
 
@@ -2133,7 +2133,7 @@ def _open_paper_mode_toggle(notifier, chat_id: str) -> None:
     rows: List[List[Dict[str, str]]] = [
         [{"text": "🔴 Disable Paper Mode" if current else "🧪 Enable Paper Mode",
           "callback_data": f"set|paper_mode|{'off' if current else 'on'}"}],
-        _back_row("autotrade"),
+        bot_screens._back_row("autotrade"),
     ]
     notifier.send_message(chat_id, text, reply_markup={"inline_keyboard": rows})
 
