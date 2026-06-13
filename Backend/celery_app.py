@@ -125,6 +125,20 @@ celery.conf.beat_schedule = {
         'options': {'expires': 9},
     },
 
+    # Forward price-path capture for the co-buy substrate — every 3 minutes
+    'capture-cobuy-price-paths': {
+        'task': 'tasks.capture_cobuy_price_paths',
+        'schedule': 180.0,
+        'options': {'expires': 170, 'queue': 'stats'},
+    },
+
+    # Offline variant re-scoring (record-once → score-many) — every 30 minutes
+    'score-paper-variants': {
+        'task': 'tasks.score_paper_variants',
+        'schedule': 1800.0,
+        'options': {'expires': 1700, 'queue': 'stats'},
+    },
+
     # Paper trader daily digest — 7:00 AM UTC
     'paper-trader-daily-digest': {
         'task': 'tasks.send_paper_trader_daily_digest',
@@ -198,6 +212,8 @@ celery.conf.task_routes = {
     'tasks.send_paper_trader_daily_digest': {'queue': 'stats'},
     'tasks.ingest_helius_signal':    {'queue': 'alerts'},
     'tasks.flush_signal_aggregator': {'queue': 'alerts'},
+    'tasks.capture_cobuy_price_paths': {'queue': 'stats'},
+    'tasks.score_paper_variants':      {'queue': 'stats'},
     'tasks.send_telegram_alert_async':    {'queue': 'alerts'},
     'tasks.execute_bot_auto_trade':       {'queue': 'alerts'},
     'tasks.monitor_bot_positions':      {'queue': 'alerts'},

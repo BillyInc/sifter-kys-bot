@@ -1537,9 +1537,67 @@ def check_paper_trader_exits():
         return {"status": "error", "error": str(exc)}
 
 
-# =============================================================================
-# SIGNAL AGGREGATOR TASKS
-# =============================================================================
+@celery.task(name='tasks.capture_cobuy_price_paths')
+def capture_cobuy_price_paths():
+    """Forward price-path capture for tokens in the record-once substrate (§1/§3).
+
+    For every token with a recent ``paper_raw_cobuys`` event, append the current price to
+    ``paper_price_paths``. This builds the forward path the offline variant scorer replays
+    exits on. Live forward capture only — historical OHLCV backfill is deferred (PENDING_OHLCV).
+    """
+    try:
+        from datetime import datetime, timedelta, timezone
+        from services.supabase_client import get_supabase_client, SCHEMA_NAME
+        from services.solana_tracker_client import get_st_client
+
+        sb = get_supabase_client()
+        since = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+        rows = (
+            sb.schema(SCHEMA_NAME).table("paper_raw_cobuys")
+            .select("token_address").gte("ts", since).execute().data or []
+        )
+        tokens = sorted({r["token_address"] for r in rows if r.get("token_address")})
+        st = get_st_client()
+        now = datetime.now(timezone.utc).isoformat()
+        captured = 0
+        for token in tokens:
+            try:
+                data = st.get_token_info(token)
+                pools = (data or {}).get("pools") or []
+                if not pools:
+                    continue
+                pool = max(pools, key=lambda p: p.get("liquidity", {}).get("usd", 0))
+                price = float(pool.get("price", {}).get("usd") or 0)
+                if price <= 0:
+                    continue
+                sb.schema(SCHEMA_NAME).table("paper_price_paths").upsert(
+                    {"token_address": token, "ts": now, "price": price},
+                    ignore_duplicates=True,
+                ).execute()
+                captured += 1
+            except Exception:
+                continue
+        logger.info("[PRICE PATH] action=capture tokens=%d captured=%d", len(tokens), captured)
+        return {"status": "ok", "tokens": len(tokens), "captured": captured}
+    except Exception as exc:
+        logger.error("[PRICE PATH] action=capture status=error error=%s", str(exc)[:200])
+        return {"status": "error", "error": str(exc)}
+
+
+@celery.task(name='tasks.score_paper_variants')
+def score_paper_variants(variant_ids: list | None = None):
+    """Re-score all (or a subset of) paper variants offline against the recorded substrate.
+
+    Pure score-many: reads paper_raw_cobuys + paper_price_paths + paper_variants and writes
+    paper_variant_signals. Never captures live signals — safe to run as often as desired.
+    """
+    try:
+        from services.variant_scorer import get_variant_scorer
+        result = get_variant_scorer().score_all(variant_ids)
+        return {"status": "ok", **result}
+    except Exception as exc:
+        logger.error("[SCORER] action=score status=error error=%s", str(exc)[:200])
+        return {"status": "error", "error": str(exc)}
 
 @celery.task(name='tasks.ingest_helius_signal')
 def ingest_helius_signal(signal: dict):
@@ -1582,6 +1640,15 @@ def ingest_helius_signal(signal: dict):
                 logger.info("[SIGNAL] action=dedup token=%s tx=%s", token_address[:8], tx_hash[:12])
                 return {"status": "duplicate", "tx_hash": tx_hash}
             r.setex(dedup_key, 3600, "1")  # 1hr dedup window
+
+        # Cluster co-entry assembler (record-once substrate + bot-cluster co-entry emit).
+        # Runs alongside the legacy single-wallet aggregator below — both consume the
+        # same per-wallet buy. Best-effort: never block the legacy path on assembler error.
+        try:
+            from services.cobuy_assembler import ingest_buy_from_signal
+            ingest_buy_from_signal(signal)
+        except Exception as exc:
+            logger.error("[SIGNAL] action=cobuy_assemble status=error error=%s", str(exc)[:200])
 
         from services.signal_aggregator import get_aggregator
         get_aggregator().receive(signal)

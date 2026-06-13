@@ -126,8 +126,13 @@ class PaperTrader:
         except Exception as exc:
             print(f"[PAPER TRADER] State restore failed: {exc}")
 
+    # Sources this paper trader will simulate. ``cluster`` is the new co-entry path;
+    # ``elite15`` is kept for backward compatibility (single-wallet legacy); ``single``/
+    # ``manual`` cover List-A single-wallet and manual-trader paper variants.
+    ACCEPTED_SOURCES = frozenset({"elite15", "cluster", "single", "manual"})
+
     def process_signal(self, signal: Dict):
-        if signal.get("source") != "elite15" or signal.get("side") != "buy":
+        if signal.get("source") not in self.ACCEPTED_SOURCES or signal.get("side") != "buy":
             return
 
         settings = self.runtime.get_settings()
@@ -137,7 +142,7 @@ class PaperTrader:
                 component="paper_trader",
                 event_type="signal_ignored",
                 status="disabled",
-                message="Elite 15 signal ignored because paper trader is stopped",
+                message=f"{signal.get('source')} signal ignored because paper trader is stopped",
                 signal_key=signal.get("signal_key"),
                 token_address=signal.get("token_address"),
                 payload={"source": signal.get("source"), "side": signal.get("side")},
@@ -385,6 +390,10 @@ class PaperTrader:
 
         entry_price = float(execution.effective_price_usd or entry_price)
         token_amount = float(execution.token_amount or 0)
+        # Cluster co-entry positions trace back to <cluster_id>:<token> so we can later
+        # attribute a position to the cluster + variant that opened it (§4A).
+        source = signal.get("source") or "elite15"
+        signal_type = "cluster" if source == "cluster" else sizing.signal_type
         position = PaperPosition(
             token_address=token_address,
             token_ticker=signal.get("token_ticker") or snapshot["ticker"] or "UNKNOWN",
@@ -392,7 +401,7 @@ class PaperTrader:
             entry_size_usd=float(execution.executed_usd),
             token_amount=token_amount,
             wallet_count=int(signal.get("wallet_count") or 1),
-            signal_type=sizing.signal_type,
+            signal_type=signal_type,
             signal_key=signal.get("signal_key") or "",
             opened_at=time.time(),
         )
@@ -533,6 +542,28 @@ class PaperTrader:
             }
         ).execute()
         self._log_entry_event(position, signal, outcome)
+        # Self-describing entry log (§5): cluster + triggering wallets + fill/chase, so the
+        # live position's full provenance is reconstructable from logs alone.
+        trigger_price = signal.get("trigger_price")
+        fill_price = position.entry_price
+        chase_ratio = (
+            round(fill_price / trigger_price, 4)
+            if trigger_price and float(trigger_price) > 0 and fill_price else None
+        )
+        entry_payload = {
+            "variant_id": f"{signal.get('cluster_id')}|live" if signal.get("cluster_id") else None,
+            "cluster_id": signal.get("cluster_id"),
+            "source": signal.get("source"),
+            "trigger_wallets": signal.get("trigger_wallets"),
+            "wallet_tiers": signal.get("wallet_tiers"),
+            "entry_style": signal.get("entry_style"),
+            "trigger_price": trigger_price,
+            "fill_price": fill_price,
+            "chase_ratio": chase_ratio,
+            "signal_strength": signal.get("signal_strength"),
+            "raw_event_id": signal.get("raw_event_id"),
+            "execution": outcome.get("execution"),
+        }
         self.runtime.log(
             severity="info",
             component="paper_trader",
@@ -541,7 +572,7 @@ class PaperTrader:
             message="Paper entry filled",
             signal_key=position.signal_key,
             token_address=position.token_address,
-            payload=outcome.get("execution") or {},
+            payload=entry_payload,
         )
         self.runtime.update_active_run_summary(self.get_summary())
 
