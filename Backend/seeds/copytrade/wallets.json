@@ -1,0 +1,2240 @@
+{
+  "schema": "sna_wallets_v1",
+  "market_phase": "bear",
+  "as_of": "2026-06",
+  "count": 124,
+  "wallets": [
+    {
+      "address": "CkunCFewEoohH9PKhdxxvpidJq9JXyKExcJcYFWg3egf",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 35.7,
+      "nonrunner_ev_pct": 10.8,
+      "profit_factor": 2.72,
+      "runner_to_ath_x": 51.0,
+      "tokens_30d": 185,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 23,
+        "first_pump": 5,
+        "first_dip": 72
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "98PTpnidebTsxYf68JXoGexAPSSkd1BTYkr8Jea7iEYr",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 30.0,
+      "nonrunner_ev_pct": 8.3,
+      "profit_factor": 2.03,
+      "runner_to_ath_x": 47.9,
+      "tokens_30d": 130,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 30,
+        "first_pump": 7,
+        "first_dip": 63
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "8MA2HGoH3fFdVMEZMtCxYpSFwkPB8WV8BbwFLermPZFo",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 28.4,
+      "nonrunner_ev_pct": -2.2,
+      "profit_factor": 0.79,
+      "runner_to_ath_x": 25.2,
+      "tokens_30d": 229,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 74,
+        "first_pump": 17,
+        "first_dip": 10
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "FvkaeD3BJgzPRUZPL3v9WZBC1oTuzDWJreT8DMZzqWuE",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 25.0,
+      "nonrunner_ev_pct": 13.7,
+      "profit_factor": 2.55,
+      "runner_to_ath_x": 41.3,
+      "tokens_30d": 124,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 31,
+        "first_pump": 7,
+        "first_dip": 62
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "HhP9b26VX4YPCY3dRnc2NPgbgR8yMuevhepiKmoaw6qF",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 24.3,
+      "nonrunner_ev_pct": 108.3,
+      "profit_factor": 9.9,
+      "runner_to_ath_x": 18.5,
+      "tokens_30d": 383,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 80,
+        "first_dip": 14
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "C1fPd4ZBCJFx9LEsgvmVD5zM9nphimh9vbXkCyNfaixw",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 16.6,
+      "nonrunner_ev_pct": 9.1,
+      "profit_factor": 2.07,
+      "runner_to_ath_x": 30.9,
+      "tokens_30d": 398,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 21,
+        "first_pump": 6,
+        "first_dip": 73
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "9oKgawE4czK9B7AowqkKe2mBek8xFM4QiAge4YFCbuT5",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 16.4,
+      "nonrunner_ev_pct": 3.1,
+      "profit_factor": 1.27,
+      "runner_to_ath_x": 29.7,
+      "tokens_30d": 580,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 33,
+        "first_pump": 11,
+        "first_dip": 56
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "2wHHnAmdhFaAAsayWAeqKe3snK3KkbRQkRgLwTtz7iCi",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 15.9,
+      "nonrunner_ev_pct": 1.5,
+      "profit_factor": 1.12,
+      "runner_to_ath_x": 28.0,
+      "tokens_30d": 1166,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 1,
+        "first_pump": 97,
+        "first_dip": 2
+      },
+      "signal_strength": "STRONG",
+      "selectable": true
+    },
+    {
+      "address": "CEXKhHxgrEfeJ8RuJJC89a58npQTZuiKxFDNHZNkvbrw",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 14.9,
+      "nonrunner_ev_pct": 58.7,
+      "profit_factor": 9.9,
+      "runner_to_ath_x": 18.5,
+      "tokens_30d": 323,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 1,
+        "first_pump": 57,
+        "first_dip": 42
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "2AqFJzcgSMQ9v7Vwh4yE7Vux8brcrjus1eg4K1zM2zUd",
+      "tier": "ELITE",
+      "role": "bot-roster",
+      "runner_rate_pct": 14.6,
+      "nonrunner_ev_pct": -0.4,
+      "profit_factor": 0.97,
+      "runner_to_ath_x": 26.9,
+      "tokens_30d": 966,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 96,
+        "first_dip": 2
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "2AkmfaxF11TPaiRQbWDJVuoRcNofAwF6D9A5uZbMXj1G",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 13.8,
+      "nonrunner_ev_pct": -1.3,
+      "profit_factor": 0.92,
+      "runner_to_ath_x": 16.1,
+      "tokens_30d": 123,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 16,
+        "first_pump": 21,
+        "first_dip": 63
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "9yxmCNwZcHe63NucU9yvCt7b1ja3jwP9v4T3yFMkQ1Z9",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 13.3,
+      "nonrunner_ev_pct": 2.3,
+      "profit_factor": 1.21,
+      "runner_to_ath_x": 20.5,
+      "tokens_30d": 1143,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 96,
+        "first_dip": 2
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "DNSerxPFDjgbCuGR8xbaH18gCPSEiiTKnuZvVfGjhbHz",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 12.9,
+      "nonrunner_ev_pct": 5.0,
+      "profit_factor": 1.41,
+      "runner_to_ath_x": 17.0,
+      "tokens_30d": 520,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 33,
+        "first_pump": 5,
+        "first_dip": 63
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "22vL22PcYcoAVCwYN8iDW9VrFEYq93TCtr7a6avNVyjL",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 12.6,
+      "nonrunner_ev_pct": 3.7,
+      "profit_factor": 1.34,
+      "runner_to_ath_x": 23.2,
+      "tokens_30d": 1148,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 96,
+        "first_dip": 2
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "Bz4zDut6LybbXjF6VnbXKVzaBKpfLPXaXCfnRkKNrNkj",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 11.8,
+      "nonrunner_ev_pct": -2.4,
+      "profit_factor": 0.93,
+      "runner_to_ath_x": 21.3,
+      "tokens_30d": 152,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 14,
+        "first_pump": 80,
+        "first_dip": 6
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "C76F4BrL22PZDnrADMia4xptmrw15UrCt1PT4YbfoGRq",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 11.4,
+      "nonrunner_ev_pct": -2.7,
+      "profit_factor": 0.86,
+      "runner_to_ath_x": 17.4,
+      "tokens_30d": 114,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 3,
+        "first_pump": 89,
+        "first_dip": 7
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "GpCiZGc4zzthYU57WxZ3QeCnVw4reitwezcpTectUqnW",
+      "tier": "ELITE",
+      "role": "bench",
+      "runner_rate_pct": 10.0,
+      "nonrunner_ev_pct": 2.2,
+      "profit_factor": 1.2,
+      "runner_to_ath_x": 18.2,
+      "tokens_30d": 558,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 28,
+        "first_pump": 15,
+        "first_dip": 57
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "HpBQZoprdtWC9MFZoLEKSi1PvSFhGFYDJt9ryxooUHCT",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 9.8,
+      "nonrunner_ev_pct": -1.3,
+      "profit_factor": 0.82,
+      "runner_to_ath_x": 18.0,
+      "tokens_30d": 2110,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 59,
+        "first_pump": 32,
+        "first_dip": 8
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "C8TaRv2K5BSe854b74xSUS92Lqjyv9Kks5W4Fb6VY3fe",
+      "tier": "ELITE",
+      "role": "bot-roster",
+      "runner_rate_pct": 9.8,
+      "nonrunner_ev_pct": 0.7,
+      "profit_factor": 1.02,
+      "runner_to_ath_x": 26.1,
+      "tokens_30d": 328,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 92,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "2hCmu9yGtFXRgmfBGKX254U2mnpC3B1TkXMXx1WJa463",
+      "tier": "ELITE",
+      "role": "bot-roster",
+      "runner_rate_pct": 9.4,
+      "nonrunner_ev_pct": -1.9,
+      "profit_factor": 0.95,
+      "runner_to_ath_x": 22.6,
+      "tokens_30d": 297,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 92,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "459CAn1vKWk7EGDz2xhsuZ3yvsHPxD3NCDk1NVoYGaW3",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 9.0,
+      "nonrunner_ev_pct": -3.8,
+      "profit_factor": 0.9,
+      "runner_to_ath_x": 23.2,
+      "tokens_30d": 343,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 92,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "5JJZKGkSpLHKPsLEjtC4znvW8XhJVfStzWQXe9mkpwnD",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 8.9,
+      "nonrunner_ev_pct": -6.3,
+      "profit_factor": 0.85,
+      "runner_to_ath_x": 20.0,
+      "tokens_30d": 90,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 91,
+        "first_dip": 7
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "8GCfpN4jR9VjufKxcKmU1Y56upCzw2wJTS6c71pp2mRU",
+      "tier": "ELITE",
+      "role": "cluster-member",
+      "runner_rate_pct": 8.2,
+      "nonrunner_ev_pct": -2.6,
+      "profit_factor": 0.94,
+      "runner_to_ath_x": 24.8,
+      "tokens_30d": 255,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "ESiKag6J5uBXvjNCR6jhWEgG3SH5fTwuK7mhGkAc9CQG",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 18.6,
+      "nonrunner_ev_pct": -8.7,
+      "profit_factor": 0.37,
+      "runner_to_ath_x": 21.2,
+      "tokens_30d": 177,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 66,
+        "first_pump": 27,
+        "first_dip": 7
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "HZqQJv9uoz4piVYkvVo7rAewpifYfD2bw56AArr4VNR",
+      "tier": "HIGH-RISK",
+      "role": "cluster-member",
+      "runner_rate_pct": 13.3,
+      "nonrunner_ev_pct": -37.9,
+      "profit_factor": 0.35,
+      "runner_to_ath_x": 29.9,
+      "tokens_30d": 150,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 11,
+        "first_pump": 89,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "6ud7KC9oL224NWAfRFKPH7Rjw6P9JuXQ5HabnaEr9XCW",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 13.2,
+      "nonrunner_ev_pct": -20.7,
+      "profit_factor": 0.59,
+      "runner_to_ath_x": 17.9,
+      "tokens_30d": 243,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "J6BPUx4r9F6whmW679NRaRoMiwoN3KySY1PCbZcEC7JE",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 13.0,
+      "nonrunner_ev_pct": -40.9,
+      "profit_factor": 0.24,
+      "runner_to_ath_x": 23.0,
+      "tokens_30d": 177,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 11,
+        "first_pump": 89,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "EbuLN49a2z1xBrMCBSRihffQ9GqK7qwgwD4v9o1ZLJ3V",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 12.6,
+      "nonrunner_ev_pct": -38.3,
+      "profit_factor": 0.33,
+      "runner_to_ath_x": 22.8,
+      "tokens_30d": 198,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 94,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "HrAQmLDCvE5q3HdKULU9ZowxGSeNa5GLZmD4MWJzY2wa",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 12.1,
+      "nonrunner_ev_pct": -28.4,
+      "profit_factor": 0.39,
+      "runner_to_ath_x": 22.9,
+      "tokens_30d": 240,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 5,
+        "first_pump": 95,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "EkpdJ1HVckTnkD8MZnkgX3yULQmQiB2qUMbvJYPDvgLg",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.8,
+      "nonrunner_ev_pct": -26.0,
+      "profit_factor": 0.45,
+      "runner_to_ath_x": 22.0,
+      "tokens_30d": 204,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 4,
+        "first_pump": 96,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "BPb8AkGxBHj6DkC4FGu95kbGbxKhunG2bdAyLvVxjppC",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.7,
+      "nonrunner_ev_pct": -23.9,
+      "profit_factor": 0.46,
+      "runner_to_ath_x": 23.3,
+      "tokens_30d": 274,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "AoiZ7B3GNG6NYrUany2zvjAEPxgjKz8aDMJMggYKMQVr",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.7,
+      "nonrunner_ev_pct": -26.7,
+      "profit_factor": 0.51,
+      "runner_to_ath_x": 24.6,
+      "tokens_30d": 171,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "3QJXBp8GrsPQttF4Pc4RHzGJGe5CwoPPwMx2uSnsLasy",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.5,
+      "nonrunner_ev_pct": -27.0,
+      "profit_factor": 0.48,
+      "runner_to_ath_x": 17.8,
+      "tokens_30d": 200,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "HnPGo9ZNvfVoRoqd5T2tCGkuoQNtE6vKmLR3viyMCD7V",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.5,
+      "nonrunner_ev_pct": -34.3,
+      "profit_factor": 0.38,
+      "runner_to_ath_x": 25.8,
+      "tokens_30d": 183,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 4,
+        "first_pump": 96,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "DqURvTecjQE5sc2QZ2sGHnMHJPg4EYzeCP274BtvAC9W",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.4,
+      "nonrunner_ev_pct": -38.7,
+      "profit_factor": 0.35,
+      "runner_to_ath_x": 21.9,
+      "tokens_30d": 228,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 89,
+        "first_dip": 11
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "GBsZjBmE99LnVVvJqMtEpGWgtDMoR2jmLW4rjQqMwAvS",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.4,
+      "nonrunner_ev_pct": -20.9,
+      "profit_factor": 0.55,
+      "runner_to_ath_x": 24.3,
+      "tokens_30d": 211,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "21CNKQH5tYrsd1KNSeZgmJdoa6D4uf1swiW8WR6kbe8y",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.3,
+      "nonrunner_ev_pct": -35.6,
+      "profit_factor": 0.32,
+      "runner_to_ath_x": 23.9,
+      "tokens_30d": 168,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "5EU3WxZYkN1UvXV5TuNh2QdX2L5nVyZHCWi6cM8oGEjV",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.2,
+      "nonrunner_ev_pct": -33.2,
+      "profit_factor": 0.42,
+      "runner_to_ath_x": 23.2,
+      "tokens_30d": 152,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 13,
+        "first_pump": 87,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "FUZj4hhY19rmynAyzKL275xuw5BRQ3n4gjbp3MyTc9LU",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.1,
+      "nonrunner_ev_pct": -40.0,
+      "profit_factor": 0.35,
+      "runner_to_ath_x": 28.1,
+      "tokens_30d": 126,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 13,
+        "first_pump": 87,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "5QFEVK1rLB58tqGahcUx2ctA25Mr31mSWmYVXnp74pk7",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.0,
+      "nonrunner_ev_pct": -32.8,
+      "profit_factor": 0.45,
+      "runner_to_ath_x": 39.2,
+      "tokens_30d": 145,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "9FvDUvAvLh5hpGtTyaF8mdcQccLQnBYFYvVZj2httW9m",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.0,
+      "nonrunner_ev_pct": -29.6,
+      "profit_factor": 0.42,
+      "runner_to_ath_x": 22.8,
+      "tokens_30d": 164,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 12,
+        "first_pump": 88,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "F1iEUHG8L9j931V5Qopns5vCXZz8hXmNYs8K4KPdE5k9",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 11.0,
+      "nonrunner_ev_pct": -35.7,
+      "profit_factor": 0.37,
+      "runner_to_ath_x": 23.6,
+      "tokens_30d": 136,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 92,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "FakckxEr9U29sWK7s3PNiit8c23xTi7XspbvB4nfLQih",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.8,
+      "nonrunner_ev_pct": -15.0,
+      "profit_factor": 0.51,
+      "runner_to_ath_x": 23.2,
+      "tokens_30d": 499,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 47,
+        "first_pump": 37,
+        "first_dip": 16
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "CQTc3FxSukLQQUseN4RqxRCLRNWxuQXUyCNFH9GQsfKo",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.7,
+      "nonrunner_ev_pct": -15.9,
+      "profit_factor": 0.48,
+      "runner_to_ath_x": 22.8,
+      "tokens_30d": 522,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 48,
+        "first_pump": 35,
+        "first_dip": 18
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "8Gs9J1t595q7tgfFP4pfAJxLKudTNXuBSJeG2EyjERwp",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.7,
+      "nonrunner_ev_pct": -17.2,
+      "profit_factor": 0.58,
+      "runner_to_ath_x": 18.8,
+      "tokens_30d": 280,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 94,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "6phXA2tFGUaZRC6e69oen7zec55d9xEUMvzTB9NNeycM",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.6,
+      "nonrunner_ev_pct": -10.2,
+      "profit_factor": 0.58,
+      "runner_to_ath_x": 23.3,
+      "tokens_30d": 132,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 60,
+        "first_pump": 22,
+        "first_dip": 18
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "HV4cjkteGZ5g9HywDrM1HPC9f95PS9upzvH3MmgPfs53",
+      "tier": "HIGH-RISK",
+      "role": "cluster-member",
+      "runner_rate_pct": 10.6,
+      "nonrunner_ev_pct": -15.3,
+      "profit_factor": 0.5,
+      "runner_to_ath_x": 21.5,
+      "tokens_30d": 527,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 47,
+        "first_pump": 35,
+        "first_dip": 17
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "B1R4D1cdCrSv9dTGCcCskGh4Ujg4NejxJ839PRNwd6fD",
+      "tier": "CONSERVATIVE",
+      "role": "cluster-member",
+      "runner_rate_pct": 10.6,
+      "nonrunner_ev_pct": 1.7,
+      "profit_factor": 1.05,
+      "runner_to_ath_x": 16.7,
+      "tokens_30d": 170,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 95,
+        "first_dip": 5
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "7EGc1egFCxbeHWgUfZWEYiy1kFurtoKRBqChBBDiD3qv",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.5,
+      "nonrunner_ev_pct": -29.0,
+      "profit_factor": 0.5,
+      "runner_to_ath_x": 36.3,
+      "tokens_30d": 153,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 12,
+        "first_pump": 88,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "EA91nzXp5QWMVg5ZabnuxD3B2N9yDMNsZkavbAGAKv6F",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.3,
+      "nonrunner_ev_pct": -38.0,
+      "profit_factor": 0.32,
+      "runner_to_ath_x": 22.8,
+      "tokens_30d": 165,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "6kD49gY4jGTFNuLjRqC8ygsgTJYmLLDALAnCDVB9SAbD",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.3,
+      "nonrunner_ev_pct": -6.6,
+      "profit_factor": 0.86,
+      "runner_to_ath_x": 26.1,
+      "tokens_30d": 203,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 92,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "Fk6qmUv57rj57a9WibhSVgb3qWLrR3sn2aPGxAZJSmS9",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.2,
+      "nonrunner_ev_pct": -23.4,
+      "profit_factor": 0.52,
+      "runner_to_ath_x": 19.7,
+      "tokens_30d": 187,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 90,
+        "first_dip": 8
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "AzSgLYPLDMF5W1FfhB2SkC39LwiNAGy6sm2KC83qnQBq",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.2,
+      "nonrunner_ev_pct": -21.4,
+      "profit_factor": 0.57,
+      "runner_to_ath_x": 25.1,
+      "tokens_30d": 236,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 4,
+        "first_pump": 96,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "FDMssDbA5XcxpBV5gv7JXgP3TAiTNLv3ynJiCC6dWijH",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.2,
+      "nonrunner_ev_pct": -6.8,
+      "profit_factor": 0.84,
+      "runner_to_ath_x": 27.5,
+      "tokens_30d": 254,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 3,
+        "first_pump": 97,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "4LcCHiXLydzePUy3zt7HCdw9eFJDL8bWXZFRVcagak8y",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 10.2,
+      "nonrunner_ev_pct": -25.0,
+      "profit_factor": 0.52,
+      "runner_to_ath_x": 34.6,
+      "tokens_30d": 128,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 10,
+        "first_pump": 90,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "31j5whyH5oBoz5UgnsgbSN64efejspNaru8XzF1S8gaE",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 9.9,
+      "nonrunner_ev_pct": 1.5,
+      "profit_factor": 1.14,
+      "runner_to_ath_x": 17.6,
+      "tokens_30d": 547,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 29,
+        "first_pump": 15,
+        "first_dip": 56
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "6fABBiGq3jB3t5BErddKx2J4Pr5SBeu633QZJyCkeUCB",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.8,
+      "nonrunner_ev_pct": -11.0,
+      "profit_factor": 0.75,
+      "runner_to_ath_x": 30.0,
+      "tokens_30d": 246,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "BmLiGLuf4NaXqxTJRRfH7dJvg11mtYGdzg6K2hiJPRtR",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.8,
+      "nonrunner_ev_pct": -24.5,
+      "profit_factor": 0.54,
+      "runner_to_ath_x": 24.5,
+      "tokens_30d": 163,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 10,
+        "first_pump": 90,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "2jramWhwFBXj61AkbZ1CGW8EWykGyqEwjG6tZgoo9tz2",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.8,
+      "nonrunner_ev_pct": -10.4,
+      "profit_factor": 0.78,
+      "runner_to_ath_x": 58.3,
+      "tokens_30d": 164,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 12,
+        "first_pump": 88,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "5oKVzRD7nETWiSeDhAAreFCSd77Z7brQWrfPsssYyBD",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 9.7,
+      "nonrunner_ev_pct": 6.8,
+      "profit_factor": 1.31,
+      "runner_to_ath_x": 16.3,
+      "tokens_30d": 279,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 33,
+        "first_pump": 35,
+        "first_dip": 32
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "F6pipncJ7uTx5prTvTcwsE5x7EMwZBVMK6gz4jo4Ta7d",
+      "tier": "HIGH-RISK",
+      "role": "cluster-member",
+      "runner_rate_pct": 9.7,
+      "nonrunner_ev_pct": -15.8,
+      "profit_factor": 0.63,
+      "runner_to_ath_x": 21.6,
+      "tokens_30d": 277,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "7tN7qUzuTDXQVe44GDNehyjxfixvECBnGtzYTuUXoXER",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.7,
+      "nonrunner_ev_pct": -45.2,
+      "profit_factor": 0.25,
+      "runner_to_ath_x": 24.7,
+      "tokens_30d": 165,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 5,
+        "first_pump": 95,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "7ogrnhx98HnKeSMoDbRLQsLb8LfF4nHvM7NXmQ7TYaLp",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.6,
+      "nonrunner_ev_pct": -5.3,
+      "profit_factor": 0.85,
+      "runner_to_ath_x": 29.3,
+      "tokens_30d": 314,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "5qx7yV4Cwg67iEDSuszwMHYrQDJRnSCDF5DS6ZPAFvnV",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 9.5,
+      "nonrunner_ev_pct": -2.0,
+      "profit_factor": 0.92,
+      "runner_to_ath_x": 17.7,
+      "tokens_30d": 316,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 26,
+        "first_pump": 37,
+        "first_dip": 37
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "GyLJnK3dyq7F2dNPURh3pbpGrkkBrb4eEwUkG4dGV2F1",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.4,
+      "nonrunner_ev_pct": -14.8,
+      "profit_factor": 0.65,
+      "runner_to_ath_x": 33.7,
+      "tokens_30d": 309,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 94,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "eLFGZWo8geJuXHnYKD1zGCPE659jkkr5Nsen5qVhf7n",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.4,
+      "nonrunner_ev_pct": -22.4,
+      "profit_factor": 0.59,
+      "runner_to_ath_x": 25.3,
+      "tokens_30d": 170,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 9,
+        "first_pump": 91,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "CASStbiKKzQrFvs835DagrLid7saGriDUHv39Mr8SRUG",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.3,
+      "nonrunner_ev_pct": -4.3,
+      "profit_factor": 0.7,
+      "runner_to_ath_x": 21.6,
+      "tokens_30d": 247,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 11,
+        "first_pump": 38,
+        "first_dip": 51
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "A7MgmrHLdN2bPMPytEVmqCkj6XeqRmqdm5fqwxYba3o1",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.3,
+      "nonrunner_ev_pct": -7.7,
+      "profit_factor": 0.79,
+      "runner_to_ath_x": 28.0,
+      "tokens_30d": 312,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 94,
+        "first_dip": 0
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "HPviVX3uyjHEgScheiwSdmm4YW3tUNmpwrD1gxiSohvs",
+      "tier": "HIGH-RISK",
+      "role": "bot-roster",
+      "runner_rate_pct": 9.2,
+      "nonrunner_ev_pct": -33.5,
+      "profit_factor": 0.41,
+      "runner_to_ath_x": 28.0,
+      "tokens_30d": 153,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 10,
+        "first_pump": 90,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "F1uUKi2ADfNkRTGrveuBYT6qEhmHudx2sGNdmTsDUw61",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 9.0,
+      "nonrunner_ev_pct": -8.1,
+      "profit_factor": 0.83,
+      "runner_to_ath_x": 21.5,
+      "tokens_30d": 201,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 11,
+        "first_pump": 89,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "9DdVwYdZBXiMLsi64s3BQ8HJuUsqUTTzankeLgwn5F3w",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.8,
+      "nonrunner_ev_pct": -5.3,
+      "profit_factor": 0.64,
+      "runner_to_ath_x": 18.6,
+      "tokens_30d": 410,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 95,
+        "first_dip": 5
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "22iSy72XF57fZAjarfNUrFimMDsKnF7oEwrFuzmg8Br5",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.8,
+      "nonrunner_ev_pct": -23.9,
+      "profit_factor": 0.52,
+      "runner_to_ath_x": 41.7,
+      "tokens_30d": 148,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 14,
+        "first_pump": 86,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "GipAZzdYccy9CNgDA8HjSFfGQtURc2b93QeRj4Y2Xpp8",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.7,
+      "nonrunner_ev_pct": -4.0,
+      "profit_factor": 0.83,
+      "runner_to_ath_x": 15.6,
+      "tokens_30d": 435,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 18,
+        "first_pump": 30,
+        "first_dip": 52
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "Aj1mmgsHwenqHGkETy5xyY2FLdE8cJ2jZJe82FxVPZZh",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.7,
+      "nonrunner_ev_pct": -2.5,
+      "profit_factor": 0.87,
+      "runner_to_ath_x": 18.5,
+      "tokens_30d": 126,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 69,
+        "first_pump": 26,
+        "first_dip": 5
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "4PrW4vBqZA6GHCGb9Am25DL8eHs7Sjzw8Xfq4GgyRLi5",
+      "tier": "CONSERVATIVE",
+      "role": "bot-roster",
+      "runner_rate_pct": 8.7,
+      "nonrunner_ev_pct": -1.3,
+      "profit_factor": 0.93,
+      "runner_to_ath_x": 18.8,
+      "tokens_30d": 126,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 70,
+        "first_pump": 24,
+        "first_dip": 6
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "6ZeseRfnsVfhKaRuX3YX3RAMkffUrmdHTD3UE56mMr2v",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.7,
+      "nonrunner_ev_pct": -33.7,
+      "profit_factor": 0.45,
+      "runner_to_ath_x": 25.5,
+      "tokens_30d": 138,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "EdWS7QUmhr3Yn5ymeFJqBwrNGP14PCbcmaANNaYk52k4",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": -0.5,
+      "profit_factor": 0.95,
+      "runner_to_ath_x": 20.0,
+      "tokens_30d": 662,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 49,
+        "first_pump": 42,
+        "first_dip": 9
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "9DX32q4BTWi9BSAxWpD2AKNKsfHtKHcM4bzKLwLHiZrB",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": -3.5,
+      "profit_factor": 0.81,
+      "runner_to_ath_x": 21.8,
+      "tokens_30d": 441,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 19,
+        "first_pump": 24,
+        "first_dip": 57
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "DziYHHhWouigwL5VsLYNwhC3kpRQRW9MQPtva2ox9uht",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": 11.3,
+      "profit_factor": 4.13,
+      "runner_to_ath_x": 18.6,
+      "tokens_30d": 561,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 23,
+        "first_pump": 22,
+        "first_dip": 55
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "FmkURNoyTqrNvatYExYhXTestYKmUGYnZpU6RWfyRDXK",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": 5.1,
+      "profit_factor": 1.55,
+      "runner_to_ath_x": 18.2,
+      "tokens_30d": 417,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 73,
+        "first_dip": 20
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "8u9StS3sn8E7uZWAVF6xsRGu9beA6SYwieHpU5BbZeNz",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": -3.3,
+      "profit_factor": 0.87,
+      "runner_to_ath_x": 15.6,
+      "tokens_30d": 197,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 86,
+        "first_dip": 8
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "3igJZZU4qLWwojFL17GnZzTnmj5So1rgk9poGmttJCQU",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.6,
+      "nonrunner_ev_pct": -26.2,
+      "profit_factor": 0.44,
+      "runner_to_ath_x": 28.6,
+      "tokens_30d": 221,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 6,
+        "first_pump": 94,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "DeJaw4igxaEaQPhorNK18v2YGaNkBDx5G8R7Nrja2hwe",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.5,
+      "nonrunner_ev_pct": -20.4,
+      "profit_factor": 0.39,
+      "runner_to_ath_x": 22.8,
+      "tokens_30d": 554,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 28,
+        "first_pump": 27,
+        "first_dip": 44
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "7AiejjFnUqWpM5jipyyBqv5Qzk2ncNCkE5WA5JqoYeKb",
+      "tier": "CONSERVATIVE",
+      "role": "cluster-member",
+      "runner_rate_pct": 8.3,
+      "nonrunner_ev_pct": -1.7,
+      "profit_factor": 0.88,
+      "runner_to_ath_x": 19.1,
+      "tokens_30d": 722,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "3hzNVQb3oByDhmLEYcqPAXKbqt82DBZj1ErCdsxNrhPt",
+      "tier": "HIGH-RISK",
+      "role": "bench",
+      "runner_rate_pct": 8.1,
+      "nonrunner_ev_pct": -32.4,
+      "profit_factor": 0.46,
+      "runner_to_ath_x": 36.7,
+      "tokens_30d": 136,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 7,
+        "first_pump": 93,
+        "first_dip": 0
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "ByTVt4XoyBfgTvYt3Wt68ktUQSTJX5acgjdzJ1ekPYMg",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 8.0,
+      "nonrunner_ev_pct": 2.3,
+      "profit_factor": 1.2,
+      "runner_to_ath_x": 16.8,
+      "tokens_30d": 323,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 31,
+        "first_pump": 40,
+        "first_dip": 29
+      },
+      "signal_strength": "MODERATE",
+      "selectable": true
+    },
+    {
+      "address": "dshAybqFXYVVTd4mzy9Uk6KD7km8wE9iZgPMYZdzEXc",
+      "tier": "CONSERVATIVE",
+      "role": "bot-roster",
+      "runner_rate_pct": 7.0,
+      "nonrunner_ev_pct": 0.2,
+      "profit_factor": 1.02,
+      "runner_to_ath_x": 18.2,
+      "tokens_30d": 1518,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "BBeft5QozTYdDPagToAjvcvCwBXXjzehxqs24BtCLMRD",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 6.8,
+      "nonrunner_ev_pct": 4.4,
+      "profit_factor": 1.25,
+      "runner_to_ath_x": 20.2,
+      "tokens_30d": 1422,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 17,
+        "first_pump": 12,
+        "first_dip": 71
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "Aeg9rNNqNPw6qQ2RgzBHvz25AF1fPqiVBKupd6YQNZmT",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 6.2,
+      "nonrunner_ev_pct": 15.3,
+      "profit_factor": 6.32,
+      "runner_to_ath_x": 15.0,
+      "tokens_30d": 1441,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 41,
+        "first_dip": 59
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "DrnuP46qcf7b7utTY9Esm46SwkTFhYu4TrtRGTyvkE67",
+      "tier": "DROP",
+      "role": "co-confirmation",
+      "runner_rate_pct": 6.0,
+      "nonrunner_ev_pct": -9.8,
+      "profit_factor": 0.61,
+      "runner_to_ath_x": 16.0,
+      "tokens_30d": 2329,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 96,
+        "first_dip": 4
+      },
+      "signal_strength": "FAIR",
+      "selectable": false
+    },
+    {
+      "address": "ZeusZSzWxHa2uDgxTqCFt7bvbnhKenpnXgbEnkZpsZj",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 6.0,
+      "nonrunner_ev_pct": 5.9,
+      "profit_factor": 2.82,
+      "runner_to_ath_x": 17.8,
+      "tokens_30d": 1492,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 2,
+        "first_pump": 54,
+        "first_dip": 44
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "DGsAe9izritVAnfK52GQeRJUaNn7dXjhJRMBpKyf3RnT",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.8,
+      "nonrunner_ev_pct": 3.3,
+      "profit_factor": 1.25,
+      "runner_to_ath_x": 19.7,
+      "tokens_30d": 2319,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 1,
+        "first_pump": 18,
+        "first_dip": 81
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "F7RV6aBWfniixoFkQNWmRwznDj2vae2XbusFfvMMjtbE",
+      "tier": "DROP",
+      "role": "co-confirmation",
+      "runner_rate_pct": 5.6,
+      "nonrunner_ev_pct": -8.0,
+      "profit_factor": 0.68,
+      "runner_to_ath_x": 16.1,
+      "tokens_30d": 2620,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "FAIR",
+      "selectable": false
+    },
+    {
+      "address": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+      "tier": "DROP",
+      "role": "co-confirmation",
+      "runner_rate_pct": 5.6,
+      "nonrunner_ev_pct": -8.2,
+      "profit_factor": 0.68,
+      "runner_to_ath_x": 16.4,
+      "tokens_30d": 2456,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "FAIR",
+      "selectable": false
+    },
+    {
+      "address": "DQmMnakiKr1YNE2gcpggLCzBrauBwFbQkAaao2FTbjgp",
+      "tier": "DROP",
+      "role": "co-confirmation",
+      "runner_rate_pct": 5.5,
+      "nonrunner_ev_pct": -7.5,
+      "profit_factor": 0.69,
+      "runner_to_ath_x": 15.6,
+      "tokens_30d": 2536,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 97,
+        "first_dip": 3
+      },
+      "signal_strength": "FAIR",
+      "selectable": false
+    },
+    {
+      "address": "J8MVMadH4pQNk6SydW1dLMTKff8KSZ5fXLHLbFwJExob",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.5,
+      "nonrunner_ev_pct": 2.4,
+      "profit_factor": 1.13,
+      "runner_to_ath_x": 23.1,
+      "tokens_30d": 273,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 8,
+        "first_pump": 74,
+        "first_dip": 18
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "fE58Ubmhu5CHjzr5SNHXW5GV8isi8AcTjN64prRmP5W",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.5,
+      "nonrunner_ev_pct": -0.0,
+      "profit_factor": 1.0,
+      "runner_to_ath_x": 18.4,
+      "tokens_30d": 2425,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 1,
+        "first_pump": 19,
+        "first_dip": 80
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "FXLRQAYuGKKsWoSHVsMxU3UoAfjbHY8dySinUeP4FkYP",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.4,
+      "nonrunner_ev_pct": 4.6,
+      "profit_factor": 1.36,
+      "runner_to_ath_x": 21.4,
+      "tokens_30d": 1959,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 25,
+        "first_dip": 74
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "Hz8nhos58ymRCuduX7NuHYCpkL59XND1aR79Z7Lwa3en",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.0,
+      "nonrunner_ev_pct": -3.7,
+      "profit_factor": 0.83,
+      "runner_to_ath_x": 20.4,
+      "tokens_30d": 626,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 96,
+        "first_dip": 4
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "5mayWLJ44oA6F1BzWW5oz5U9pbyRer1bNKzrazWiCV2y",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 5.0,
+      "nonrunner_ev_pct": 2.5,
+      "profit_factor": 1.46,
+      "runner_to_ath_x": 16.3,
+      "tokens_30d": 2078,
+      "entry_style": "first-dip",
+      "style_mix": {
+        "accumulator": 23,
+        "first_pump": 19,
+        "first_dip": 58
+      },
+      "signal_strength": "FAIR",
+      "selectable": true
+    },
+    {
+      "address": "wJDv8gqP8TFqUJdLGdrVpEA1vJ8sdMWiqkHT9ubCEmn",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.5,
+      "nonrunner_ev_pct": -3.1,
+      "profit_factor": 0.66,
+      "runner_to_ath_x": 14.5,
+      "tokens_30d": 2762,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 70,
+        "first_pump": 0,
+        "first_dip": 30
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "222mGpXPbjktz227sUJoc68cmADKAJEBoMhJysyZbPVC",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.2,
+      "nonrunner_ev_pct": 2.7,
+      "profit_factor": 1.3,
+      "runner_to_ath_x": 16.9,
+      "tokens_30d": 2030,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 49,
+        "first_pump": 13,
+        "first_dip": 38
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "3v1jNAQaFbUPZivSqbLKFmpDSfe4eCHdroNqmfPmi1fA",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.2,
+      "nonrunner_ev_pct": 2.3,
+      "profit_factor": 1.35,
+      "runner_to_ath_x": 14.6,
+      "tokens_30d": 899,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 0,
+        "first_pump": 57,
+        "first_dip": 43
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "43QmFc2QPPGyMrSNuPnhvfs8BFW1XVZYFdbwURtWoo9x",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.1,
+      "nonrunner_ev_pct": 0.8,
+      "profit_factor": 1.08,
+      "runner_to_ath_x": 17.1,
+      "tokens_30d": 2238,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 56,
+        "first_pump": 14,
+        "first_dip": 30
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "chibidzTMPMcviyngsqPACukTq2jsU9wraHs2pcZCvn",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.1,
+      "nonrunner_ev_pct": 1.0,
+      "profit_factor": 1.11,
+      "runner_to_ath_x": 15.2,
+      "tokens_30d": 1939,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 55,
+        "first_pump": 11,
+        "first_dip": 34
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "888888UPfaYPxBbfP7kBomJRFB7rZnsbsSeG7kNX2jui",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 4.1,
+      "nonrunner_ev_pct": 2.4,
+      "profit_factor": 1.25,
+      "runner_to_ath_x": 15.9,
+      "tokens_30d": 1648,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 53,
+        "first_pump": 11,
+        "first_dip": 36
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "GHPNRuZ43Bg7UazZeqTP3T2PztMZxU1syTeyGyi1eWtt",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.8,
+      "nonrunner_ev_pct": 2.8,
+      "profit_factor": 1.32,
+      "runner_to_ath_x": 15.8,
+      "tokens_30d": 1663,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 59,
+        "first_pump": 10,
+        "first_dip": 31
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "CXVJewdc79TYR55sz4SGLSWUPz3r4LBJ9Mn93bZ8ZyAz",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.8,
+      "nonrunner_ev_pct": -0.1,
+      "profit_factor": 0.99,
+      "runner_to_ath_x": 16.8,
+      "tokens_30d": 1827,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 32,
+        "first_pump": 47,
+        "first_dip": 20
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "4qMTc3ARQ5VqVurWYpmpJHWHcF3wZSgSgvUPGx4i5rUj",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.7,
+      "nonrunner_ev_pct": -6.6,
+      "profit_factor": 0.78,
+      "runner_to_ath_x": 16.5,
+      "tokens_30d": 622,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 15,
+        "first_pump": 76,
+        "first_dip": 9
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "14tYHNzBrHgSSX3vDHye9isr9Bmwoxn7CdKLEtmeGy2f",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.6,
+      "nonrunner_ev_pct": -0.7,
+      "profit_factor": 0.97,
+      "runner_to_ath_x": 18.8,
+      "tokens_30d": 1273,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 74,
+        "first_pump": 22,
+        "first_dip": 3
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+      "tier": "CONSERVATIVE",
+      "role": "bot-roster",
+      "runner_rate_pct": 3.5,
+      "nonrunner_ev_pct": -3.6,
+      "profit_factor": 0.56,
+      "runner_to_ath_x": 17.2,
+      "tokens_30d": 1447,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 71,
+        "first_pump": 17,
+        "first_dip": 12
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "Eh2odq3L4QDtR8RgNJF8mnFa8BkKQKD4J9UCRicJjpFS",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.4,
+      "nonrunner_ev_pct": -2.6,
+      "profit_factor": 0.72,
+      "runner_to_ath_x": 14.2,
+      "tokens_30d": 1451,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 53,
+        "first_pump": 25,
+        "first_dip": 22
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "BMGKmY3VQFBCoswjmStzWEEiZaqeQii4eG1V3KpbfPzY",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.2,
+      "nonrunner_ev_pct": 1.2,
+      "profit_factor": 1.12,
+      "runner_to_ath_x": 15.8,
+      "tokens_30d": 2077,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 59,
+        "first_pump": 13,
+        "first_dip": 28
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "HY3kp2CW6BbxEgcasUXBZyodPuRnsuodgCjPvpn2GVkk",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.1,
+      "nonrunner_ev_pct": -2.4,
+      "profit_factor": 0.92,
+      "runner_to_ath_x": 17.7,
+      "tokens_30d": 782,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 5,
+        "first_pump": 90,
+        "first_dip": 6
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "9tLumFCbEWRDBvqNuyvdbBQeQTTXMxxXLxDgFBWn2bff",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.1,
+      "nonrunner_ev_pct": -2.6,
+      "profit_factor": 0.88,
+      "runner_to_ath_x": 16.2,
+      "tokens_30d": 1717,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 58,
+        "first_pump": 38,
+        "first_dip": 4
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "HEEf4JUguMz5yvsshQZkMJ8VKm5WRUsYhLwNSCMuoaJ",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 3.1,
+      "nonrunner_ev_pct": 1.5,
+      "profit_factor": 1.23,
+      "runner_to_ath_x": 15.0,
+      "tokens_30d": 2459,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 33,
+        "first_pump": 48,
+        "first_dip": 19
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "912iwi9rQV6mc6RxGa77QDjcQjLgoKvEVahBFeqdpSgN",
+      "tier": "CONSERVATIVE",
+      "role": "bot-roster",
+      "runner_rate_pct": 2.7,
+      "nonrunner_ev_pct": -4.0,
+      "profit_factor": 0.6,
+      "runner_to_ath_x": 14.7,
+      "tokens_30d": 2771,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 58,
+        "first_pump": 29,
+        "first_dip": 13
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "HC8EWBghd22xFPZJKciNeeHnD5KRt6WzFgaWd3nAheLR",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 2.7,
+      "nonrunner_ev_pct": -0.4,
+      "profit_factor": 0.87,
+      "runner_to_ath_x": 14.4,
+      "tokens_30d": 2238,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 87,
+        "first_pump": 3,
+        "first_dip": 10
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "2kdMB6p1YHFCydksFofpgKERqAGDFrfgqQRHHfopjdvX",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 2.4,
+      "nonrunner_ev_pct": -4.8,
+      "profit_factor": 0.89,
+      "runner_to_ath_x": 20.0,
+      "tokens_30d": 2393,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 13,
+        "first_pump": 84,
+        "first_dip": 3
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "CX7HYiparsQFRaD1F3torvumBCoTYNA7jyPzn8PkHPuQ",
+      "tier": "CONSERVATIVE",
+      "role": "cluster-member",
+      "runner_rate_pct": 2.4,
+      "nonrunner_ev_pct": -1.1,
+      "profit_factor": 0.84,
+      "runner_to_ath_x": 16.2,
+      "tokens_30d": 1990,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 54,
+        "first_pump": 28,
+        "first_dip": 18
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "ByXFTsFAPVXRWgBHFGiKca7W1pAUoeMsGfstjpunEf1h",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 2.0,
+      "nonrunner_ev_pct": 0.4,
+      "profit_factor": 1.06,
+      "runner_to_ath_x": 14.9,
+      "tokens_30d": 2526,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 38,
+        "first_pump": 49,
+        "first_dip": 13
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "EQ5idGCxXoD2FVy8ZzbivQiDA3ebcSqCzef9Lgi6GVz5",
+      "tier": "CONSERVATIVE",
+      "role": "cluster-member",
+      "runner_rate_pct": 2.0,
+      "nonrunner_ev_pct": 0.4,
+      "profit_factor": 1.06,
+      "runner_to_ath_x": 14.0,
+      "tokens_30d": 2449,
+      "entry_style": "first-pump",
+      "style_mix": {
+        "accumulator": 38,
+        "first_pump": 49,
+        "first_dip": 14
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "6XzmFvaNivoYZATpfjLmU9yWFU8p1XTiDnjFJQ4JHFGd",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 1.4,
+      "nonrunner_ev_pct": -2.3,
+      "profit_factor": 0.69,
+      "runner_to_ath_x": 15.3,
+      "tokens_30d": 2457,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 75,
+        "first_pump": 18,
+        "first_dip": 7
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    },
+    {
+      "address": "4G9RznKvrtBWn2sRETcAsnSRkectXiDsFP5imBbSiFM2",
+      "tier": "CONSERVATIVE",
+      "role": "bench",
+      "runner_rate_pct": 1.2,
+      "nonrunner_ev_pct": -2.0,
+      "profit_factor": 0.69,
+      "runner_to_ath_x": 12.7,
+      "tokens_30d": 2519,
+      "entry_style": "accumulator",
+      "style_mix": {
+        "accumulator": 77,
+        "first_pump": 15,
+        "first_dip": 8
+      },
+      "signal_strength": "WEAK",
+      "selectable": true
+    }
+  ]
+}

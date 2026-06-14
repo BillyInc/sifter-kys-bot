@@ -1,0 +1,100 @@
+{
+  "counts": {
+    "wallets": 124,
+    "clusters": 12,
+    "variants": 257,
+    "bot_clusters": 3,
+    "manual_clusters": 9
+  },
+  "wallet_tiers": {
+    "ELITE": 23,
+    "HIGH-RISK": 49,
+    "CONSERVATIVE": 48,
+    "DROP": 4
+  },
+  "wallet_roles": {
+    "bench": 95,
+    "cluster-member": 17,
+    "bot-roster": 8,
+    "co-confirmation": 4
+  },
+  "variant_families": {
+    "bot": 54,
+    "manual": 203
+  },
+  "bot_clusters_detail": {
+    "BOT-1": {
+      "members": [
+        [
+          "912iwi9rQV6mc6RxGa77QDjcQjLgoKvEVahBFeqdpSgN",
+          "CONSERVATIVE",
+          "selectable"
+        ],
+        [
+          "C8TaRv2K5BSe854b74xSUS92Lqjyv9Kks5W4Fb6VY3fe",
+          "ELITE",
+          "selectable"
+        ],
+        [
+          "4PrW4vBqZA6GHCGb9Am25DL8eHs7Sjzw8Xfq4GgyRLi5",
+          "CONSERVATIVE",
+          "selectable"
+        ]
+      ],
+      "rr": 45.9,
+      "ev": 27.6
+    },
+    "BOT-2": {
+      "members": [
+        [
+          "2hCmu9yGtFXRgmfBGKX254U2mnpC3B1TkXMXx1WJa463",
+          "ELITE",
+          "selectable"
+        ],
+        [
+          "dshAybqFXYVVTd4mzy9Uk6KD7km8wE9iZgPMYZdzEXc",
+          "CONSERVATIVE",
+          "selectable"
+        ],
+        [
+          "HPviVX3uyjHEgScheiwSdmm4YW3tUNmpwrD1gxiSohvs",
+          "HIGH-RISK",
+          "selectable"
+        ]
+      ],
+      "rr": 48.7,
+      "ev": 17.9
+    },
+    "BOT-3": {
+      "members": [
+        [
+          "2AqFJzcgSMQ9v7Vwh4yE7Vux8brcrjus1eg4K1zM2zUd",
+          "ELITE",
+          "selectable"
+        ],
+        [
+          "DQmMnakiKr1YNE2gcpggLCzBrauBwFbQkAaao2FTbjgp",
+          "DROP",
+          "co-confirmation"
+        ],
+        [
+          "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+          "CONSERVATIVE",
+          "selectable"
+        ]
+      ],
+      "rr": 44.6,
+      "ev": 20.5
+    }
+  },
+  "distinct_bot_wallets": 9,
+  "bot_defaults_key": {
+    "sl": -35,
+    "bot2_sl": -30,
+    "trailing": -40,
+    "daily": 4,
+    "hourly": 2,
+    "base_size": 10,
+    "max_token": 20
+  }
+}

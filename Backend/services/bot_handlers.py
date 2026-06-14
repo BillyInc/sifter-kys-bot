@@ -330,6 +330,7 @@ _NO_RESUME = frozenset({
     "set_alert", "welcome",
     # detail screens that read state from the callback query (absent on resume)
     "trade_detail", "archived_manage", "elite_wallet_detail", "tracked_wallet_detail",
+    "cluster_detail",
 })
 
 
@@ -384,6 +385,12 @@ def _dispatch_screen(notifier, chat_id: str, screen: str, query: Optional[dict])
         _open_positions(notifier, chat_id)
     elif screen == "elite15":
         _open_elite15(notifier, chat_id)
+    elif screen == "clusters":
+        _open_cluster_feed(notifier, chat_id)
+    elif screen == "cluster_detail":
+        _open_cluster_detail(notifier, chat_id, query)
+    elif screen == "single_wallets":
+        _open_single_wallets(notifier, chat_id)
     elif screen == "operator":
         _open_operator(notifier, chat_id)
     elif screen == "account":
@@ -686,6 +693,37 @@ def _open_elite15(notifier, chat_id: str) -> None:
         "wallets": elite,
         "selected_wallets": selected,
     }))
+
+
+def _open_cluster_feed(notifier, chat_id: str) -> None:
+    """Manual-trader cluster feed — all 12 clusters ranked by strength (advisory, ungated)."""
+    from services.copytrade_feed import build_cluster_feed
+    bot_state.push_screen(chat_id, "clusters")
+    _send_rendered(notifier, chat_id, bot_screens.render_cluster_feed({"clusters": build_cluster_feed()}))
+
+
+def _open_cluster_detail(notifier, chat_id: str, query: Optional[dict]) -> None:
+    """Drill-down on a single cluster. Cluster id comes from the callback data."""
+    from services.copytrade_feed import build_cluster_feed
+    cluster_id = None
+    if query:
+        parts = str(query.get("data") or "").split("|")
+        if len(parts) >= 3:
+            cluster_id = parts[2]
+    feed = {c["cluster_id"]: c for c in build_cluster_feed()}
+    cluster = feed.get(cluster_id)
+    if not cluster:
+        _open_cluster_feed(notifier, chat_id)
+        return
+    bot_state.push_screen(chat_id, "cluster_detail")
+    _send_rendered(notifier, chat_id, bot_screens.render_cluster_detail({"cluster": cluster}))
+
+
+def _open_single_wallets(notifier, chat_id: str) -> None:
+    """List-A single-wallet manual menu (advisory, ungated)."""
+    from services.copytrade_feed import build_single_wallet_feed
+    bot_state.push_screen(chat_id, "single_wallets")
+    _send_rendered(notifier, chat_id, bot_screens.render_single_wallets({"wallets": build_single_wallet_feed()}))
 
 
 def _open_operator(notifier, chat_id: str) -> None:
