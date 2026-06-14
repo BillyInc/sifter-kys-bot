@@ -51,7 +51,6 @@ def compute_signal_strength(cluster: Cluster, member_addresses: List[str]) -> in
     Combines: cluster strength band, number of distinct co-buyers, tier weight of the
     triggering members, and an ELITE-present bonus (ELITE confluence ≈ 2x runner rate).
     """
-    cfg = get_copytrade_config()
     members = [cluster.member(a) for a in member_addresses]
     members = [m for m in members if m is not None]
     tier_sum = sum(TIER_WEIGHT.get((m.tier or "").upper(), 1) for m in members)
@@ -157,6 +156,24 @@ class CoBuyAssembler:
                 )
                 if fired:
                     out["fired"].append(c.cluster_id)
+
+            # Opt-in single-wallet copy (default OFF; STEP 7). Only attempt when this is a
+            # selectable List-A wallet AND confluence already exists (≥2 distinct tracked
+            # co-buyers) — so there is no DB/opt-in lookup on the common no-confluence path.
+            if wmeta and wmeta.selectable:
+                distinct = self._distinct_tracked_cobuyers(token_address, 120, ts)
+                if distinct >= 2:
+                    try:
+                        from services.bot_single_copy import route_single_buy
+                        route_single_buy(
+                            wallet, token_address, distinct_cobuyers=distinct,
+                            signal={
+                                "token_address": token_address, "token_ticker": token_ticker,
+                                "side": "buy", "trigger_price": price, "timestamp": int(ts),
+                            },
+                        )
+                    except Exception as exc:
+                        logger.debug("[COBUY] single-copy route failed: %s", exc)
         return out
 
     # ── record-once writers ──────────────────────────────────────────────────

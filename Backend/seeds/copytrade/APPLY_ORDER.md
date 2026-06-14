@@ -17,6 +17,9 @@ idempotent and transaction-wrapped, so re-running is safe.
 
 3. **`auto_trade_limits_addendum.sql`** — sets existing auto-trade users to `daily=4, hourly=2`.
 
+4. **`single_copy_optin.sql`** — creates `bot_single_copy_optins` for the opt-in (default-OFF)
+   gated single-wallet copy path (STEP 7). Safe to apply even if unused.
+
 ## Verification queries
 
 ```sql

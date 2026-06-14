@@ -96,6 +96,9 @@ def render_main(ctx: Dict[str, Any]) -> Rendered:
         rows.append([nav_button("👛 Elite 15 Wallets", "elite15"),
                      nav_button("📊 Active Trades", "positions")])
     rows.append([nav_button("📈 Token Stats", "token_stats")])
+    # Manual-trader feed: cluster co-entry signals + List-A single wallets (advisory).
+    rows.append([nav_button("👛 Clusters", "clusters"),
+                 nav_button("👤 Single Wallets", "single_wallets")])
 
     # Trading
     if is_autotrader:
@@ -1726,6 +1729,106 @@ def render_elite_wallet_detail(ctx: Dict[str, Any]) -> Rendered:
     else:
         rows.append([{"text": "✅ Copy This Wallet", "callback_data": f"wal|select|{addr}"}])
     rows.append([nav_button("⬅️ Back to Elite 15", "elite15")])
+    return "\n".join(lines), _kb(rows)
+
+
+def render_cluster_feed(ctx: Dict[str, Any]) -> Rendered:
+    """Manual-trader cluster feed: all 12 clusters ranked by strength.
+
+    ``ctx['clusters']`` is a list of dicts from ``copytrade_feed.build_cluster_feed``. The 3
+    bot clusters are marked ✅ (auto-traded); bleeding clusters (negative EV) carry a ⚠️ the
+    auto-bot skips; ELITE-confluence clusters show a 🔆 size-up hint.
+    """
+    clusters = ctx.get("clusters") or []
+    lines = [
+        "<b>CLUSTERS — manual feed</b>",
+        "Ranked by strength. ✅ = auto-bot set · ⚠️ = high-RR but bleeds (bot skips) · 🔆 = size-up",
+        "",
+    ]
+    rows: List[List[Dict[str, str]]] = []
+    for c in clusters:
+        cid = html.escape(str(c.get("cluster_id")))
+        rr = c.get("runner_rate_pct")
+        ev = c.get("nonrunner_ev_pct")
+        spd = c.get("signals_per_day")
+        flags = []
+        if c.get("is_bot_cluster"):
+            flags.append("✅")
+        if c.get("bleeds"):
+            flags.append("⚠️")
+        if c.get("size_up"):
+            flags.append("🔆")
+        flag_str = " ".join(flags)
+        lines.append(
+            f"<b>{cid}</b> {flag_str} — {c.get('strength')} · "
+            f"RR {float(rr):.0f}% · EV {float(ev):+.0f}% · ~{float(spd):.1f}/day"
+        )
+        if c.get("bleeds_warning"):
+            lines.append(f"   ⚠️ <i>{html.escape(c['bleeds_warning'])}</i>")
+        rows.append([{"text": f"{cid} detail", "callback_data": f"nav|cluster_detail|{cid}"[:64]}])
+    if not clusters:
+        lines.append("No clusters available.")
+    rows.append([nav_button("👤 Single Wallets (List A)", "single_wallets")])
+    rows.append(_back_row("main"))
+    return "\n".join(lines), _kb(rows)
+
+
+def render_cluster_detail(ctx: Dict[str, Any]) -> Rendered:
+    """One cluster's members + stats (manual feed drill-down)."""
+    c = ctx.get("cluster") or {}
+    cid = html.escape(str(c.get("cluster_id") or "?"))
+    lines = [
+        f"<b>CLUSTER {cid}</b>",
+        "",
+        f"Strength: <b>{c.get('strength')}</b>"
+        + ("  ✅ auto-bot" if c.get("is_bot_cluster") else "  (manual only)"),
+        f"Runner rate: <b>{float(c.get('runner_rate_pct') or 0):.1f}%</b>",
+        f"Non-runner EV: <b>{float(c.get('nonrunner_ev_pct') or 0):+.1f}%</b>",
+        f"Signals/day: <b>~{float(c.get('signals_per_day') or 0):.2f}</b>",
+        f"Fires on: <b>{c.get('min_members_to_fire')}+ co-buys / {c.get('co_entry_window_s')}s</b>",
+    ]
+    if c.get("bleeds_warning"):
+        lines += ["", f"⚠️ <i>{html.escape(c['bleeds_warning'])}</i>"]
+    if c.get("size_up"):
+        lines += ["", "🔆 <i>ELITE wallet in this cluster — confluence ≈ 2x runner rate (size-up).</i>"]
+    lines += ["", "<b>Members</b>"]
+    for m in c.get("members") or []:
+        addr = str(m.get("address") or "")
+        role = "co-conf" if not m.get("tradable") else "trade"
+        lines.append(
+            f"• {m.get('tier')} <code>{addr[:8]}…</code> — {m.get('entry_style')} ({role})"
+        )
+    rows = [
+        [{"text": "📈 Open in Manual Trade", "callback_data": "nav|manual_trade"}],
+        [nav_button("⬅️ Back to Clusters", "clusters")],
+    ]
+    return "\n".join(lines), _kb(rows)
+
+
+def render_single_wallets(ctx: Dict[str, Any]) -> Rendered:
+    """List-A single-wallet menu (manual). ``ctx['wallets']`` from build_single_wallet_feed."""
+    wallets = ctx.get("wallets") or []
+    lines = [
+        "<b>SINGLE WALLETS — List A</b>",
+        "Top individual wallets (STRONG/MODERATE). 🔆 = ELITE size-up.",
+        "<i>Manual menu only — singles are NOT auto-traded by default.</i>",
+        "",
+    ]
+    for w in wallets[:25]:
+        addr = str(w.get("address") or "")
+        rr = float(w.get("runner_rate_pct") or 0)
+        ev = float(w.get("nonrunner_ev_pct") or 0)
+        up = " 🔆" if w.get("size_up") else ""
+        lines.append(
+            f"<b>{w.get('signal_strength')}</b> {w.get('tier')} "
+            f"<code>{addr[:8]}…</code> — RR {rr:.0f}% · EV {ev:+.0f}% · {w.get('entry_style')}{up}"
+        )
+    if not wallets:
+        lines.append("No single wallets available.")
+    rows = [
+        [nav_button("👛 Clusters", "clusters")],
+        _back_row("main"),
+    ]
     return "\n".join(lines), _kb(rows)
 
 
