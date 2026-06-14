@@ -1,0 +1,2495 @@
+{
+  "schema": "paper_variants_v1",
+  "note": "each variant is an OFFLINE scorer over paper_raw_cobuys + paper_price_paths; adding variants never re-runs live capture",
+  "count": 257,
+  "variants": [
+    {
+      "variant_id": "BOT-1|win60|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win60|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win60|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win60|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win60|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win60|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win120|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-1|win300|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-1",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win60|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win120|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-2|win300|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-2",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win60|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win120|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chase1.5|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chase1.5|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chase2.0|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chase2.0|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chaseoff|min2",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "BOT-3|win300|chaseoff|min3",
+      "family": "bot",
+      "config": {
+        "cluster_id": "BOT-3",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-4|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-4",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-5|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-5",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-6|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-6",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-7|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-7",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-8|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-8",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-9|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-9",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-10|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-10",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-11|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-11",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win60|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 60,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win120|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 120,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chase1.5|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chase1.5|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": 1.5,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chase2.0|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chase2.0|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": 2.0,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chaseoff|min2",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 2
+      }
+    },
+    {
+      "variant_id": "CL-12|win300|chaseoff|min3",
+      "family": "manual",
+      "config": {
+        "cluster_id": "CL-12",
+        "window_s": 300,
+        "chase_x": null,
+        "min_members": 3
+      }
+    },
+    {
+      "variant_id": "SINGLE|CkunCFew",
+      "family": "manual",
+      "config": {
+        "wallet": "CkunCFewEoohH9PKhdxxvpidJq9JXyKExcJcYFWg3egf",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|98PTpnid",
+      "family": "manual",
+      "config": {
+        "wallet": "98PTpnidebTsxYf68JXoGexAPSSkd1BTYkr8Jea7iEYr",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|8MA2HGoH",
+      "family": "manual",
+      "config": {
+        "wallet": "8MA2HGoH3fFdVMEZMtCxYpSFwkPB8WV8BbwFLermPZFo",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|FvkaeD3B",
+      "family": "manual",
+      "config": {
+        "wallet": "FvkaeD3BJgzPRUZPL3v9WZBC1oTuzDWJreT8DMZzqWuE",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|HhP9b26V",
+      "family": "manual",
+      "config": {
+        "wallet": "HhP9b26VX4YPCY3dRnc2NPgbgR8yMuevhepiKmoaw6qF",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|C1fPd4ZB",
+      "family": "manual",
+      "config": {
+        "wallet": "C1fPd4ZBCJFx9LEsgvmVD5zM9nphimh9vbXkCyNfaixw",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|9oKgawE4",
+      "family": "manual",
+      "config": {
+        "wallet": "9oKgawE4czK9B7AowqkKe2mBek8xFM4QiAge4YFCbuT5",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|2wHHnAmd",
+      "family": "manual",
+      "config": {
+        "wallet": "2wHHnAmdhFaAAsayWAeqKe3snK3KkbRQkRgLwTtz7iCi",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|CEXKhHxg",
+      "family": "manual",
+      "config": {
+        "wallet": "CEXKhHxgrEfeJ8RuJJC89a58npQTZuiKxFDNHZNkvbrw",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|2AqFJzcg",
+      "family": "manual",
+      "config": {
+        "wallet": "2AqFJzcgSMQ9v7Vwh4yE7Vux8brcrjus1eg4K1zM2zUd",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|2AkmfaxF",
+      "family": "manual",
+      "config": {
+        "wallet": "2AkmfaxF11TPaiRQbWDJVuoRcNofAwF6D9A5uZbMXj1G",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|9yxmCNwZ",
+      "family": "manual",
+      "config": {
+        "wallet": "9yxmCNwZcHe63NucU9yvCt7b1ja3jwP9v4T3yFMkQ1Z9",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|DNSerxPF",
+      "family": "manual",
+      "config": {
+        "wallet": "DNSerxPFDjgbCuGR8xbaH18gCPSEiiTKnuZvVfGjhbHz",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|22vL22Pc",
+      "family": "manual",
+      "config": {
+        "wallet": "22vL22PcYcoAVCwYN8iDW9VrFEYq93TCtr7a6avNVyjL",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|Bz4zDut6",
+      "family": "manual",
+      "config": {
+        "wallet": "Bz4zDut6LybbXjF6VnbXKVzaBKpfLPXaXCfnRkKNrNkj",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|C76F4BrL",
+      "family": "manual",
+      "config": {
+        "wallet": "C76F4BrL22PZDnrADMia4xptmrw15UrCt1PT4YbfoGRq",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|GpCiZGc4",
+      "family": "manual",
+      "config": {
+        "wallet": "GpCiZGc4zzthYU57WxZ3QeCnVw4reitwezcpTectUqnW",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|HpBQZopr",
+      "family": "manual",
+      "config": {
+        "wallet": "HpBQZoprdtWC9MFZoLEKSi1PvSFhGFYDJt9ryxooUHCT",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|C8TaRv2K",
+      "family": "manual",
+      "config": {
+        "wallet": "C8TaRv2K5BSe854b74xSUS92Lqjyv9Kks5W4Fb6VY3fe",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|2hCmu9yG",
+      "family": "manual",
+      "config": {
+        "wallet": "2hCmu9yGtFXRgmfBGKX254U2mnpC3B1TkXMXx1WJa463",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|459CAn1v",
+      "family": "manual",
+      "config": {
+        "wallet": "459CAn1vKWk7EGDz2xhsuZ3yvsHPxD3NCDk1NVoYGaW3",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|8GCfpN4j",
+      "family": "manual",
+      "config": {
+        "wallet": "8GCfpN4jR9VjufKxcKmU1Y56upCzw2wJTS6c71pp2mRU",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|ESiKag6J",
+      "family": "manual",
+      "config": {
+        "wallet": "ESiKag6J5uBXvjNCR6jhWEgG3SH5fTwuK7mhGkAc9CQG",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|FakckxEr",
+      "family": "manual",
+      "config": {
+        "wallet": "FakckxEr9U29sWK7s3PNiit8c23xTi7XspbvB4nfLQih",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|6phXA2tF",
+      "family": "manual",
+      "config": {
+        "wallet": "6phXA2tFGUaZRC6e69oen7zec55d9xEUMvzTB9NNeycM",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|B1R4D1cd",
+      "family": "manual",
+      "config": {
+        "wallet": "B1R4D1cdCrSv9dTGCcCskGh4Ujg4NejxJ839PRNwd6fD",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|6kD49gY4",
+      "family": "manual",
+      "config": {
+        "wallet": "6kD49gY4jGTFNuLjRqC8ygsgTJYmLLDALAnCDVB9SAbD",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|FDMssDbA",
+      "family": "manual",
+      "config": {
+        "wallet": "FDMssDbA5XcxpBV5gv7JXgP3TAiTNLv3ynJiCC6dWijH",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|31j5whyH",
+      "family": "manual",
+      "config": {
+        "wallet": "31j5whyH5oBoz5UgnsgbSN64efejspNaru8XzF1S8gaE",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|6fABBiGq",
+      "family": "manual",
+      "config": {
+        "wallet": "6fABBiGq3jB3t5BErddKx2J4Pr5SBeu633QZJyCkeUCB",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|2jramWhw",
+      "family": "manual",
+      "config": {
+        "wallet": "2jramWhwFBXj61AkbZ1CGW8EWykGyqEwjG6tZgoo9tz2",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|5oKVzRD7",
+      "family": "manual",
+      "config": {
+        "wallet": "5oKVzRD7nETWiSeDhAAreFCSd77Z7brQWrfPsssYyBD",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|7ogrnhx9",
+      "family": "manual",
+      "config": {
+        "wallet": "7ogrnhx98HnKeSMoDbRLQsLb8LfF4nHvM7NXmQ7TYaLp",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|A7MgmrHL",
+      "family": "manual",
+      "config": {
+        "wallet": "A7MgmrHLdN2bPMPytEVmqCkj6XeqRmqdm5fqwxYba3o1",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|Aj1mmgsH",
+      "family": "manual",
+      "config": {
+        "wallet": "Aj1mmgsHwenqHGkETy5xyY2FLdE8cJ2jZJe82FxVPZZh",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|4PrW4vBq",
+      "family": "manual",
+      "config": {
+        "wallet": "4PrW4vBqZA6GHCGb9Am25DL8eHs7Sjzw8Xfq4GgyRLi5",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|EdWS7QUm",
+      "family": "manual",
+      "config": {
+        "wallet": "EdWS7QUmhr3Yn5ymeFJqBwrNGP14PCbcmaANNaYk52k4",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|DziYHHhW",
+      "family": "manual",
+      "config": {
+        "wallet": "DziYHHhWouigwL5VsLYNwhC3kpRQRW9MQPtva2ox9uht",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|FmkURNoy",
+      "family": "manual",
+      "config": {
+        "wallet": "FmkURNoyTqrNvatYExYhXTestYKmUGYnZpU6RWfyRDXK",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|7AiejjFn",
+      "family": "manual",
+      "config": {
+        "wallet": "7AiejjFnUqWpM5jipyyBqv5Qzk2ncNCkE5WA5JqoYeKb",
+        "signal_type": "single"
+      }
+    },
+    {
+      "variant_id": "SINGLE|ByTVt4Xo",
+      "family": "manual",
+      "config": {
+        "wallet": "ByTVt4XoyBfgTvYt3Wt68ktUQSTJX5acgjdzJ1ekPYMg",
+        "signal_type": "single"
+      }
+    }
+  ]
+}

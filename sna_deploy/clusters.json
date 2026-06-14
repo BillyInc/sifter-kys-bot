@@ -1,0 +1,381 @@
+{
+  "schema": "sna_clusters_v1",
+  "market_phase": "bear",
+  "bot_daily_cap": 4,
+  "bot_filter": "shrunk_RR>=42 AND nonrunner_EV>=5",
+  "count": 12,
+  "clusters": [
+    {
+      "cluster_id": "BOT-1",
+      "is_bot_cluster": true,
+      "members": [
+        {
+          "address": "912iwi9rQV6mc6RxGa77QDjcQjLgoKvEVahBFeqdpSgN",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        },
+        {
+          "address": "C8TaRv2K5BSe854b74xSUS92Lqjyv9Kks5W4Fb6VY3fe",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "4PrW4vBqZA6GHCGb9Am25DL8eHs7Sjzw8Xfq4GgyRLi5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 45.9,
+      "nonrunner_ev_pct": 27.6,
+      "signals_per_day": 0.67,
+      "min_support": 16,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "BOT-2",
+      "is_bot_cluster": true,
+      "members": [
+        {
+          "address": "2hCmu9yGtFXRgmfBGKX254U2mnpC3B1TkXMXx1WJa463",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "dshAybqFXYVVTd4mzy9Uk6KD7km8wE9iZgPMYZdzEXc",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "HPviVX3uyjHEgScheiwSdmm4YW3tUNmpwrD1gxiSohvs",
+          "tier": "HIGH-RISK",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 48.7,
+      "nonrunner_ev_pct": 17.9,
+      "signals_per_day": 1.54,
+      "min_support": 17,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "BOT-3",
+      "is_bot_cluster": true,
+      "members": [
+        {
+          "address": "2AqFJzcgSMQ9v7Vwh4yE7Vux8brcrjus1eg4K1zM2zUd",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "DQmMnakiKr1YNE2gcpggLCzBrauBwFbQkAaao2FTbjgp",
+          "tier": "DROP",
+          "role": "co-confirmation",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 44.6,
+      "nonrunner_ev_pct": 20.5,
+      "signals_per_day": 3.77,
+      "min_support": 16,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-4",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "459CAn1vKWk7EGDz2xhsuZ3yvsHPxD3NCDk1NVoYGaW3",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "B1R4D1cdCrSv9dTGCcCskGh4Ujg4NejxJ839PRNwd6fD",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 50.4,
+      "nonrunner_ev_pct": 10.0,
+      "signals_per_day": 0.74,
+      "min_support": 18,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-5",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "7AiejjFnUqWpM5jipyyBqv5Qzk2ncNCkE5WA5JqoYeKb",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "C76F4BrL22PZDnrADMia4xptmrw15UrCt1PT4YbfoGRq",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "459CAn1vKWk7EGDz2xhsuZ3yvsHPxD3NCDk1NVoYGaW3",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 39.6,
+      "nonrunner_ev_pct": 19.4,
+      "signals_per_day": 0.39,
+      "min_support": 11,
+      "strength": "FAIR",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-6",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "2wHHnAmdhFaAAsayWAeqKe3snK3KkbRQkRgLwTtz7iCi",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        },
+        {
+          "address": "HV4cjkteGZ5g9HywDrM1HPC9f95PS9upzvH3MmgPfs53",
+          "tier": "HIGH-RISK",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 42.6,
+      "nonrunner_ev_pct": 14.3,
+      "signals_per_day": 1.08,
+      "min_support": 16,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-7",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "F6pipncJ7uTx5prTvTcwsE5x7EMwZBVMK6gz4jo4Ta7d",
+          "tier": "HIGH-RISK",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "HpBQZoprdtWC9MFZoLEKSi1PvSFhGFYDJt9ryxooUHCT",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        },
+        {
+          "address": "4PrW4vBqZA6GHCGb9Am25DL8eHs7Sjzw8Xfq4GgyRLi5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 42.7,
+      "nonrunner_ev_pct": 11.1,
+      "signals_per_day": 0.6,
+      "min_support": 15,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-8",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "8GCfpN4jR9VjufKxcKmU1Y56upCzw2wJTS6c71pp2mRU",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "DrnuP46qcf7b7utTY9Esm46SwkTFhYu4TrtRGTyvkE67",
+          "tier": "DROP",
+          "role": "co-confirmation",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "HZqQJv9uoz4piVYkvVo7rAewpifYfD2bw56AArr4VNR",
+          "tier": "HIGH-RISK",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 53.0,
+      "nonrunner_ev_pct": -22.9,
+      "signals_per_day": 1.94,
+      "min_support": 40,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-9",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "9yxmCNwZcHe63NucU9yvCt7b1ja3jwP9v4T3yFMkQ1Z9",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "F7RV6aBWfniixoFkQNWmRwznDj2vae2XbusFfvMMjtbE",
+          "tier": "DROP",
+          "role": "co-confirmation",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "22vL22PcYcoAVCwYN8iDW9VrFEYq93TCtr7a6avNVyjL",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 44.3,
+      "nonrunner_ev_pct": -8.7,
+      "signals_per_day": 5.64,
+      "min_support": 24,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-10",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+          "tier": "DROP",
+          "role": "co-confirmation",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "Bz4zDut6LybbXjF6VnbXKVzaBKpfLPXaXCfnRkKNrNkj",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "22vL22PcYcoAVCwYN8iDW9VrFEYq93TCtr7a6avNVyjL",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 42.0,
+      "nonrunner_ev_pct": -6.1,
+      "signals_per_day": 1.05,
+      "min_support": 24,
+      "strength": "MODERATE",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-11",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "8MA2HGoH3fFdVMEZMtCxYpSFwkPB8WV8BbwFLermPZFo",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        },
+        {
+          "address": "CX7HYiparsQFRaD1F3torvumBCoTYNA7jyPzn8PkHPuQ",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        },
+        {
+          "address": "C7ML4W7cegR8oBD3K2qeE5WmLgP2BGd8s81Sd78GZxN5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "accumulator"
+        }
+      ],
+      "shrunk_runner_rate_pct": 37.0,
+      "nonrunner_ev_pct": -3.0,
+      "signals_per_day": 2.21,
+      "min_support": 11,
+      "strength": "FAIR",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    },
+    {
+      "cluster_id": "CL-12",
+      "is_bot_cluster": false,
+      "members": [
+        {
+          "address": "5JJZKGkSpLHKPsLEjtC4znvW8XhJVfStzWQXe9mkpwnD",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "EQ5idGCxXoD2FVy8ZzbivQiDA3ebcSqCzef9Lgi6GVz5",
+          "tier": "CONSERVATIVE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        },
+        {
+          "address": "Bz4zDut6LybbXjF6VnbXKVzaBKpfLPXaXCfnRkKNrNkj",
+          "tier": "ELITE",
+          "role": "selectable",
+          "entry_style": "first-pump"
+        }
+      ],
+      "shrunk_runner_rate_pct": 27.5,
+      "nonrunner_ev_pct": 1.1,
+      "signals_per_day": 0.33,
+      "min_support": 10,
+      "strength": "FAIR",
+      "co_entry_window_s": 120,
+      "min_members_to_fire": 2
+    }
+  ]
+}
