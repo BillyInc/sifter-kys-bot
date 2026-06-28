@@ -35,7 +35,7 @@ export default function TelegramSettings({ userId, apiUrl }) {
       const data = await response.json();
       if (data.success) {
         setStatus({ connected: data.connected, chat_id: data.chat_id });
-        setAlertsEnabled(data.connected);
+        if (data.connected) setAlertsEnabled(data.alerts_enabled ?? true);
       }
     } catch (error) {
       console.error('Error checking Telegram status:', error);
@@ -128,6 +128,44 @@ export default function TelegramSettings({ userId, apiUrl }) {
     } catch (error) {
       console.error('Disconnect error:', error);
       toast.error('Failed to disconnect');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const toggleAlerts = async () => {
+    const next = !alertsEnabled;
+    setAlertsEnabled(next); // optimistic
+    try {
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/telegram/alerts/toggle`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ user_id: userId, enabled: next })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Failed');
+      toast.success(next ? 'Alerts enabled' : 'Alerts muted');
+    } catch (err) {
+      setAlertsEnabled(!next); // revert on failure
+      toast.error('Failed to update alert setting');
+    }
+  };
+
+  const sendTestAlert = async () => {
+    setIsLoading(true);
+    try {
+      const headers = await getHeaders();
+      const response = await fetch(`${apiUrl}/api/telegram/test`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ user_id: userId })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to send');
+      toast.success('Test alert sent — check your Telegram');
+    } catch (err) {
+      toast.error(err.message || 'Failed to send test alert');
     } finally {
       setIsLoading(false);
     }
@@ -267,38 +305,50 @@ export default function TelegramSettings({ userId, apiUrl }) {
                   <p className="text-xs text-gray-400 font-mono">ID: {status.chat_id}</p>
                 </div>
               </div>
-              <button 
-                onClick={() => setAlertsEnabled(!alertsEnabled)} 
+              <button
+                onClick={toggleAlerts}
                 className={`p-2 rounded-lg transition ${
-                  alertsEnabled 
-                    ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' 
+                  alertsEnabled
+                    ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                     : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
                 }`}
-                title={alertsEnabled ? 'Alerts enabled' : 'Alerts disabled'}
+                title={alertsEnabled ? 'Alerts enabled — tap to mute' : 'Alerts muted — tap to enable'}
               >
                 {alertsEnabled ? <Bell size={20} /> : <BellOff size={20} />}
               </button>
             </div>
 
             <div className="bg-white/5 rounded-lg p-4">
-              <h5 className="text-sm font-semibold mb-3">Alert Settings</h5>
-              <div className="space-y-2 text-xs text-gray-400">
-                <div className="flex items-center justify-between">
-                  <span>Wallet buys</span>
-                  <span className="text-green-400 font-semibold">Enabled</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Wallet sells</span>
-                  <span className="text-green-400 font-semibold">Enabled</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Multi-wallet signals</span>
-                  <span className="text-green-400 font-semibold">Enabled</span>
-                </div>
+              <div className="flex items-center justify-between mb-3">
+                <h5 className="text-sm font-semibold">Alert Settings</h5>
+                <span className={`text-xs font-semibold ${alertsEnabled ? 'text-green-400' : 'text-gray-400'}`}>
+                  {alertsEnabled ? 'Alerts on' : 'Muted'}
+                </span>
               </div>
+              <div className="space-y-2 text-xs text-gray-400">
+                {['Wallet buys', 'Wallet sells', 'Multi-wallet signals'].map((label) => (
+                  <div key={label} className="flex items-center justify-between">
+                    <span>{label}</span>
+                    <span className={alertsEnabled ? 'text-green-400 font-semibold' : 'text-gray-500 font-semibold'}>
+                      {alertsEnabled ? 'Enabled' : 'Muted'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-3">
+                Use the bell above to mute or enable all alerts.
+              </p>
             </div>
-            
-            <button 
+
+            <button
+              onClick={sendTestAlert}
+              disabled={isLoading}
+              className="w-full py-2.5 text-sm font-semibold bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 border border-blue-500/30 rounded-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Send size={16} /> Send test alert
+            </button>
+
+            <button
               onClick={disconnectTelegram}
               disabled={isLoading}
               className="w-full py-2.5 text-sm text-red-400 hover:bg-red-400/10 border border-red-500/30 rounded-lg transition font-semibold"

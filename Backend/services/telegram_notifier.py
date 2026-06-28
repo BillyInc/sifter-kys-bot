@@ -249,7 +249,7 @@ class TelegramNotifier:
     def send_document(self, chat_id: str, file_bytes: bytes, filename: str = "file.csv") -> bool:
         """Send a file via Telegram Bot API sendDocument (multipart/form-data)."""
         import requests as _requests
-        url = f"https://api.telegram.org/bot{self._token}/sendDocument"
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendDocument"
         try:
             resp = _requests.post(
                 url,
@@ -332,6 +332,27 @@ class TelegramNotifier:
 
     def is_user_connected(self, user_id: str) -> bool:
         return self.get_user_chat_id(user_id) is not None
+
+    def get_connection_info(self, user_id: str) -> Optional[dict]:
+        """Return the user's Telegram linkage regardless of alert state.
+
+        Unlike get_user_chat_id (alerts-filtered, used by the send path so
+        muted users get no alerts), this reports the actual connection — so
+        turning alerts OFF does not make the user look disconnected in the UI.
+        """
+        try:
+            result = self._table("telegram_users").select(
+                "telegram_chat_id, alerts_enabled"
+            ).eq("user_id", user_id).limit(1).execute()
+            if not result.data or not result.data[0].get("telegram_chat_id"):
+                return None
+            row = result.data[0]
+            return {
+                "chat_id": row["telegram_chat_id"],
+                "alerts_enabled": bool(row.get("alerts_enabled", True)),
+            }
+        except Exception:
+            return None
 
     def disconnect_user(self, user_id: str) -> bool:
         try:

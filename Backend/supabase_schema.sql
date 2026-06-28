@@ -313,6 +313,33 @@ CREATE POLICY "System can insert telegram connections"
     WITH CHECK (true);
 
 -- ============================================
+-- TELEGRAM CONNECTION TOKENS
+-- One-time deep-link tokens for the /start <token> account-linking flow.
+-- Managed entirely server-side (service_role); RLS denies anon/authenticated
+-- since tokens are sensitive (anyone with a token can link a chat to the account).
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sifter_dev.telegram_connection_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES sifter_dev.users(user_id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    telegram_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_conn_tokens_token
+ON sifter_dev.telegram_connection_tokens(token);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_conn_tokens_user_unused
+ON sifter_dev.telegram_connection_tokens(user_id) WHERE used = FALSE;
+
+ALTER TABLE sifter_dev.telegram_connection_tokens ENABLE ROW LEVEL SECURITY;
+-- No anon/authenticated policies on purpose: only service_role (which bypasses
+-- RLS) touches this table, via the backend linking flow.
+
+-- ============================================
 -- WALLET WATCHLIST TABLE
 -- ============================================
 

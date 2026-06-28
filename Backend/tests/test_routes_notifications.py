@@ -46,6 +46,14 @@ def _mock_notifier(**overrides):
     n = MagicMock()
     n.is_user_connected.return_value = overrides.get("connected", True)
     n.get_user_chat_id.return_value = overrides.get("chat_id", "12345")
+    n.get_connection_info.return_value = (
+        {
+            "chat_id": overrides.get("chat_id", "12345"),
+            "alerts_enabled": overrides.get("alerts_enabled", True),
+        }
+        if overrides.get("connected", True)
+        else None
+    )
     n.disconnect_user.return_value = overrides.get("disconnect", True)
     n.toggle_alerts.return_value = overrides.get("toggle", True)
     n.send_wallet_alert.return_value = overrides.get("send_alert", True)
