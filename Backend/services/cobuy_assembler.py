@@ -152,7 +152,7 @@ class CoBuyAssembler:
                     continue  # live emit is bot-clusters only; manual/singles are offline-scored
                 fired = self._check_and_emit(
                     cluster=c, token_address=token_address, token_ticker=token_ticker,
-                    raw_event_id=raw_id, paper_trader=paper_trader,
+                    raw_event_id=raw_id, paper_trader=paper_trader, now=ts,
                 )
                 if fired:
                     out["fired"].append(c.cluster_id)
@@ -255,9 +255,12 @@ class CoBuyAssembler:
 
     def _check_and_emit(
         self, *, cluster: Cluster, token_address: str, token_ticker: Optional[str],
-        raw_event_id: Optional[int], paper_trader=None,
+        raw_event_id: Optional[int], paper_trader=None, now: Optional[float] = None,
     ) -> bool:
-        now = time.time()
+        # Anchor the co-entry window to the triggering buy's timestamp (passed from
+        # ingest_buy), not wall-clock — so replayed/back- or forward-dated events window
+        # correctly and the firing decision is deterministic. Falls back to now if unset.
+        now = time.time() if now is None else now
         member_buys = self._recent_member_buys(cluster, token_address, now)
         if len(member_buys) < cluster.min_members_to_fire:
             return False

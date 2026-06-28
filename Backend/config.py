@@ -17,6 +17,15 @@ class Config:
 
     # Telegram
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    # Secret token echoed back by Telegram in the X-Telegram-Bot-Api-Secret-Token
+    # header — the webhook handler fails closed if this is unset.
+    TELEGRAM_SECRET_TOKEN = os.environ.get("TELEGRAM_SECRET_TOKEN", "")
+    # Public URL Telegram posts updates to. Used by scripts/setup_telegram_webhook.py
+    # to register the webhook (setWebhook). Falls back to the known prod endpoint.
+    TELEGRAM_WEBHOOK_URL = os.environ.get(
+        "TELEGRAM_WEBHOOK_URL",
+        "https://sifter-kys.duckdns.org/api/telegram/webhook",
+    )
     TELEGRAM_OPERATOR_CHAT_IDS = [
         int(x.strip())
         for x in os.environ.get("TELEGRAM_OPERATOR_CHAT_IDS", "").split(",")

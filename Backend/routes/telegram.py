@@ -63,13 +63,13 @@ def get_telegram_status():
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    is_connected = telegram_notifier.is_user_connected(user_id)
-    chat_id = telegram_notifier.get_user_chat_id(user_id) if is_connected else None
+    info = telegram_notifier.get_connection_info(user_id)
 
     return jsonify({
         'success': True,
-        'connected': is_connected,
-        'chat_id': chat_id
+        'connected': info is not None,
+        'chat_id': info['chat_id'] if info else None,
+        'alerts_enabled': info['alerts_enabled'] if info else False,
     }), 200
 
 
