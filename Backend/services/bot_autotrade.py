@@ -49,8 +49,15 @@ def _requested_usd(user_row: Dict[str, Any], signal: Dict[str, Any]) -> float:
     The existing schema does not store live wallet balance, so max-trade USD is
     the hard safety cap. Tier percentages are still honored against the signal
     total as a stable proxy until a balance snapshot is available.
+
+    Cluster co-entry signals carry a confluence ``size_pct`` (10–20% of capital, from
+    bot_defaults); we size that fraction of the user's max-trade cap (same balance-proxy
+    caveat) so the live bot matches the documented sizing ladder.
     """
     cap = float(user_row.get("auto_trade_max_usd") or 100)
+    size_pct = signal.get("size_pct")
+    if signal.get("source") == "cluster" and size_pct:
+        return round(max(0.0, min(cap, cap * (float(size_pct) / 100.0))), 2)
     total = float(signal.get("total_usd") or signal.get("usd_value") or cap)
     wallet_count = int(signal.get("wallet_count") or 1)
     if wallet_count >= 3:
@@ -362,6 +369,7 @@ def execute_queued_autonomous_trade(*, queue_id: int, supabase) -> Dict[str, Any
         }).eq("id", queue_id).eq("status", "pending").execute()
 
         settings = _load_user_settings(supabase, queue_row["user_id"])
+        settings = _apply_cluster_sl_tp(settings, queue_row.get("signal_key"))
         request = BotTradeRequest(
             user_id=queue_row["user_id"],
             token_address=queue_row["token_address"],
@@ -406,3 +414,32 @@ def _load_user_settings(supabase, user_id: str) -> Dict[str, Any]:
         .execute()
     )
     return dict(res.data[0]) if res.data else {}
+
+
+def _apply_cluster_sl_tp(settings: Dict[str, Any], signal_key: Optional[str]) -> Dict[str, Any]:
+    """For cluster co-entry trades, override SL/TP with bot_defaults (per-cluster stop).
+
+    Cluster signal keys are ``<cluster_id>:<token>``. When the prefix is a known bot
+    cluster we apply the bot_defaults SL/TP (e.g. BOT-2 → -30% stop) so the existing TP/SL
+    Celery monitor enforces the data-grounded exit rather than the user's generic settings.
+    Non-cluster signals are returned unchanged.
+    """
+    if not signal_key or ":" not in str(signal_key):
+        return settings
+    cluster_id = str(signal_key).split(":", 1)[0]
+    try:
+        from services.copytrade_config import get_copytrade_config
+        cfg = get_copytrade_config()
+        cluster = cfg.get_cluster(cluster_id)
+        if cluster is None or not cluster.is_bot_cluster:
+            return settings
+        sl_tp = cfg.sl_tp(cluster_id)
+        merged = dict(settings)
+        merged["stop_loss_pct"] = sl_tp.get("stop_loss_pct", merged.get("stop_loss_pct"))
+        merged["trailing_stop_pct"] = sl_tp.get("trailing_stop_pct", merged.get("trailing_stop_pct"))
+        # Partial-TP ladder (25%@2x + 25%@4x) + uncapped trailing — no single hard take-profit.
+        merged["take_profit_ladder"] = sl_tp.get("take_profit_ladder")
+        merged["take_profit_x"] = None  # do NOT hard-cap the runner (bot_defaults principle)
+        return merged
+    except Exception:
+        return settings

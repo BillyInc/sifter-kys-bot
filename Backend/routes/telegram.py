@@ -421,6 +421,24 @@ def operator_failure_report():
     return jsonify({'success': True, 'report': trader.get_failure_report()}), 200
 
 
+@telegram_bp.route('/operator/variant-rollup', methods=['GET', 'OPTIONS'])
+@require_auth
+def operator_variant_rollup():
+    """Per-variant self-describing rollup (runner rate, signals/day, abort rate, edge_kept)."""
+    error = _operator_error()
+    if error:
+        return error
+
+    from services.variant_scorer import get_variant_scorer
+
+    try:
+        top = int(request.args.get('top', 30))
+    except (TypeError, ValueError):
+        top = 30
+    rollup = get_variant_scorer().compute_rollup(top=top)
+    return jsonify({'success': True, 'rollup': rollup, 'count': len(rollup)}), 200
+
+
 @telegram_bp.route('/operator/settings', methods=['PATCH', 'OPTIONS'])
 @require_auth
 def operator_patch_settings():
