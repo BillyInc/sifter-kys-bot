@@ -111,6 +111,7 @@ jobs:
   migrate:
     name: Apply DB Migrations
     runs-on: ubuntu-latest
+    environment: development
     needs: [changes, lint, test]
     # Run on main for code OR migration-only changes: proceed when lint/test
     # passed or were skipped (migration-only push), but not if they failed.
