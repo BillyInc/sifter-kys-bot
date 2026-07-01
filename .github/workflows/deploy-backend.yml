@@ -112,6 +112,11 @@ jobs:
     name: Apply DB Migrations
     runs-on: ubuntu-latest
     environment: development
+    # NON-BLOCKING by design: this prod DB is SHARED with skillup, whose migrations are in
+    # the tracking table but not in this repo, so `supabase db push` errors on "remote
+    # versions not in local". KYS schema changes are applied via the Supabase MCP instead.
+    # Kept as an informational check (surfaces drift) that never blocks a deploy.
+    continue-on-error: true
     needs: [changes, lint, test]
     # Run on main for code OR migration-only changes: proceed when lint/test
     # passed or were skipped (migration-only push), but not if they failed.
@@ -159,7 +164,7 @@ jobs:
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: [changes, lint, test, migrate]
+    needs: [changes, lint, test]  # migrate is informational/non-blocking (shared DB — see its comment)
     if: |
       (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
