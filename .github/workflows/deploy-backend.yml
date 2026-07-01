@@ -112,11 +112,6 @@ jobs:
     name: Apply DB Migrations
     runs-on: ubuntu-latest
     environment: development
-    # TEMPORARY: job-level non-blocking so a flaky CLI setup or the currently-broken
-    # SUPABASE_DB_PASSWORD can't fail the run or block deploy. Migrations are a verified
-    # no-op right now (nothing pending) and applied manually via the Supabase MCP.
-    # Revert (and re-add `migrate` to deploy.needs) once the DB password secret works.
-    continue-on-error: true
     needs: [changes, lint, test]
     # Run on main for code OR migration-only changes: proceed when lint/test
     # passed or were skipped (migration-only push), but not if they failed.
@@ -151,16 +146,12 @@ jobs:
 
       - name: Push migrations
         if: steps.gate.outputs.run == 'true'
-        # TEMPORARY: non-blocking so a bad SUPABASE_DB_PASSWORD doesn't block deploys.
-        # Migrations are applied manually via the Supabase MCP for now. Remove
-        # continue-on-error once the DB password secret is verified working.
-        continue-on-error: true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           supabase link --project-ref igvizqgbrxmdtyaujbxu
-          supabase db push || echo "::warning::supabase db push failed (non-blocking) — verify SUPABASE_DB_PASSWORD; migrations are being applied manually via MCP"
+          supabase db push
 
   # ==================
   # Deploy (main only)
@@ -168,10 +159,7 @@ jobs:
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    # TEMPORARY: `migrate` removed from needs so a broken migration secret can't block
-    # deploys (migrations are a verified no-op / applied manually via MCP for now).
-    # Re-add `migrate` here once the DB password secret works.
-    needs: [changes, lint, test]
+    needs: [changes, lint, test, migrate]
     if: |
       (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
