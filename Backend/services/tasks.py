@@ -1280,11 +1280,25 @@ def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
         matching = [h for h in hooks if h.get("webhookURL") == webhook_url]
 
         if matching:
-            # Update existing webhook
-            wh_id = matching[0]["webhookID"]
+            # Update existing webhook. Helius' edit endpoint requires the FULL
+            # definition (webhookURL + transactionTypes + webhookType), not just
+            # accountAddresses — a partial body 400s ("Webhook URL is required").
+            # Carry the existing fields forward and only swap the address list.
+            existing = matching[0]
+            wh_id = existing["webhookID"]
+            body = {
+                "webhookURL": existing.get("webhookURL") or webhook_url,
+                "transactionTypes": existing.get("transactionTypes") or ["SWAP"],
+                "webhookType": existing.get("webhookType") or "enhanced",
+                "accountAddresses": wallet_addresses,
+            }
+            if existing.get("authHeader"):
+                body["authHeader"] = existing["authHeader"]
+            if existing.get("txnStatus"):
+                body["txnStatus"] = existing["txnStatus"]
             resp = req.put(
                 f"https://api.helius.xyz/v0/webhooks/{wh_id}?api-key={api_key}",
-                json={"accountAddresses": wallet_addresses},
+                json=body,
                 headers=helius_headers, timeout=15,
             )
             if resp.status_code == 200:
