@@ -74,17 +74,15 @@ def get_telegram_status():
 
 
 @telegram_bp.route('/connect/link', methods=['POST', 'OPTIONS'])
-@optional_auth
+@require_auth
 def generate_connection_link():
     """Generate Telegram deep link for one-click connection."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
 
-    data = request.json or {}
-    user_id = _get_user_id() or anon_user_id()
-
+    user_id = _get_user_id()
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        return jsonify({'error': 'Authentication required'}), 401
 
     try:
         # Generate unique connection token
@@ -96,8 +94,9 @@ def generate_connection_link():
         # Clean up old unused tokens for this user
         repo.delete_unused_tokens(user_id)
 
-        # Insert new token
-        repo.create_connection_token(user_id, connection_token, expires_at)
+        # Insert new token — fail if it didn't persist (don't return a phantom token)
+        if not repo.create_connection_token(user_id, connection_token, expires_at):
+            return jsonify({'success': False, 'error': 'Failed to store connection token'}), 500
 
         # Get bot username from environment or config
         bot_username = os.environ.get('TELEGRAM_BOT_USERNAME', 'SifterDueDiligenceBot')
@@ -122,17 +121,15 @@ def generate_connection_link():
 
 
 @telegram_bp.route('/disconnect', methods=['POST', 'OPTIONS'])
-@optional_auth
+@require_auth
 def disconnect_telegram():
     """Disconnect Telegram account."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
 
-    data = request.json or {}
-    user_id = _get_user_id() or anon_user_id()
-
+    user_id = _get_user_id()
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        return jsonify({'error': 'Authentication required'}), 401
 
     success = telegram_notifier.disconnect_user(user_id)
 
@@ -150,18 +147,18 @@ def disconnect_telegram():
 
 
 @telegram_bp.route('/alerts/toggle', methods=['POST', 'OPTIONS'])
-@optional_auth
+@require_auth
 def toggle_telegram_alerts():
     """Enable/disable Telegram alerts."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
 
     data = request.json or {}
-    user_id = _get_user_id() or anon_user_id()
+    user_id = _get_user_id()
     enabled = data.get('enabled', True)
 
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        return jsonify({'error': 'Authentication required'}), 401
 
     success = telegram_notifier.toggle_alerts(user_id, enabled)
 
@@ -178,17 +175,15 @@ def toggle_telegram_alerts():
 
 
 @telegram_bp.route('/test', methods=['POST', 'OPTIONS'])
-@optional_auth
+@require_auth
 def send_test_alert():
     """Send test alert to user's Telegram."""
     if not telegram_notifier:
         return jsonify({'error': 'Telegram not configured'}), 503
 
-    data = request.json or {}
-    user_id = _get_user_id() or anon_user_id()
-
+    user_id = _get_user_id()
     if not user_id:
-        return jsonify({'error': 'user_id required'}), 400
+        return jsonify({'error': 'Authentication required'}), 401
 
     # Check if connected
     if not telegram_notifier.is_user_connected(user_id):
