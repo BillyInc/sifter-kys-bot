@@ -311,7 +311,7 @@ class TelegramNotifier:
                     **payload,
                     "auto_trade_enabled": False,
                     "auto_trade_max_usd": 100,
-                    "auto_trade_source": "elite15",
+                    "auto_trade_source": "cluster",
                     "auto_trade_hourly_limit": 5,
                     "auto_trade_daily_limit": 20,
                 }).execute()

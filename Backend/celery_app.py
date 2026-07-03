@@ -88,9 +88,12 @@ celery.conf.beat_schedule = {
     },
 
 
-    # Elite 15 monitor sync every hour (:05, after Elite 100 refresh at :00)
-    'sync-elite-15-to-monitor': {
-        'task': 'tasks.sync_elite_15_to_monitor',
+    # Sync the Helius webhook to the copytrade cluster wallets every hour (:05).
+    # These 9-wallet-engine + manual-cluster wallets are the bot's ONLY signal
+    # sources. (Replaces the old Elite-15 sync — elite/leaderboard wallets no
+    # longer feed the Telegram bot.)
+    'sync-clusters-to-helius': {
+        'task': 'tasks.sync_clusters_to_helius',
         'schedule': crontab(minute=5),
         'options': {'expires': 3600, 'queue': 'rankings'}
     },

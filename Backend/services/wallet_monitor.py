@@ -75,8 +75,6 @@ class WalletActivityMonitor:
 
         self.pending_signals = {}
         self.buffer_lock = threading.Lock()
-        self._elite15_set: Set[str] = set()
-        self._elite15_ts = 0.0
 
         telegram_status = "Enabled" if telegram_notifier else "Disabled"
         print(
@@ -160,7 +158,6 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
             wallets = []
             seen_addresses = set()
-            elite15_set = self._get_elite15_set()
 
             for row in result.data or []:
                 addr = row["wallet_address"]
@@ -183,24 +180,6 @@ WALLET ACTIVITY MONITOR INITIALIZED
                     }
                 )
 
-            for addr in elite15_set:
-                if addr in seen_addresses:
-                    continue
-                seen_addresses.add(addr)
-                status_result = self._table("wallet_monitor_status").select(
-                    "last_checked_at, last_activity_at"
-                ).eq("wallet_address", addr).limit(1).execute()
-                status = status_result.data[0] if status_result.data else {}
-                wallets.append(
-                    {
-                        "wallet_address": addr,
-                        "tier": "S",
-                        "monitor_source": "elite15",
-                        "last_checked_at": status.get("last_checked_at"),
-                        "last_activity_at": status.get("last_activity_at"),
-                    }
-                )
-
             wallets.sort(key=lambda row: row.get("last_checked_at") or 0)
             return wallets
 
@@ -214,7 +193,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
     def _check_wallet_activity(self, wallet_info):
         wallet_address = wallet_info["wallet_address"]
         last_checked = wallet_info.get("last_checked_at")
-        is_elite15 = wallet_info.get("monitor_source") == "elite15" or wallet_address in self._get_elite15_set()
+        is_elite15 = False  # elite15 is no longer a bot signal source (clusters + manual only)
 
         if last_checked:
             try:
@@ -408,11 +387,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
             f"  MULTI-WALLET SIGNAL: {signal['wallet_count']} wallets bought "
             f"{signal['token_address'][:8]}..."
         )
-        if signal.get("source") == "elite15" and self.paper_trader:
-            self.paper_trader.process_signal(signal)
         try:
-            if signal.get("source") == "elite15":
-                return
             wallet_addresses = [wallet["wallet"] for wallet in signal["wallets"]]
             result = self._table("wallet_watchlist").select("user_id").in_(
                 "wallet_address", wallet_addresses
@@ -550,8 +525,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
             ).eq("wallet_address", wallet_address).eq("alert_enabled", True).execute()
 
             watchers = watchers_result.data or []
-            elite15_set = self._get_elite15_set()
-            is_elite15 = wallet_address in elite15_set
+            is_elite15 = False  # elite15 is no longer a bot signal source (clusters + manual only)
             notifications_created = 0
             notified_users: Set[str] = set()
 
@@ -592,13 +566,6 @@ WALLET ACTIVITY MONITOR INITIALIZED
                             self._send_telegram_alert(user_id, alert_type, payload)
                     except Exception as e:
                         print(f"    Error creating notification: {e}")
-
-            if is_elite15:
-                notifications_created += self._broadcast_elite15_to_all_users(
-                    wallet_address=wallet_address,
-                    activities=activities,
-                    already_notified=notified_users,
-                )
 
             if notifications_created > 0:
                 print(f"    Created {notifications_created} notification(s)")
@@ -679,81 +646,6 @@ WALLET ACTIVITY MONITOR INITIALIZED
         ).execute()
         return result.data[0]["id"] if result.data else None
 
-    def _get_elite15_set(self) -> Set[str]:
-        now = time.time()
-        if now - self._elite15_ts < 300:
-            return self._elite15_set
-
-        # Primary source: the authoritative ClickHouse-derived enriched Elite 15
-        # (Redis key kys:elite15_enriched, written by leaderboard_discovery_scan).
-        # This is the same set the web/mobile API serves, so the monitor's
-        # elite15 alerts/auto-trade now match the "official" Elite 15.
-        addresses = self._elite15_from_redis()
-        source = "clickhouse/redis"
-
-        # Fallback: score-ranked Elite 100 cache in Supabase, in case the CH
-        # pipeline hasn't run yet or the (7-day TTL) Redis key has expired.
-        if not addresses:
-            addresses = self._elite15_from_supabase()
-            source = "supabase/elite_100_cache"
-
-        if addresses:
-            print(f"[MONITOR] Elite 15 set: {len(addresses)} wallets from {source}")
-
-        self._elite15_set = addresses
-        self._elite15_ts = now
-        return addresses
-
-    def _elite15_from_redis(self) -> Set[str]:
-        """Top 15 wallet addresses from the ClickHouse-derived enriched cache."""
-        try:
-            from services.redis_pool import get_redis_client
-
-            raw = get_redis_client().get("kys:elite15_enriched")
-            if not raw:
-                return set()
-            payload = json.loads(raw)
-            if not isinstance(payload, list):
-                return set()
-            # Each element mirrors the SolanaTracker enrichment shape; the address
-            # lives under "wallet" (or "walletAddress"), same as the writer.
-            addrs: Set[str] = set()
-            for w in payload[:15]:
-                if not isinstance(w, dict):
-                    continue
-                addr = w.get("wallet") or w.get("walletAddress")
-                if addr:
-                    addrs.add(addr)
-            return addrs
-        except Exception as e:
-            print(f"[MONITOR] Elite 15 (redis) lookup failed: {e}")
-            return set()
-
-    def _elite15_from_supabase(self) -> Set[str]:
-        """Top 15 of the score-ranked Elite 100 cache (fallback source).
-
-        Filter by cache_type so we don't pick up the roi/runners/community_top_100
-        variants, which share this table and are often written more recently
-        (tasks.py refresh order: score -> roi -> runners; community separately).
-        """
-        try:
-            result = self._table("elite_100_cache").select("data").eq(
-                "cache_type", "elite_100_score"
-            ).order("created_at", desc=True).limit(1).execute()
-            if result.data:
-                payload = result.data[0].get("data") or []
-                if isinstance(payload, list):
-                    ranked = sorted(payload, key=lambda row: row.get("rank", 9999))
-                    addrs: Set[str] = set()
-                    for row in ranked[:15]:
-                        addr = row.get("wallet_address")
-                        if addr:
-                            addrs.add(addr)
-                    return addrs
-        except Exception as e:
-            print(f"[MONITOR] Elite 15 (supabase) lookup failed: {e}")
-        return set()
-
     def _get_all_auto_trade_users(self) -> List[Dict]:
         try:
             result = self._table("telegram_users").select(
@@ -763,52 +655,6 @@ WALLET ACTIVITY MONITOR INITIALIZED
         except Exception as e:
             print(f"[MONITOR] Auto-trade user lookup failed: {e}")
             return []
-
-    def _broadcast_elite15_to_all_users(
-        self,
-        wallet_address: str,
-        activities: List[Dict],
-        already_notified: Set[str],
-    ) -> int:
-        created = 0
-        auto_users = self._get_all_auto_trade_users()
-        for activity in activities:
-            tx = activity["tx"]
-            activity_id = activity["activity_id"]
-            for user in auto_users:
-                user_id = user.get("user_id")
-                if not user_id or user_id in already_notified:
-                    continue
-                if user.get("auto_trade_source", "elite15") not in ("elite15", "all"):
-                    continue
-
-                try:
-                    notification_id = self._insert_notification(
-                        user_id=user_id,
-                        wallet_address=wallet_address,
-                        wallet_tier="S",
-                        source="elite15",
-                        tx=tx,
-                        activity_id=activity_id,
-                    )
-                    created += 1
-                    if self.telegram_notifier:
-                        self._send_telegram_alert(
-                            user_id,
-                            "elite15_trade",
-                            {
-                                **tx,
-                                "wallet_address": wallet_address,
-                                "activity_id": activity_id,
-                                "wallet_tier": "S",
-                                "source": "elite15",
-                                "notification_id": notification_id,
-                                "auto_trade_max_usd": user.get("auto_trade_max_usd", 100),
-                            },
-                        )
-                except Exception as e:
-                    print(f"    Elite15 broadcast error for {user_id[:8]}...: {e}")
-        return created
 
     def _should_notify(self, tx, settings):
         side = tx.get("side", "buy")

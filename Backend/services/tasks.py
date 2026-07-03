@@ -1302,6 +1302,35 @@ def _sync_helius_webhook(wallet_addresses: list[str]) -> bool:
     return False
 
 
+@celery.task(name='tasks.sync_clusters_to_helius')
+def sync_clusters_to_helius():
+    """Subscribe the Helius webhook to the copytrade cluster wallets — the bot's
+    only signal sources (the 9-wallet autonomous engine + the manual-cluster
+    wallets). Replaces the old Elite-15 subscription: elite/leaderboard wallets
+    are no longer fed to the Telegram bot.
+    """
+    print(f"\n[CLUSTER SYNC] Helius wallet sync - {datetime.utcnow().isoformat()}")
+    try:
+        from services.copytrade_config import get_copytrade_config
+
+        cfg = get_copytrade_config()
+        addresses = sorted({
+            addr
+            for cluster in cfg.clusters()
+            for addr in cluster.member_addresses
+        })
+        if not addresses:
+            logger.warning("[CLUSTER SYNC] No cluster wallets configured — skipping")
+            return {"status": "skipped", "reason": "no_cluster_wallets"}
+
+        synced = _sync_helius_webhook(addresses)
+        print(f"[CLUSTER SYNC] {len(addresses)} cluster wallets, helius_synced={synced}")
+        return {"status": "ok" if synced else "helius_not_synced", "wallets": len(addresses)}
+    except Exception as exc:
+        logger.error("[CLUSTER SYNC] error=%s", str(exc)[:200])
+        return {"status": "error", "error": str(exc)[:200]}
+
+
 @celery.task(name='tasks.sync_elite_15_to_monitor')
 def sync_elite_15_to_monitor():
     """
@@ -1606,25 +1635,31 @@ def ingest_helius_signal(signal: dict):
         token_address = signal.get("token_address", "")
         wallet_address = signal.get("wallet_address", "")
 
-        # Validate wallet is in Elite 15 monitored set
         from services.redis_pool import get_redis_client
         from services.supabase_client import get_supabase_client, SCHEMA_NAME
         r = get_redis_client()
 
-        # Check wallet is in the system user watchlist (Elite 15)
-        is_elite = False
+        # Gate: only ingest signals from wallets the bot actually tracks — the
+        # copytrade cluster wallets (the 9-wallet autonomous engine + manual
+        # clusters/singles) and any user watchlist wallet. Everything else is
+        # dropped. (Elite 15 / leaderboard wallets are NOT a signal source.)
+        is_tracked = False
         try:
-            sb = get_supabase_client()
-            result = sb.schema(SCHEMA_NAME).table("wallet_watchlist").select("wallet_address").eq(
-                "wallet_address", wallet_address
-            ).limit(1).execute()
-            is_elite = bool(result.data)
+            from services.copytrade_config import get_copytrade_config
+            if get_copytrade_config().is_tracked_wallet(wallet_address):
+                is_tracked = True
+            else:
+                sb = get_supabase_client()
+                result = sb.schema(SCHEMA_NAME).table("wallet_watchlist").select("wallet_address").eq(
+                    "wallet_address", wallet_address
+                ).limit(1).execute()
+                is_tracked = bool(result.data)
         except Exception:
-            is_elite = True  # fail open on DB error — don't block legitimate signals
+            is_tracked = True  # fail open on error — don't block legitimate signals
 
-        if not is_elite:
-            logger.info("[SIGNAL] action=reject wallet=%s reason=not_elite", wallet_address[:8])
-            return {"status": "rejected", "reason": "wallet_not_in_elite_set"}
+        if not is_tracked:
+            logger.info("[SIGNAL] action=reject wallet=%s reason=not_tracked", wallet_address[:8])
+            return {"status": "rejected", "reason": "wallet_not_tracked"}
 
         # Token qualification gate — annotate signal (soft gate)
         is_qualified = r.sismember("kys:qualified_tokens", token_address)
