@@ -13,8 +13,9 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 
 ## What Claude does in-repo
 - [x] `deploy-prod.yml` — tag-triggered, `environment: production`, deploys backend+frontend to the prod service/dirs on the same box.
-- [ ] Apply the **KYS-only** schema to the prod Supabase project (excludes the `skillup_*` migrations that pollute the shared dev DB). *Next step — pending your go-ahead.*
-- [ ] Fix `_sync_helius_webhook` PUT (currently sends only `accountAddresses`; Helius needs the full definition — that's why the dev webhook is empty).
+- [x] **KYS schema applied to the prod project** (`vkgfwblewragoetkikti`) — cloned from the live dev `sifter_dev` schema (the migration files are stubbed, so dev is the source of truth). Full parity: 59 tables, 29 sequences, 120 constraints, 165 indexes, 9 functions, 42 RLS policies, 6 triggers. No `skillup_*` pollution. (4 migrations: `kys_prod_bootstrap_01..04`.)
+- [x] Fixed `_sync_helius_webhook` PUT (full webhook definition) — verified: dev webhook now subscribes the 29 cluster wallets.
+- [ ] **Seed prod reference data** — the prod tables are empty. Before the bot runs in prod, seed `copy_wallets` + `copy_clusters` (`Backend/seeds/copytrade/seed_clusters_wallets.sql`) and `bot_defaults`. Users/trades come from live use.
 
 ## What you must provision (prod)
 1. **GitHub `production` environment** (Settings → Environments → New) with a required reviewer, holding these secrets:
