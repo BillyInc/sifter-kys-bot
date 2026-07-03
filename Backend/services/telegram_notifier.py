@@ -516,6 +516,44 @@ class TelegramNotifier:
             )
         return self.send_message(chat_id, "\n".join(lines))
 
+    def send_manual_cluster_signal(self, user_id: str, signal: Dict) -> bool:
+        """Advisory alert to a manual trader when a manual cluster co-enters a
+        token. NOT auto-traded — the trader acts by hand."""
+        chat_id = self.get_user_chat_id(user_id)
+        if not chat_id:
+            return False
+
+        # Token-level rug gate — suppress alerts for unsafe tokens.
+        try:
+            from services.bot_security import check_token_safety
+            sec_ok, _ = check_token_safety(signal.get("token_address") or "")
+            if not sec_ok:
+                return False
+        except Exception:
+            return False  # fail closed
+
+        wallets = signal.get("wallets", [])
+        lines = [
+            "<b>CLUSTER BUY SIGNAL</b> (manual)",
+            "",
+            f"Cluster: <b>{html.escape(str(signal.get('cluster_id', '')))}</b>",
+            f"Token: <code>{html.escape(signal.get('token_address', ''))}</code>",
+            f"Co-buyers: <b>{len(wallets)}</b>   Strength: <b>{signal.get('signal_strength', 0)}</b>",
+            f"Total: <b>${float(signal.get('total_usd', 0) or 0):,.2f}</b>",
+        ]
+        if signal.get("size_up"):
+            lines.append("↑ ELITE / List-A wallet present — size-up signal")
+        if signal.get("bleeds_warning"):
+            lines.append(f"⚠️ {html.escape(str(signal['bleeds_warning']))}")
+        lines += ["", "<b>Wallets:</b>"]
+        for wallet in wallets[:8]:
+            lines.append(
+                f"- <code>{html.escape(str(wallet.get('wallet', ''))[:8])}...</code> "
+                f"Tier {html.escape(str(wallet.get('tier', 'C')))}"
+            )
+        lines += ["", "<i>Advisory only — act manually.</i>"]
+        return self.send_message(chat_id, "\n".join(lines))
+
     def send_auto_trade_confirmation(self, user_id: str, trade: dict, txid: str) -> bool:
         chat_id = self.get_user_chat_id(user_id)
         if not chat_id:

@@ -148,14 +148,21 @@ class CoBuyAssembler:
 
         if emit:
             for c in clusters:
-                if not c.is_bot_cluster:
-                    continue  # live emit is bot-clusters only; manual/singles are offline-scored
-                fired = self._check_and_emit(
-                    cluster=c, token_address=token_address, token_ticker=token_ticker,
-                    raw_event_id=raw_id, paper_trader=paper_trader, now=ts,
-                )
-                if fired:
-                    out["fired"].append(c.cluster_id)
+                if c.is_bot_cluster:
+                    fired = self._check_and_emit(
+                        cluster=c, token_address=token_address, token_ticker=token_ticker,
+                        raw_event_id=raw_id, paper_trader=paper_trader, now=ts,
+                    )
+                    if fired:
+                        out["fired"].append(c.cluster_id)
+                else:
+                    # Manual clusters: advisory Telegram notification only (no auto-trade).
+                    notified = self._check_and_notify_manual(
+                        cluster=c, token_address=token_address, token_ticker=token_ticker,
+                        raw_event_id=raw_id, now=ts,
+                    )
+                    if notified:
+                        out.setdefault("notified", []).append(c.cluster_id)
 
             # Opt-in single-wallet copy (default OFF; STEP 7). Only attempt when this is a
             # selectable List-A wallet AND confluence already exists (≥2 distinct tracked
@@ -281,6 +288,50 @@ class CoBuyAssembler:
         logger.info(
             "[COBUY] action=fire cluster=%s token=%s members=%d strength=%d",
             cluster.cluster_id, token_address[:8], len(member_buys), signal["signal_strength"],
+        )
+        return True
+
+    def _check_and_notify_manual(
+        self, *, cluster: Cluster, token_address: str, token_ticker: Optional[str],
+        raw_event_id: Optional[int], now: Optional[float] = None,
+    ) -> bool:
+        """Manual-cluster co-entry → advisory Telegram signal (no auto-trade).
+
+        Same threshold + once-per-window dedup as the bot path, but instead of
+        emitting to the paper trader / auto-trade router it fans an advisory
+        notification to opted-in manual traders. The trader acts by hand.
+        """
+        now = time.time() if now is None else now
+        member_buys = self._recent_member_buys(cluster, token_address, now)
+        if len(member_buys) < cluster.min_members_to_fire:
+            return False
+
+        # dedup: notify a given (cluster, token) once per window
+        fired_key = f"{_FIRED_PREFIX}manual:{cluster.cluster_id}:{token_address}"
+        try:
+            r = self._r()
+            if not r.set(fired_key, "1", nx=True, ex=_FIRED_TTL_S):
+                return False  # already notified this window
+        except Exception:
+            pass
+
+        signal = self._build_cluster_signal(cluster, token_address, token_ticker, member_buys, raw_event_id)
+        signal["source"] = "manual_cluster"
+        # Honesty flags the manual trader must see (copytrade_feed semantics).
+        signal["size_up"] = bool(signal.get("elite_present") or signal.get("list_a_present"))
+        signal["bleeds_warning"] = (
+            "High RR but negative EV — the auto-bot skips this; ride the RR and cut by hand."
+            if cluster.bleeds_unmonitored else None
+        )
+        self._log_fired(cluster, signal)
+        try:
+            from services.bot_cluster_autotrade import route_manual_cluster_signal
+            route_manual_cluster_signal(signal)
+        except Exception as exc:
+            logger.error("[COBUY] manual notify failed: %s", exc)
+        logger.info(
+            "[COBUY] action=manual_notify cluster=%s token=%s members=%d",
+            cluster.cluster_id, token_address[:8], len(member_buys),
         )
         return True
 

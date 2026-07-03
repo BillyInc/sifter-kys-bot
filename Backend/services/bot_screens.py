@@ -678,7 +678,7 @@ def render_sizing_settings(ctx: Dict[str, Any]) -> Rendered:
 
 def render_notification_settings(ctx: Dict[str, Any]) -> Rendered:
     toggles = [
-        ("signal", "Elite Buy Signals", "notif_signal"),
+        ("signal", "Cluster Buy Signals", "notif_signal"),
         ("elite_sell", "Elite Sell Signals", "notif_elite_sell"),
         ("open", "Trade Open", "notif_trade_open"),
         ("close", "Trade Close", "notif_trade_close"),

@@ -196,3 +196,50 @@ def _log(rt, severity: str, event_type: str, cluster, signal: Dict[str, Any], ex
         )
     except Exception:
         pass
+
+
+def route_manual_cluster_signal(signal: Dict[str, Any], *, supabase=None) -> int:
+    """Advisory fan-out for a MANUAL cluster co-entry: notify opted-in manual
+    traders on Telegram. No auto-trade — the trader acts by hand.
+
+    Recipients: telegram_users with alerts_enabled and the notif_signal toggle
+    on (the "Cluster Buy Signals" opt-in). Returns the number notified.
+    """
+    from services.supabase_client import get_supabase_client, SCHEMA_NAME
+
+    supabase = supabase or get_supabase_client()
+    try:
+        users = (
+            supabase.schema(SCHEMA_NAME).table("telegram_users")
+            .select("user_id, alerts_enabled, notif_signal")
+            .eq("alerts_enabled", True)
+            .execute().data or []
+        )
+    except Exception as exc:
+        logger.error("[MANUAL ROUTE] user load failed: %s", exc)
+        return 0
+
+    recipients = [u.get("user_id") for u in users if u.get("notif_signal", True) and u.get("user_id")]
+    if not recipients:
+        return 0
+
+    try:
+        from config import Config
+        from services.telegram_notifier import TelegramNotifier
+        notifier = TelegramNotifier(Config.TELEGRAM_BOT_TOKEN)
+    except Exception as exc:
+        logger.error("[MANUAL ROUTE] notifier init failed: %s", exc)
+        return 0
+
+    sent = 0
+    for user_id in recipients:
+        try:
+            if notifier.send_manual_cluster_signal(user_id, signal):
+                sent += 1
+        except Exception as exc:
+            logger.error("[MANUAL ROUTE] send failed user=%s err=%s", str(user_id)[:8], str(exc)[:120])
+    logger.info(
+        "[MANUAL ROUTE] cluster=%s token=%s notified=%d",
+        signal.get("cluster_id"), str(signal.get("token_address"))[:8], sent,
+    )
+    return sent
