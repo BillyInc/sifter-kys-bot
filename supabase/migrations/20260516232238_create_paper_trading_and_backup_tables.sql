@@ -1,0 +1,5 @@
+-- Placeholder for a migration applied to the SHARED prod DB (igvizqgbrxmdtyaujbxu,
+-- shared with skillup) via the dashboard/MCP before this repo owned the migration
+-- history. It is already recorded as applied in supabase_migrations.schema_migrations;
+-- this file exists only so `supabase db push` sees a consistent local<->remote history.
+-- Intentionally a no-op (the schema it created is already present in prod).
