@@ -684,12 +684,59 @@ WALLET ACTIVITY MONITOR INITIALIZED
         if now - self._elite15_ts < 300:
             return self._elite15_set
 
-        addresses: Set[str] = set()
+        # Primary source: the authoritative ClickHouse-derived enriched Elite 15
+        # (Redis key kys:elite15_enriched, written by leaderboard_discovery_scan).
+        # This is the same set the web/mobile API serves, so the monitor's
+        # elite15 alerts/auto-trade now match the "official" Elite 15.
+        addresses = self._elite15_from_redis()
+        source = "clickhouse/redis"
+
+        # Fallback: score-ranked Elite 100 cache in Supabase, in case the CH
+        # pipeline hasn't run yet or the (7-day TTL) Redis key has expired.
+        if not addresses:
+            addresses = self._elite15_from_supabase()
+            source = "supabase/elite_100_cache"
+
+        if addresses:
+            print(f"[MONITOR] Elite 15 set: {len(addresses)} wallets from {source}")
+
+        self._elite15_set = addresses
+        self._elite15_ts = now
+        return addresses
+
+    def _elite15_from_redis(self) -> Set[str]:
+        """Top 15 wallet addresses from the ClickHouse-derived enriched cache."""
         try:
-            # Elite 15 = top 15 of the score-ranked Elite 100. Filter by cache_type
-            # so we don't pick up the roi/runners/community_top_100 variants, which
-            # share this table and are often written more recently (tasks.py refresh
-            # order: score -> roi -> runners; community on its own schedule).
+            from services.redis_pool import get_redis_client
+
+            raw = get_redis_client().get("kys:elite15_enriched")
+            if not raw:
+                return set()
+            payload = json.loads(raw)
+            if not isinstance(payload, list):
+                return set()
+            # Each element mirrors the SolanaTracker enrichment shape; the address
+            # lives under "wallet" (or "walletAddress"), same as the writer.
+            addrs: Set[str] = set()
+            for w in payload[:15]:
+                if not isinstance(w, dict):
+                    continue
+                addr = w.get("wallet") or w.get("walletAddress")
+                if addr:
+                    addrs.add(addr)
+            return addrs
+        except Exception as e:
+            print(f"[MONITOR] Elite 15 (redis) lookup failed: {e}")
+            return set()
+
+    def _elite15_from_supabase(self) -> Set[str]:
+        """Top 15 of the score-ranked Elite 100 cache (fallback source).
+
+        Filter by cache_type so we don't pick up the roi/runners/community_top_100
+        variants, which share this table and are often written more recently
+        (tasks.py refresh order: score -> roi -> runners; community separately).
+        """
+        try:
             result = self._table("elite_100_cache").select("data").eq(
                 "cache_type", "elite_100_score"
             ).order("created_at", desc=True).limit(1).execute()
@@ -697,17 +744,15 @@ WALLET ACTIVITY MONITOR INITIALIZED
                 payload = result.data[0].get("data") or []
                 if isinstance(payload, list):
                     ranked = sorted(payload, key=lambda row: row.get("rank", 9999))
-                    addresses = {
-                        row.get("wallet_address")
-                        for row in ranked[:15]
-                        if row.get("wallet_address")
-                    }
+                    addrs: Set[str] = set()
+                    for row in ranked[:15]:
+                        addr = row.get("wallet_address")
+                        if addr:
+                            addrs.add(addr)
+                    return addrs
         except Exception as e:
-            print(f"[MONITOR] Elite 15 lookup failed: {e}")
-
-        self._elite15_set = addresses
-        self._elite15_ts = now
-        return addresses
+            print(f"[MONITOR] Elite 15 (supabase) lookup failed: {e}")
+        return set()
 
     def _get_all_auto_trade_users(self) -> List[Dict]:
         try:
