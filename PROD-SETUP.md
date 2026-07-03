@@ -39,6 +39,46 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 3. **Separate ClickHouse + Redis** for prod — a distinct ClickHouse database and a distinct Redis instance/DB index (put these in the prod `ENV_FILE`) so prod analytics + job queue never mix with dev.
 4. **Prod Helius webhook** — register a webhook against `https://sifter-kys-prod.duckdns.org/api/webhooks/helius` and let `sync_clusters_to_helius` subscribe the cluster wallets (PUT fix is in).
 
+## Prod `ENV_FILE` contents (the `production` secret)
+
+Copy dev's `.env`, then change the marked lines. Every Redis consumer reads a single
+`REDIS_URL`, so appending `/1` isolates prod onto **DB index 1** (dev is DB 0).
+
+```dotenv
+# ── PROD-SPECIFIC (must differ from dev) ──
+SUPABASE_URL=https://vkgfwblewragoetkikti.supabase.co      # prod project (isolated)
+SUPABASE_SERVICE_KEY=<prod project service_role key>       # Supabase dashboard → API
+SUPABASE_DB_PASSWORD=<prod project db password>            # only needed if you add a prod migrate step
+SUPABASE_ACCESS_TOKEN=<same account PAT as dev is fine>
+
+REDIS_URL=redis://localhost:6379/1                         # ← separate DB index (dev=0, prod=1)
+RATELIMIT_STORAGE_URI=redis://localhost:6379/1             # match REDIS_URL
+
+CLICKHOUSE_DATABASE=sifter-kys-prod                        # create this DB in ClickHouse (dev=sifter-kys)
+WEBHOOK_URL=https://sifter-kys-prod.duckdns.org/api/webhooks/helius   # prod Helius receiver
+PORT=5001                                                  # gunicorn already binds :5001 via systemd
+
+# ── DECISIONS (isolate for safety) ──
+TELEGRAM_BOT_TOKEN=<SEPARATE prod bot>                     # a bot has ONE webhook; reusing dev's breaks one of them
+TELEGRAM_SECRET_TOKEN=<new random for prod webhook>
+HELIUS_WEBHOOK_SECRET=<new random; set as the prod webhook authHeader>
+WALLET_ENCRYPTION_SECRET=<NEW random for prod>            # do NOT reuse dev's — isolates prod bot-wallet keys
+
+# ── SAME AS DEV (copy values) ──
+TELEGRAM_ADMIN_CHAT_IDS=…   TELEGRAM_OPERATOR_CHAT_IDS=…   TELEGRAM_OPERATOR_USER_IDS=…
+BIRDEYE_API_KEY=…   SOLANATRACKER_API_KEY=…   TWITTER_BEARER_TOKEN=…   HELIUS_API_KEY=…
+CLICKHOUSE_HOST=…   CLICKHOUSE_PORT=…   CLICKHOUSE_USER=…   CLICKHOUSE_PASSWORD=…   CLICKHOUSE_SECURE=…
+SMTP_HOST=…   SMTP_PORT=…   SMTP_USERNAME=…   SMTP_PASSWORD=…   SMTP_FROM_EMAIL=…   FROM_EMAIL=…
+RESEND_API_KEY=…   ADMIN_EMAIL=…   PAPER_TRADER_EMAIL_TO=…
+UPSTASH_REDIS_REST_URL=…   UPSTASH_REDIS_REST_TOKEN=…      # reuse, or a separate Upstash DB for full isolation
+WORKER_MODE=…
+```
+
+Notes:
+- **ClickHouse:** create the `sifter-kys-prod` database on the same CH instance (`python scripts/init_clickhouse.py` with `CLICKHOUSE_DATABASE=sifter-kys-prod`) — same host/creds, separate data.
+- **Redis:** one instance, DB 0 (dev) vs DB 1 (prod). Because both run `celery-beat`, this separation is what stops double-firing.
+- **Telegram:** if dev's bot must stay live, prod needs its own bot token (Telegram allows one webhook per bot).
+
 ## Release flow once set up
 ```
 # dev: normal work
