@@ -686,9 +686,13 @@ WALLET ACTIVITY MONITOR INITIALIZED
 
         addresses: Set[str] = set()
         try:
-            result = self._table("elite_100_cache").select("data").order(
-                "created_at", desc=True
-            ).limit(1).execute()
+            # Elite 15 = top 15 of the score-ranked Elite 100. Filter by cache_type
+            # so we don't pick up the roi/runners/community_top_100 variants, which
+            # share this table and are often written more recently (tasks.py refresh
+            # order: score -> roi -> runners; community on its own schedule).
+            result = self._table("elite_100_cache").select("data").eq(
+                "cache_type", "elite_100_score"
+            ).order("created_at", desc=True).limit(1).execute()
             if result.data:
                 payload = result.data[0].get("data") or []
                 if isinstance(payload, list):
