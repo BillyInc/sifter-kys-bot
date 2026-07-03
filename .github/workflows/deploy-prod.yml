@@ -115,9 +115,17 @@ jobs:
                        | sudo tee "/etc/systemd/system/${base}-prod.service" >/dev/null
             done
             sudo systemctl daemon-reload
-            sudo systemctl enable sifter-backend-prod 2>/dev/null || true
+            # Enable + (re)start the full prod stack. Celery is the production scheduler:
+            # celery-beat-prod runs sync_clusters_to_helius + the beat schedule, the
+            # workers drain the queues, wallet-monitor-prod polls watchlist wallets.
+            # Prod is isolated from dev via its own Redis broker + ClickHouse in the prod
+            # .env, so the two beat schedulers never double-fire.
+            # (RQ analysis workers use a server-side rq-worker@ template, not managed here.)
+            PROD_SERVICES="sifter-backend-prod celery-worker-prod celery-beat-prod celery-alerts-worker-prod wallet-monitor-prod"
+            sudo systemctl enable $PROD_SERVICES 2>/dev/null || true
             sudo systemctl reload-or-restart sifter-backend-prod
-            echo "Prod backend deployed."
+            sudo systemctl restart celery-worker-prod celery-beat-prod celery-alerts-worker-prod wallet-monitor-prod
+            echo "Prod backend + workers deployed."
           ENDSSH
 
       - name: Setup nginx + SSL (prod backend) on first deploy

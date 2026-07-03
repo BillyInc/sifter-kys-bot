@@ -13,6 +13,10 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 | Frontend dir | `~/sifter-frontend` | `~/sifter-frontend-prod` |
 | GH environment | `development` | **`production`** (add a required approver) |
 
+**Prod services:** `deploy-prod.yml` enables + starts the full prod stack — `sifter-backend-prod` (:5001), `celery-worker-prod`, `celery-beat-prod` (scheduler → runs `sync_clusters_to_helius` + the beat schedule), `celery-alerts-worker-prod`, `wallet-monitor-prod`. (RQ analysis workers use a server-side `rq-worker@` template, not managed by this workflow.)
+
+**⚠️ Prod MUST use a separate Redis** (distinct instance or DB index in the prod `ENV_FILE`). Both dev and prod run `celery-beat`; if they share a broker they double-fire every scheduled task (incl. the Helius sync). Separate Redis = isolated schedulers.
+
 **Port collision fix:** the systemd unit hardcodes `--bind 0.0.0.0:5000`; `deploy-prod.yml` rewrites it to `:5001` for the prod service so it never clashes with dev on the same box. nginx for both prod domains (backend proxy → :5001, frontend static) is auto-created + certbot-SSL'd on first prod deploy.
 
 **duckdns:** create the two prod subdomains `sifter-kys-prod` and `sifter-kys-web-prod` and point them at the server IP (same box) before the first tag deploy, so certbot can issue certs.
