@@ -1,0 +1,172 @@
+name: Production Deploy (tags)
+
+# Protected production pipeline. Dev deploys on push to main (deploy-backend.yml /
+# deploy-frontend.yml, environment: development). PROD deploys ONLY on a version tag
+# (v1.2.3) and runs against the isolated Supabase project + a separate systemd service
+# on the same host. The `production` GitHub Environment holds all prod secrets and can
+# require a manual approver.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or SHA to deploy to production'
+        required: true
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false   # never cancel a prod deploy mid-flight
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '24'
+  PROD_BACKEND_DIR: ~/sifter-backend-prod
+  PROD_FRONTEND_DIR: ~/sifter-frontend-prod
+
+jobs:
+  # ── Gate: lint + tests must pass before anything touches prod ──
+  verify:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --extra dev
+      - name: flake8 (blocking errors only)
+        run: uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv
+      - name: Tests
+        run: uv run pytest --tb=short -q
+
+  # ── Backend → prod service on the same box ──
+  deploy-backend:
+    name: Deploy Backend (prod)
+    runs-on: ubuntu-latest
+    needs: verify
+    environment: production          # gated secrets + optional required approver
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER" >> ~/.ssh/known_hosts
+
+      - name: Create prod .env on first deploy only
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          ENV_CONTENT: ${{ secrets.ENV_FILE }}   # PROD env file (production environment secret)
+        run: |
+          HAS_ENV=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" "test -f ${{ env.PROD_BACKEND_DIR }}/.env && echo yes || echo no")
+          if [ "$HAS_ENV" = "no" ]; then
+            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" "mkdir -p ${{ env.PROD_BACKEND_DIR }}"
+            echo "$ENV_CONTENT" > /tmp/prod.env
+            scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/prod.env "$USER@$SERVER:${{ env.PROD_BACKEND_DIR }}/.env"
+            rm -f /tmp/prod.env
+            echo "Created prod .env"
+          else
+            echo "prod .env already present — leaving untouched"
+          fi
+
+      - name: Deploy with rsync (prod dir)
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          rsync -avz --delete \
+            --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
+            --exclude 'logs/' --exclude '*.db' --exclude '.git' --exclude '.env' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            Backend/ "$USER@$SERVER:${{ env.PROD_BACKEND_DIR }}/"
+
+      - name: Install prod systemd units, deps, restart
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" 'bash -s' <<'ENDSSH'
+            set -e
+            cd ~/sifter-backend-prod
+            chmod 600 .env 2>/dev/null || true
+            command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+            uv sync
+            mkdir -p logs
+            # Derive prod systemd units from the dev unit files: rename the service,
+            # repoint WorkingDirectory + EnvironmentFile to the prod dir. Same box,
+            # separate services — sifter-backend-prod, rq-worker-prod@, etc.
+            for f in systemd/*.service; do
+              base=$(basename "$f" .service)
+              sudo sed -e "s#/home/ubuntu/sifter-backend#$HOME/sifter-backend-prod#g" \
+                       -e "s/Sifter /Sifter PROD /" "$f" \
+                       | sudo tee "/etc/systemd/system/${base}-prod.service" >/dev/null
+            done
+            sudo systemctl daemon-reload
+            sudo systemctl enable sifter-backend-prod 2>/dev/null || true
+            sudo systemctl reload-or-restart sifter-backend-prod
+            echo "Prod backend deployed."
+          ENDSSH
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  # ── Frontend → prod build + prod domain ──
+  deploy-frontend:
+    name: Deploy Frontend (prod)
+    runs-on: ubuntu-latest
+    needs: verify
+    environment: production
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - run: pnpm install --frozen-lockfile
+      - name: Build (prod env)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}   # prod backend URL (production env var)
+        run: pnpm run build
+
+      - name: Setup SSH key
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER" >> ~/.ssh/known_hosts
+
+      - name: Deploy build to prod frontend dir
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" "mkdir -p ${{ env.PROD_FRONTEND_DIR }}"
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            dist/ "$USER@$SERVER:${{ env.PROD_FRONTEND_DIR }}/"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
