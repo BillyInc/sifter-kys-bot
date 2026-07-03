@@ -184,13 +184,12 @@ class Elite100Manager:
         """Cache Elite 100 results in database"""
         try:
             # Delete old cache
-            self._table('elite_100_cache').delete().eq('cache_key', f'elite_100_{sort_by}').execute()
-            
-            # Insert new cache
+            self._table('elite_100_cache').delete().eq('cache_type', f'elite_100_{sort_by}').execute()
+
+            # Insert new cache (created_at / expires_at auto-default in the DB)
             self._table('elite_100_cache').insert({
-                'cache_key': f'elite_100_{sort_by}',
-                'wallets': wallets,
-                'generated_at': datetime.utcnow().isoformat()
+                'cache_type': f'elite_100_{sort_by}',
+                'data': wallets,
             }).execute()
             
             print(f"[ELITE 100] Cached results for sort_by={sort_by}")
@@ -353,13 +352,12 @@ class Elite100Manager:
         """Cache Community Top 100 results"""
         try:
             # Delete old cache
-            self._table('elite_100_cache').delete().eq('cache_key', 'community_top_100').execute()
-            
-            # Insert new cache
+            self._table('elite_100_cache').delete().eq('cache_type', 'community_top_100').execute()
+
+            # Insert new cache (created_at / expires_at auto-default in the DB)
             self._table('elite_100_cache').insert({
-                'cache_key': 'community_top_100',
-                'wallets': wallets,
-                'generated_at': datetime.utcnow().isoformat()
+                'cache_type': 'community_top_100',
+                'data': wallets,
             }).execute()
             
             print("[COMMUNITY TOP 100] Cached results")
@@ -371,17 +369,17 @@ class Elite100Manager:
         """Get cached Community Top 100"""
         try:
             result = self._table('elite_100_cache').select(
-                'wallets, generated_at'
-            ).eq('cache_key', 'community_top_100').limit(1).execute()
-            
+                'data, created_at'
+            ).eq('cache_type', 'community_top_100').limit(1).execute()
+
             if result.data:
                 cache = result.data[0]
-                generated_at = datetime.fromisoformat(cache['generated_at'].replace('Z', '+00:00'))
-                
+                generated_at = datetime.fromisoformat(cache['created_at'].replace('Z', '+00:00'))
+
                 # Cache valid for 1 hour
                 if datetime.utcnow().replace(tzinfo=generated_at.tzinfo) - generated_at < timedelta(hours=1):
                     print(f"[COMMUNITY TOP 100] Using cached results")
-                    return self._normalize_ranked_wallets(cache['wallets'])
+                    return self._normalize_ranked_wallets(cache['data'])
             
             # Cache miss or expired
             print("[COMMUNITY TOP 100] Cache miss - regenerating...")

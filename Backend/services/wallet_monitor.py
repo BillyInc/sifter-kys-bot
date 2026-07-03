@@ -444,6 +444,7 @@ WALLET ACTIVITY MONITOR INITIALIZED
                     "amount": tx.get("token_amount", 0),
                     "usd_value": tx.get("usd_value", 0),
                     "price_per_token": tx.get("price", 0),
+                    "tx_hash": tx.get("tx_hash"),  # NOT NULL UNIQUE in the DB
                     "signature": tx.get("tx_hash"),
                     "block_time": int(tx.get("block_time", time.time())),
                 }
@@ -853,10 +854,11 @@ WALLET ACTIVITY MONITOR INITIALIZED
             ).eq("alert_enabled", True).execute()
             active_wallets = active_result.count or 0
 
-            one_hour_ago = datetime.utcfromtimestamp(time.time() - 3600).isoformat()
+            # block_time is a unix epoch (bigint); wallet_activity has no created_at column
+            one_hour_ago = int(time.time() - 3600)
             activity_result = self._table("wallet_activity").select(
                 "id", count="exact"
-            ).gte("created_at", one_hour_ago).execute()
+            ).gte("block_time", one_hour_ago).execute()
             recent_activities = activity_result.count or 0
 
             pending_result = self._table("wallet_notifications").select(

@@ -587,12 +587,12 @@ CREATE TABLE IF NOT EXISTS sifter_dev.wallet_activity (
     token_ticker TEXT,
     token_name TEXT,
     side TEXT NOT NULL, -- 'buy' or 'sell'
-    amount NUMERIC,
-    usd_value NUMERIC,
-    price_per_token NUMERIC,
+    amount NUMERIC DEFAULT 0,
+    usd_value REAL,
+    price_per_token NUMERIC DEFAULT 0,
+    tx_hash TEXT NOT NULL UNIQUE,
     signature TEXT UNIQUE,
-    block_time TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    block_time BIGINT NOT NULL  -- unix epoch seconds (NOT a timestamp); no created_at column
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_activity_wallet
@@ -606,6 +606,19 @@ ON sifter_dev.wallet_activity(block_time DESC);
 
 -- Partition hint: Consider partitioning by block_time for large datasets
 -- No RLS needed - this is system data accessed via service role
+
+-- ============================================
+-- ELITE 100 CACHE TABLE (leaderboard cache)
+-- ============================================
+-- cache_type is the entry key, e.g. 'elite_100_score' / 'community_top_100'.
+-- data holds the ranked-wallets list (jsonb). Delete-then-insert per cache_type.
+CREATE TABLE IF NOT EXISTS sifter_dev.elite_100_cache (
+    id BIGSERIAL PRIMARY KEY,
+    cache_type TEXT NOT NULL,
+    data JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '1 hour')
+);
 
 -- ============================================
 -- WALLET MONITOR STATUS TABLE (Health)
