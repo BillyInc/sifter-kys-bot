@@ -104,11 +104,13 @@ jobs:
             uv sync
             mkdir -p logs
             # Derive prod systemd units from the dev unit files: rename the service,
-            # repoint WorkingDirectory + EnvironmentFile to the prod dir. Same box,
-            # separate services — sifter-backend-prod, rq-worker-prod@, etc.
+            # repoint WorkingDirectory + EnvironmentFile to the prod dir, and remap
+            # the gunicorn bind 5000 -> 5001 so prod never collides with dev on the
+            # same box. Same box, separate services — sifter-backend-prod, etc.
             for f in systemd/*.service; do
               base=$(basename "$f" .service)
               sudo sed -e "s#/home/ubuntu/sifter-backend#$HOME/sifter-backend-prod#g" \
+                       -e "s#0.0.0.0:5000#0.0.0.0:5001#g" \
                        -e "s/Sifter /Sifter PROD /" "$f" \
                        | sudo tee "/etc/systemd/system/${base}-prod.service" >/dev/null
             done
@@ -116,6 +118,34 @@ jobs:
             sudo systemctl enable sifter-backend-prod 2>/dev/null || true
             sudo systemctl reload-or-restart sifter-backend-prod
             echo "Prod backend deployed."
+          ENDSSH
+
+      - name: Setup nginx + SSL (prod backend) on first deploy
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" bash << 'ENDSSH'
+            if [ ! -f /etc/nginx/sites-available/sifter-kys-prod ]; then
+              sudo tee /etc/nginx/sites-available/sifter-kys-prod > /dev/null << 'NGINX'
+          server {
+              server_name sifter-kys-prod.duckdns.org;
+              location / {
+                  proxy_pass http://localhost:5001;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+              listen 80;
+          }
+          NGINX
+              sudo ln -sf /etc/nginx/sites-available/sifter-kys-prod /etc/nginx/sites-enabled/
+              sudo nginx -t && sudo systemctl reload nginx
+              sudo certbot --nginx -d sifter-kys-prod.duckdns.org --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
+            else
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
           ENDSSH
 
       - name: Cleanup
@@ -166,6 +196,40 @@ jobs:
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             dist/ "$USER@$SERVER:${{ env.PROD_FRONTEND_DIR }}/"
+
+      - name: Setup nginx + SSL (prod frontend) on first deploy
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" bash << 'ENDSSH'
+            FRONTEND_ROOT="$HOME/sifter-frontend-prod"
+            if [ ! -f /etc/nginx/sites-available/sifter-kys-web-prod ]; then
+              sudo tee /etc/nginx/sites-available/sifter-kys-web-prod > /dev/null << NGINX
+          server {
+              server_name sifter-kys-web-prod.duckdns.org;
+              root ${FRONTEND_ROOT};
+              index index.html;
+              location / {
+                  try_files \$uri \$uri/ /index.html;
+              }
+              location /assets {
+                  expires 1y;
+                  add_header Cache-Control "public, immutable";
+              }
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+              listen 80;
+          }
+          NGINX
+              sudo ln -sf /etc/nginx/sites-available/sifter-kys-web-prod /etc/nginx/sites-enabled/
+              sudo nginx -t && sudo systemctl reload nginx
+              sudo certbot --nginx -d sifter-kys-web-prod.duckdns.org --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
+            else
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+          ENDSSH
 
       - name: Cleanup
         if: always()

@@ -6,10 +6,16 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 |---|---|---|
 | Supabase | `billy` `igvizqgbrxmdtyaujbxu` (shared w/ skillup, `sifter_dev`) | **`sifter-kys` `vkgfwblewragoetkikti`** (isolated, `sifter_dev` schema) |
 | Deploy trigger | push to `main` | **git tag `v*`** (`deploy-prod.yml`) |
-| Compute | `sifter-backend` service, port 5000 | **`sifter-backend-prod`** service, separate port, same box |
+| Compute | `sifter-backend` service, port 5000 | **`sifter-backend-prod`** service, **port 5001**, same box |
+| Backend domain | `sifter-kys.duckdns.org` | **`sifter-kys-prod.duckdns.org`** → :5001 |
+| Frontend domain | `sifter-kys-web.duckdns.org` | **`sifter-kys-web-prod.duckdns.org`** |
 | Backend dir | `~/sifter-backend` | `~/sifter-backend-prod` |
 | Frontend dir | `~/sifter-frontend` | `~/sifter-frontend-prod` |
 | GH environment | `development` | **`production`** (add a required approver) |
+
+**Port collision fix:** the systemd unit hardcodes `--bind 0.0.0.0:5000`; `deploy-prod.yml` rewrites it to `:5001` for the prod service so it never clashes with dev on the same box. nginx for both prod domains (backend proxy → :5001, frontend static) is auto-created + certbot-SSL'd on first prod deploy.
+
+**duckdns:** create the two prod subdomains `sifter-kys-prod` and `sifter-kys-web-prod` and point them at the server IP (same box) before the first tag deploy, so certbot can issue certs.
 
 ## What Claude does in-repo
 - [x] `deploy-prod.yml` — tag-triggered, `environment: production`, deploys backend+frontend to the prod service/dirs on the same box.
@@ -24,11 +30,10 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
      - `ENV_FILE` — the full **prod** backend `.env` (prod Supabase URL + service key for `vkgfw…`, prod ClickHouse creds, Telegram token, Helius key, `PORT=<prod port, e.g. 5001>`, etc.)
      - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — prod Supabase (`vkgfw…`)
      - `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD` — prod project (if you later add a prod migrate step)
-     - Environment **variable** `VITE_API_URL` = prod backend URL
-2. **Prod domain(s)** + nginx server blocks: e.g. `api.sifter-kys.<domain>` → prod backend port, `app.sifter-kys.<domain>` → `~/sifter-frontend-prod`. (Dev keeps `sifter-kys.duckdns.org` / `sifter-kys-web.duckdns.org`.)
-3. **Prod port** for the backend (e.g. 5001) — set `PORT` in the prod `.env`; nginx proxies the prod domain to it.
-4. **Separate ClickHouse + Redis** for prod — a distinct ClickHouse database and a distinct Redis instance/DB index (so prod analytics + job queue never mix with dev).
-5. **Prod Helius webhook** — register a webhook against the prod backend domain and let `sync_clusters_to_helius` subscribe the cluster wallets (after the PUT fix).
+     - Environment **variable** `VITE_API_URL` = `https://sifter-kys-prod.duckdns.org` ✅ (already set)
+2. **duckdns subdomains** — create `sifter-kys-prod` (backend) and `sifter-kys-web-prod` (frontend) pointing at the server IP. nginx + certbot are auto-configured by `deploy-prod.yml` on first deploy; the backend binds :5001 (dev stays :5000).
+3. **Separate ClickHouse + Redis** for prod — a distinct ClickHouse database and a distinct Redis instance/DB index (put these in the prod `ENV_FILE`) so prod analytics + job queue never mix with dev.
+4. **Prod Helius webhook** — register a webhook against `https://sifter-kys-prod.duckdns.org/api/webhooks/helius` and let `sync_clusters_to_helius` subscribe the cluster wallets (PUT fix is in).
 
 ## Release flow once set up
 ```
