@@ -60,6 +60,7 @@ PORT=5001                                                  # gunicorn already bi
 
 # ── DECISIONS (isolate for safety) ──
 TELEGRAM_BOT_TOKEN=<SEPARATE prod bot>                     # a bot has ONE webhook; reusing dev's breaks one of them
+TELEGRAM_BOT_USERNAME=<prod bot @username, no @>          # used to build the connect deep-link
 TELEGRAM_SECRET_TOKEN=<new random for prod webhook>
 HELIUS_WEBHOOK_SECRET=<new random; set as the prod webhook authHeader>
 WALLET_ENCRYPTION_SECRET=<NEW random for prod>            # do NOT reuse dev's — isolates prod bot-wallet keys
@@ -77,7 +78,8 @@ WORKER_MODE=…
 Notes:
 - **ClickHouse:** create the `sifter-kys-prod` database on the same CH instance (`python scripts/init_clickhouse.py` with `CLICKHOUSE_DATABASE=sifter-kys-prod`) — same host/creds, separate data.
 - **Redis:** one instance, DB 0 (dev) vs DB 1 (prod). Because both run `celery-beat`, this separation is what stops double-firing.
-- **Telegram:** if dev's bot must stay live, prod needs its own bot token (Telegram allows one webhook per bot).
+- **Telegram (prod bot):** create a new bot in BotFather (`/newbot`) → put its token in `TELEGRAM_BOT_TOKEN` and its `@username` (without `@`) in `TELEGRAM_BOT_USERNAME`. After the first prod deploy, point its webhook at prod:
+  `TELEGRAM_SECRET_TOKEN=… WEBHOOK_URL=https://sifter-kys-prod.duckdns.org uv run python scripts/setup_telegram_webhook.py` (or let the app's startup register it). Set operator/admin IDs the same as dev unless you want different prod operators.
 
 ## Release flow once set up
 ```
