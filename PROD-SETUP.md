@@ -7,8 +7,8 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 | Supabase | `billy` `igvizqgbrxmdtyaujbxu` (shared w/ skillup, `sifter_dev`) | **`sifter-kys` `vkgfwblewragoetkikti`** (isolated, `sifter_dev` schema) |
 | Deploy trigger | push to `main` | **git tag `v*`** (`deploy-prod.yml`) |
 | Compute | `sifter-backend` service, port 5000 | **`sifter-backend-prod`** service, **port 5001**, same box |
-| Backend domain | `sifter-kys.duckdns.org` | **`sifter-kys-prod.duckdns.org`** → :5001 |
-| Frontend domain | `sifter-kys-web.duckdns.org` | **`sifter-kys-web-prod.duckdns.org`** |
+| Backend domain | `sifter-kys.duckdns.org` (dev, for now) | **`api.kys.levelup.com.ng`** → :5001 |
+| Frontend domain | `sifter-kys-web.duckdns.org` (dev, for now) | **`kys.levelup.com.ng`** |
 | Backend dir | `~/sifter-backend` | `~/sifter-backend-prod` |
 | Frontend dir | `~/sifter-frontend` | `~/sifter-frontend-prod` |
 | GH environment | `development` | **`production`** (add a required approver) |
@@ -19,7 +19,7 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
 
 **Port collision fix:** the systemd unit hardcodes `--bind 0.0.0.0:5000`; `deploy-prod.yml` rewrites it to `:5001` for the prod service so it never clashes with dev on the same box. nginx for both prod domains (backend proxy → :5001, frontend static) is auto-created + certbot-SSL'd on first prod deploy.
 
-**duckdns:** create the two prod subdomains `sifter-kys-prod` and `sifter-kys-web-prod` and point them at the server IP (same box) before the first tag deploy, so certbot can issue certs.
+**DNS:** create two A records under `levelup.com.ng` — `api.kys` and `kys` — both pointing at the server IP (same box) before the first tag deploy, so certbot can issue certs. (Naming follows the shared-domain scheme: `[api.]<app>[.dev].levelup.com.ng`; KYS dev migrates off duckdns later.)
 
 ## What Claude does in-repo
 - [x] `deploy-prod.yml` — tag-triggered, `environment: production`, deploys backend+frontend to the prod service/dirs on the same box.
@@ -34,10 +34,10 @@ Goal: a **protected prod** separate from **dev**. Dev = what we run today. Prod 
      - `ENV_FILE` — the full **prod** backend `.env` (prod Supabase URL + service key for `vkgfw…`, prod ClickHouse creds, Telegram token, Helius key, `PORT=<prod port, e.g. 5001>`, etc.)
      - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — prod Supabase (`vkgfw…`)
      - `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD` — prod project (if you later add a prod migrate step)
-     - Environment **variable** `VITE_API_URL` = `https://sifter-kys-prod.duckdns.org` ✅ (already set)
-2. **duckdns subdomains** — create `sifter-kys-prod` (backend) and `sifter-kys-web-prod` (frontend) pointing at the server IP. nginx + certbot are auto-configured by `deploy-prod.yml` on first deploy; the backend binds :5001 (dev stays :5000).
+     - Environment **variable** `VITE_API_URL` = `https://api.kys.levelup.com.ng` ✅ (already set)
+2. **DNS A records** — `api.kys.levelup.com.ng` (backend) and `kys.levelup.com.ng` (frontend) → server IP. nginx + certbot are auto-configured by `deploy-prod.yml` on first deploy; the backend binds :5001 (dev stays :5000).
 3. **Separate ClickHouse + Redis** for prod — a distinct ClickHouse database and a distinct Redis instance/DB index (put these in the prod `ENV_FILE`) so prod analytics + job queue never mix with dev.
-4. **Prod Helius webhook** — register a webhook against `https://sifter-kys-prod.duckdns.org/api/webhooks/helius` and let `sync_clusters_to_helius` subscribe the cluster wallets (PUT fix is in).
+4. **Prod Helius webhook** — register a webhook against `https://api.kys.levelup.com.ng/api/webhooks/helius` and let `sync_clusters_to_helius` subscribe the cluster wallets (PUT fix is in).
 
 ## Prod `ENV_FILE` contents (the `production` secret)
 
@@ -55,7 +55,7 @@ REDIS_URL=redis://localhost:6379/1                         # ← separate DB ind
 RATELIMIT_STORAGE_URI=redis://localhost:6379/1             # match REDIS_URL
 
 CLICKHOUSE_DATABASE=sifter-kys-prod                        # create this DB in ClickHouse (dev=sifter-kys)
-WEBHOOK_URL=https://sifter-kys-prod.duckdns.org/api/webhooks/helius   # prod Helius receiver
+WEBHOOK_URL=https://api.kys.levelup.com.ng/api/webhooks/helius   # prod Helius receiver
 PORT=5001                                                  # gunicorn already binds :5001 via systemd
 
 # ── DECISIONS (isolate for safety) ──
@@ -79,7 +79,7 @@ Notes:
 - **ClickHouse:** create the `sifter-kys-prod` database on the same CH instance (`python scripts/init_clickhouse.py` with `CLICKHOUSE_DATABASE=sifter-kys-prod`) — same host/creds, separate data.
 - **Redis:** one instance, DB 0 (dev) vs DB 1 (prod). Because both run `celery-beat`, this separation is what stops double-firing.
 - **Telegram (prod bot):** create a new bot in BotFather (`/newbot`) → put its token in `TELEGRAM_BOT_TOKEN` and its `@username` (without `@`) in `TELEGRAM_BOT_USERNAME`. After the first prod deploy, point its webhook at prod:
-  `TELEGRAM_SECRET_TOKEN=… WEBHOOK_URL=https://sifter-kys-prod.duckdns.org uv run python scripts/setup_telegram_webhook.py` (or let the app's startup register it). Set operator/admin IDs the same as dev unless you want different prod operators.
+  `TELEGRAM_SECRET_TOKEN=… WEBHOOK_URL=https://api.kys.levelup.com.ng uv run python scripts/setup_telegram_webhook.py` (or let the app's startup register it). Set operator/admin IDs the same as dev unless you want different prod operators.
 
 ## Release flow once set up
 ```

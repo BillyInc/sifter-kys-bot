@@ -134,10 +134,10 @@ jobs:
           USER: ${{ secrets.SERVER_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" bash << 'ENDSSH'
-            if [ ! -f /etc/nginx/sites-available/sifter-kys-prod ]; then
-              sudo tee /etc/nginx/sites-available/sifter-kys-prod > /dev/null << 'NGINX'
+            if [ ! -f /etc/nginx/sites-available/kys-api-prod ]; then
+              sudo tee /etc/nginx/sites-available/kys-api-prod > /dev/null << 'NGINX'
           server {
-              server_name sifter-kys-prod.duckdns.org;
+              server_name api.kys.levelup.com.ng;
               location / {
                   proxy_pass http://localhost:5001;
                   proxy_set_header Host $host;
@@ -148,9 +148,9 @@ jobs:
               listen 80;
           }
           NGINX
-              sudo ln -sf /etc/nginx/sites-available/sifter-kys-prod /etc/nginx/sites-enabled/
+              sudo ln -sf /etc/nginx/sites-available/kys-api-prod /etc/nginx/sites-enabled/
               sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx -d sifter-kys-prod.duckdns.org --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
+              sudo certbot --nginx -d api.kys.levelup.com.ng --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
             else
               sudo nginx -t && sudo systemctl reload nginx
             fi
@@ -212,10 +212,10 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" bash << 'ENDSSH'
             FRONTEND_ROOT="$HOME/sifter-frontend-prod"
-            if [ ! -f /etc/nginx/sites-available/sifter-kys-web-prod ]; then
-              sudo tee /etc/nginx/sites-available/sifter-kys-web-prod > /dev/null << NGINX
+            if [ ! -f /etc/nginx/sites-available/kys-web-prod ]; then
+              sudo tee /etc/nginx/sites-available/kys-web-prod > /dev/null << NGINX
           server {
-              server_name sifter-kys-web-prod.duckdns.org;
+              server_name kys.levelup.com.ng;
               root ${FRONTEND_ROOT};
               index index.html;
               location / {
@@ -231,9 +231,9 @@ jobs:
               listen 80;
           }
           NGINX
-              sudo ln -sf /etc/nginx/sites-available/sifter-kys-web-prod /etc/nginx/sites-enabled/
+              sudo ln -sf /etc/nginx/sites-available/kys-web-prod /etc/nginx/sites-enabled/
               sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx -d sifter-kys-web-prod.duckdns.org --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
+              sudo certbot --nginx -d kys.levelup.com.ng --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
             else
               sudo nginx -t && sudo systemctl reload nginx
             fi
