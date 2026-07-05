@@ -276,11 +276,11 @@ jobs:
           }
           NGINX
               sudo ln -sf /etc/nginx/sites-available/kys-api-dev /etc/nginx/sites-enabled/
-              sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx -d api.kys.dev.levelup.com.ng --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
-            else
-              sudo nginx -t && sudo systemctl reload nginx
             fi
+            sudo nginx -t && sudo systemctl reload nginx
+            # Idempotent: issues on first run, no-op while the cert is valid — so it
+            # self-heals if a concurrent certbot (frontend deploy) won the lock race.
+            sudo certbot --nginx -d api.kys.dev.levelup.com.ng --non-interactive --agree-tos --redirect --keep-until-expiring || echo "Certbot may need manual setup"
           ENDSSH
 
       - name: Health check
