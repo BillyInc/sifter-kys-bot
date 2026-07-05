@@ -255,6 +255,34 @@ jobs:
             echo "Backend deployment complete!"
           ENDSSH
 
+      - name: Setup nginx + SSL (dev backend on levelup.com.ng) on first deploy
+        env:
+          SERVER: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$SERVER" bash << 'ENDSSH'
+            if [ ! -f /etc/nginx/sites-available/kys-api-dev ]; then
+              sudo tee /etc/nginx/sites-available/kys-api-dev > /dev/null << 'NGINX'
+          server {
+              server_name api.kys.dev.levelup.com.ng;
+              location / {
+                  proxy_pass http://localhost:5000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+              listen 80;
+          }
+          NGINX
+              sudo ln -sf /etc/nginx/sites-available/kys-api-dev /etc/nginx/sites-enabled/
+              sudo nginx -t && sudo systemctl reload nginx
+              sudo certbot --nginx -d api.kys.dev.levelup.com.ng --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
+            else
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+          ENDSSH
+
       - name: Health check
         continue-on-error: true
         env:

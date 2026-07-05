@@ -140,7 +140,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://sifter-kys.duckdns.org' }}
+          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://api.kys.dev.levelup.com.ng' }}
         run: pnpm run build
 
       - name: Upload build artifacts
@@ -265,10 +265,10 @@ jobs:
             FRONTEND_ROOT="$HOME/sifter-frontend"
 
             # Create nginx config for frontend if not exists
-            if [ ! -f /etc/nginx/sites-available/sifter-kys-web ]; then
-              sudo tee /etc/nginx/sites-available/sifter-kys-web > /dev/null << NGINX
+            if [ ! -f /etc/nginx/sites-available/kys-web-dev ]; then
+              sudo tee /etc/nginx/sites-available/kys-web-dev > /dev/null << NGINX
           server {
-              server_name sifter-kys-web.duckdns.org;
+              server_name kys.dev.levelup.com.ng;
 
               root ${FRONTEND_ROOT};
               index index.html;
@@ -290,9 +290,9 @@ jobs:
           }
           NGINX
 
-              sudo ln -sf /etc/nginx/sites-available/sifter-kys-web /etc/nginx/sites-enabled/
+              sudo ln -sf /etc/nginx/sites-available/kys-web-dev /etc/nginx/sites-enabled/
               sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx -d sifter-kys-web.duckdns.org --non-interactive --agree-tos || echo "Certbot may need manual setup"
+              sudo certbot --nginx -d kys.dev.levelup.com.ng --non-interactive --agree-tos --redirect || echo "Certbot may need manual setup"
             else
               sudo nginx -t && sudo systemctl reload nginx
             fi
